@@ -1,0 +1,13 @@
+@import './styles/slate-theme.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body,
+#root {
+  min-height: 100%;
+  background-color: #f5f7fa;
+  color-scheme: light;
+}

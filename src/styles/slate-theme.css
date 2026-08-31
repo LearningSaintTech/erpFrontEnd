@@ -1,0 +1,596 @@
+/**
+ * ERP Factory — modern light UI
+ * Black sidebar · white workspace · blue accent
+ */
+
+.erp-theme {
+  /* Typography */
+  --erp-font-xs: 11px;
+  --erp-font-sm: 12px;
+  --erp-font-base: 13px;
+  --erp-font-md: 15px;
+  --erp-font-lg: 17px;
+  --erp-ease: cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* Surfaces — white workspace */
+  --erp-bg: #f5f7fa;
+  --erp-header-bg: #ffffff;
+  --erp-surface: #ffffff;
+  --erp-surface-muted: #f8fafc;
+  --erp-surface-hover: #f1f5f9;
+  --erp-surface-alt: #eef2f7;
+
+  /* Sidebar — solid black */
+  --erp-sidebar-bg: #0b0f14;
+  --erp-sidebar-hover: rgb(255 255 255 / 0.08);
+  --erp-sidebar-border: rgb(255 255 255 / 0.08);
+  --erp-sidebar-text-primary: #f8fafc;
+  --erp-sidebar-text-secondary: rgb(148 163 184);
+  --erp-sidebar-text-muted: rgb(100 116 139);
+  --erp-sidebar-glass: rgb(255 255 255 / 0.04);
+  --erp-sidebar-glass-elevated: rgb(255 255 255 / 0.07);
+  --erp-sidebar-glass-border: rgb(255 255 255 / 0.1);
+
+  /* Accent — modern ERP blue */
+  --erp-accent: #2563eb;
+  --erp-accent-muted: rgb(37 99 235 / 0.12);
+  --erp-on-accent: #ffffff;
+  --erp-trend-up: #16a34a;
+
+  /* Borders & glass (cards on white) */
+  --erp-header-border: rgb(15 23 42 / 0.08);
+  --erp-border: rgb(15 23 42 / 0.08);
+  --erp-border-strong: rgb(15 23 42 / 0.14);
+  --erp-glass: #ffffff;
+  --erp-glass-elevated: #ffffff;
+  --erp-card-blur: none;
+
+  /* Text on light workspace */
+  --erp-text-primary: #0f172a;
+  --erp-text-secondary: rgb(15 23 42 / 0.7);
+  --erp-text-muted: rgb(15 23 42 / 0.45);
+
+  /* Tables */
+  --erp-thead-bg: #f1f5f9;
+  --erp-row-hover: rgb(37 99 235 / 0.04);
+
+  /* Effects */
+  --erp-overlay: rgb(15 23 42 / 0.4);
+  --erp-nav-glow: rgb(37 99 235 / 0.35);
+  --erp-search-glow: rgb(37 99 235 / 0.15);
+  --erp-shadow: 0 1px 2px rgb(15 23 42 / 0.04), 0 1px 3px rgb(15 23 42 / 0.06);
+
+  /* Status — colorful, readable on white */
+  --erp-danger-text: #b91c1c;
+  --erp-danger-bg: rgb(239 68 68 / 0.1);
+  --erp-success-text: #15803d;
+  --erp-warning-text: #a16207;
+
+  --erp-color-scheme: light;
+
+  color: var(--erp-text-primary);
+  font-family: Inter, system-ui, sans-serif;
+  font-size: var(--erp-font-base);
+  background-color: var(--erp-bg);
+  color-scheme: light;
+}
+
+.erp-theme-bg {
+  min-height: 100vh;
+  background-color: var(--erp-bg);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   SHELL
+   ═══════════════════════════════════════════════════════════ */
+.erp-theme .erp-sidebar {
+  display: flex;
+  flex-direction: column;
+  background-color: var(--erp-sidebar-bg);
+  border-color: var(--erp-sidebar-border);
+  color: var(--erp-sidebar-text-primary);
+}
+
+.erp-theme .erp-header-bar {
+  background-color: var(--erp-header-bg);
+  border-color: var(--erp-header-border);
+  box-shadow: 0 1px 2px rgb(15 23 42 / 0.04);
+}
+
+.erp-theme .erp-main-area {
+  background-color: var(--erp-bg);
+}
+
+.erp-shell {
+  display: flex;
+  min-height: calc(100vh - 57px);
+}
+
+.erp-shell-with-sidebar {
+  position: relative;
+  min-height: 100vh;
+}
+
+.erp-sidebar-fixed {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 40;
+  height: 100dvh;
+  width: 14rem;
+  flex-direction: column;
+  border-right: 1px solid var(--erp-sidebar-border);
+  background-color: var(--erp-sidebar-bg);
+}
+
+.erp-shell-main {
+  min-height: 100vh;
+  min-width: 0;
+}
+
+@media (min-width: 768px) {
+  .erp-shell-main {
+    margin-left: 14rem;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   SIDEBAR PANELS
+   ═══════════════════════════════════════════════════════════ */
+.erp-theme .erp-sidebar-glass {
+  border: 1px solid var(--erp-sidebar-glass-border);
+  transition: background 0.15s var(--erp-ease), box-shadow 0.15s var(--erp-ease);
+}
+
+.erp-theme .erp-sidebar-glass-brand {
+  background: var(--erp-sidebar-glass-elevated);
+}
+
+.erp-theme .erp-sidebar-glass-footer {
+  background: var(--erp-sidebar-glass);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   SIDEBAR NAV
+   ═══════════════════════════════════════════════════════════ */
+.erp-theme .erp-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  border-radius: 0.5rem;
+  padding: 0.5rem 0.625rem;
+  font-size: var(--erp-font-sm);
+  font-weight: 500;
+  color: var(--erp-sidebar-text-secondary);
+  text-decoration: none;
+  transition: background 0.15s var(--erp-ease), color 0.15s var(--erp-ease);
+}
+
+.erp-theme .erp-sidebar .erp-nav-item:hover {
+  background: var(--erp-sidebar-hover);
+  color: var(--erp-sidebar-text-primary);
+}
+
+.erp-theme .erp-sidebar .erp-nav-item-active {
+  background: var(--erp-accent);
+  color: var(--erp-on-accent);
+}
+
+.erp-theme .erp-sidebar .erp-nav-item-active:hover {
+  background: var(--erp-accent);
+  color: var(--erp-on-accent);
+  opacity: 0.95;
+}
+
+.erp-nav-group-label {
+  margin-bottom: 0.25rem;
+  padding: 0 0.75rem;
+  font-size: var(--erp-font-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--erp-sidebar-text-muted);
+}
+
+.erp-nav-dropdown-menu {
+  border-left: 1px solid var(--erp-sidebar-glass-border);
+  margin-left: 0.85rem;
+}
+
+.erp-nav-subitem {
+  font-size: 11px !important;
+  padding-top: 0.35rem !important;
+  padding-bottom: 0.35rem !important;
+  gap: 0.4rem !important;
+}
+
+.erp-nav-dropdown-trigger {
+  cursor: pointer;
+}
+
+.erp-theme .erp-sidebar-nav {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(255 255 255 / 0.2) transparent;
+}
+
+.erp-theme .erp-sidebar-nav::-webkit-scrollbar {
+  width: 4px;
+}
+
+.erp-theme .erp-sidebar-nav::-webkit-scrollbar-thumb {
+  background: rgb(255 255 255 / 0.2);
+  border-radius: 999px;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   CARDS
+   ═══════════════════════════════════════════════════════════ */
+.erp-theme .erp-card,
+.erp-theme .erp-card-sm {
+  border-radius: 0.75rem;
+  border: 1px solid var(--erp-border);
+  background: var(--erp-glass);
+  box-shadow: var(--erp-shadow);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   CONTROLS
+   ═══════════════════════════════════════════════════════════ */
+.erp-theme .erp-search,
+.erp-theme .erp-icon-btn,
+.erp-theme .erp-select {
+  border-radius: 0.5rem;
+  border: 1px solid var(--erp-border);
+  background: var(--erp-glass);
+  color: var(--erp-text-secondary);
+  transition: border-color 0.15s var(--erp-ease), color 0.15s var(--erp-ease), box-shadow 0.15s var(--erp-ease);
+}
+
+.erp-theme .erp-search:focus,
+.erp-theme .erp-input:focus {
+  outline: none;
+  border-color: var(--erp-accent);
+  box-shadow: 0 0 0 3px var(--erp-search-glow);
+}
+
+.erp-theme .erp-icon-btn:hover {
+  border-color: var(--erp-border-strong);
+  color: var(--erp-text-primary);
+  background: var(--erp-surface-hover);
+}
+
+.erp-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.375rem 0.625rem;
+  cursor: pointer;
+}
+
+.erp-select {
+  padding: 0.375rem 0.625rem;
+  font-size: var(--erp-font-sm);
+  color-scheme: light;
+}
+
+.erp-theme .erp-select option {
+  background-color: #ffffff;
+  color: var(--erp-text-primary);
+}
+
+.erp-input {
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  font-size: var(--erp-font-sm);
+  border-radius: 0.5rem;
+  border: 1px solid var(--erp-border);
+  background: var(--erp-glass);
+  color: var(--erp-text-primary);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   DATA TABLE
+   ═══════════════════════════════════════════════════════════ */
+.erp-theme .erp-data-table {
+  width: 100%;
+  font-size: var(--erp-font-sm);
+}
+
+.erp-theme .erp-data-table thead {
+  background: var(--erp-thead-bg);
+  color: var(--erp-text-muted);
+  font-size: var(--erp-font-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.erp-theme .erp-data-table th {
+  color: var(--erp-text-secondary);
+}
+
+.erp-theme .erp-data-table th,
+.erp-theme .erp-data-table td {
+  padding: 0.75rem 1rem;
+  text-align: left;
+}
+
+.erp-theme .erp-data-table td {
+  color: var(--erp-text-secondary);
+}
+
+.erp-theme .erp-data-table tbody tr {
+  border-bottom: 1px solid var(--erp-border);
+  transition: background 0.15s var(--erp-ease);
+}
+
+.erp-theme .erp-data-table tbody tr:hover {
+  background: var(--erp-row-hover);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   STATUS BADGES
+   ═══════════════════════════════════════════════════════════ */
+.erp-theme .erp-status-badge {
+  display: inline-flex;
+  border-radius: 9999px;
+  padding: 0.125rem 0.5rem;
+  font-size: var(--erp-font-xs);
+  font-weight: 500;
+}
+
+.erp-theme .erp-status-pending {
+  background: rgb(234 179 8 / 0.15);
+  color: var(--erp-warning-text);
+}
+
+.erp-theme .erp-status-shipped {
+  background: var(--erp-accent-muted);
+  color: var(--erp-accent);
+}
+
+.erp-theme .erp-status-delivered {
+  background: rgb(34 197 94 / 0.15);
+  color: var(--erp-success-text);
+}
+
+.erp-theme .erp-status-cancelled {
+  background: var(--erp-danger-bg);
+  color: var(--erp-danger-text);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   TABS
+   ═══════════════════════════════════════════════════════════ */
+.erp-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  border-bottom: 1px solid var(--erp-border);
+  margin-bottom: 1rem;
+}
+
+.erp-tab {
+  padding: 0.5rem 0.875rem;
+  font-size: var(--erp-font-sm);
+  font-weight: 500;
+  color: var(--erp-text-muted);
+  border: none;
+  background: transparent;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  cursor: pointer;
+  transition: color 0.15s var(--erp-ease), border-color 0.15s var(--erp-ease);
+}
+
+.erp-tab:hover {
+  color: var(--erp-text-secondary);
+}
+
+.erp-tab-active {
+  color: var(--erp-accent);
+  border-bottom-color: var(--erp-accent);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   PAGE HEADER
+   ═══════════════════════════════════════════════════════════ */
+.erp-page-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.erp-page-title {
+  font-size: var(--erp-font-lg);
+  font-weight: 600;
+  color: var(--erp-text-primary);
+}
+
+.erp-page-subtitle {
+  font-size: var(--erp-font-sm);
+  color: var(--erp-text-muted);
+  margin-top: 0.25rem;
+}
+
+.erp-label {
+  font-size: var(--erp-font-sm);
+  color: var(--erp-text-muted);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   FORM FIELDS
+   ═══════════════════════════════════════════════════════════ */
+.erp-theme input:not([type='checkbox']):not([type='color']):not(.erp-search):not(.erp-input),
+.erp-theme textarea,
+.erp-theme select:not(.erp-select) {
+  border-radius: 0.5rem;
+  border: 1px solid var(--erp-border);
+  background: var(--erp-glass);
+  color: var(--erp-text-primary);
+  padding: 0.5rem 0.75rem;
+  font-size: var(--erp-font-sm);
+}
+
+.erp-theme input:not([type='checkbox']):not([type='color']):focus,
+.erp-theme textarea:focus,
+.erp-theme select:not(.erp-select):focus {
+  outline: none;
+  border-color: var(--erp-accent);
+  box-shadow: 0 0 0 3px var(--erp-search-glow);
+}
+
+.erp-theme input:disabled,
+.erp-theme textarea:disabled,
+.erp-theme select:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   BUTTONS
+   ═══════════════════════════════════════════════════════════ */
+.erp-btn-primary {
+  border-radius: 0.5rem;
+  background: var(--erp-accent);
+  color: var(--erp-on-accent);
+  padding: 0.375rem 0.875rem;
+  font-size: var(--erp-font-sm);
+  font-weight: 500;
+  border: none;
+  cursor: pointer;
+  transition: opacity 0.15s var(--erp-ease);
+}
+
+.erp-btn-primary:hover {
+  opacity: 0.9;
+}
+
+.erp-btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.erp-btn-secondary {
+  border-radius: 0.5rem;
+  border: 1px solid var(--erp-border);
+  background: var(--erp-glass);
+  color: var(--erp-text-secondary);
+  padding: 0.375rem 0.875rem;
+  font-size: var(--erp-font-sm);
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color 0.15s var(--erp-ease), color 0.15s var(--erp-ease);
+}
+
+.erp-btn-secondary:hover {
+  border-color: var(--erp-border-strong);
+  color: var(--erp-text-primary);
+}
+
+.erp-btn-danger {
+  border-radius: 0.5rem;
+  background: var(--erp-danger-bg);
+  color: var(--erp-danger-text);
+  padding: 0.375rem 0.875rem;
+  font-size: var(--erp-font-sm);
+  border: 1px solid transparent;
+  cursor: pointer;
+}
+
+.erp-alert-error {
+  border-radius: 0.5rem;
+  background: var(--erp-danger-bg);
+  color: var(--erp-danger-text);
+  padding: 0.5rem 0.75rem;
+  font-size: var(--erp-font-sm);
+}
+
+.erp-link {
+  color: var(--erp-accent);
+  text-decoration: none;
+}
+
+.erp-link:hover {
+  text-decoration: underline;
+}
+
+.text-erp-xs {
+  font-size: var(--erp-font-xs);
+}
+
+.text-erp-sm {
+  font-size: var(--erp-font-sm);
+}
+
+.erp-kpi-label {
+  font-size: var(--erp-font-xs);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--erp-text-muted);
+}
+
+.erp-kpi-value {
+  color: var(--erp-text-primary);
+}
+
+.erp-drawer-overlay {
+  background: var(--erp-overlay);
+}
+
+.erp-drawer-panel {
+  background: var(--erp-sidebar-bg);
+  border-right: 1px solid var(--erp-sidebar-border);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   CHAT — opaque slide-out panel (portaled to body)
+   ═══════════════════════════════════════════════════════════ */
+.chat-portal-root .chat-panel-drawer {
+  background: var(--erp-surface, #ffffff);
+  color: var(--erp-text-primary);
+}
+
+.chat-portal-root .chat-panel-drawer header {
+  background: var(--erp-surface, #ffffff);
+}
+
+.chat-portal-root .chat-panel-drawer .erp-card,
+.chat-portal-root .chat-panel-drawer .erp-card-sm {
+  background: var(--erp-surface-muted, #f8fafc);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.chat-portal-root .chat-messenger-panel .erp-card,
+.chat-portal-root .chat-messenger-panel .erp-card-sm {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+
+.chat-portal-root .chat-panel-thread {
+  background: var(--erp-surface, #ffffff);
+}
+
+.chat-portal-root .chat-panel-list {
+  background: var(--erp-surface-muted, #f8fafc);
+  border-right: 1px solid var(--erp-border);
+}
+
+.chat-portal-root .chat-bubble-incoming {
+  background: var(--erp-surface-muted, #f1f5f9);
+  border: 1px solid var(--erp-border);
+}
+
+.chat-portal-root .chat-group-modal {
+  background: var(--erp-surface, #ffffff);
+}
+
+.chat-portal-root .chat-toast {
+  background: var(--erp-surface, #ffffff);
+}
