@@ -111,7 +111,7 @@ export function grnLineSummary(grn?: { status?: string; lines?: GrnLineRow[] }) 
 
 export function grnNextStep(status: string): { label: string; path: string } | null {
   if (status === 'DRAFT') return { label: 'Submit incoming QC', path: '' };
-  if (status === 'PENDING_QC') return { label: 'Complete incoming QC', path: '/quality' };
+  if (status === 'PENDING_QC') return { label: 'Complete incoming QC', path: '/quality/inspections' };
   if (status === 'COMPLETED') return { label: 'Put away or view stock', path: '/warehouse/operations/put-away' };
   return null;
 }

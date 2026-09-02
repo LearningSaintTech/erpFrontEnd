@@ -151,9 +151,15 @@ export function stockLocatorPath(opts?: { materialId?: string; skuId?: string; s
   return q ? `/warehouse/stock-locator?${q}` : '/warehouse/stock-locator';
 }
 
+export function materialParts(materialId: { materialCode?: string; name?: string } | string | undefined): { code: string; name: string } {
+  if (!materialId) return { code: '—', name: '' };
+  if (typeof materialId === 'string') return { code: materialId, name: '' };
+  return { code: materialId.materialCode || '—', name: materialId.name || '' };
+}
+
 export function materialDisplayName(materialId: { materialCode?: string; name?: string } | string | undefined) {
-  if (!materialId || typeof materialId === 'string') return materialId || '—';
-  return `${materialId.materialCode} — ${materialId.name}`;
+  const { code, name } = materialParts(materialId);
+  return name ? `${code} — ${name}` : code;
 }
 
 export function balanceLocationLabel(balance: {

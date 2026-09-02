@@ -983,8 +983,23 @@ export interface WarehouseZone {
 
 export interface BinContents {
   bin?: { _id: string; binCode?: string; zoneCode?: string; barcode?: string };
-  rawMaterials?: { materialId?: string; materialCode?: string; quantity?: number; onHand?: number; unit?: string }[];
-  finishedGoods?: { skuId?: string; skuCode?: string; quantity?: number; onHand?: number; dispatchStatus?: string }[];
+  rawMaterials?: {
+    materialId?: string | Material;
+    materialCode?: string;
+    quantity?: number;
+    onHand?: number;
+    reserved?: number;
+    available?: number;
+    unit?: string;
+  }[];
+  finishedGoods?: {
+    skuId?: string | SkuRef;
+    skuCode?: string;
+    quantity?: number;
+    onHand?: number;
+    dispatchStatus?: string;
+    unit?: string;
+  }[];
   materials?: { materialId: string; quantity: number; unit?: string }[];
   skus?: { skuId: string; quantity: number }[];
 }
@@ -1105,16 +1120,6 @@ export interface IncomingQcContext {
     receivedQty: number;
     unit?: string;
   }>;
-  inspection?: { _id: string; inspectionNumber: string; status: string } | null;
-}
-
-export interface IncomingQcContext {
-  grnId: string;
-  grnNumber: string;
-  grnStatus: string;
-  poNumber?: string;
-  totalReceived: number;
-  lines: { materialCode?: string; materialName?: string; receivedQty: number; unit?: string }[];
   inspection?: { _id: string; inspectionNumber: string; status: string } | null;
 }
 
@@ -1241,6 +1246,7 @@ declare module './api' {
 
   export interface GoodsReceipt {
     poId?: string | import('./api').PurchaseOrder;
+    qcInspectionId?: string | { _id?: string; inspectionNumber?: string; status?: string };
   }
 
   export interface Supplier {

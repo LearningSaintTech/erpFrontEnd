@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  AlertTriangle, ArrowDownToLine, ArrowRight, Check, ClipboardList, Download, History, Package, RefreshCw, Search, ShoppingCart, Truck, Upload, Warehouse, X,
+  AlertTriangle, ArrowDownToLine, ArrowRight, Check, ClipboardList, Download, History, MapPin, Package, Pencil, RefreshCw, Search, ShoppingCart, Truck, Upload, Warehouse, X,
 } from 'lucide-react';
 import { inventoryApi, skuApi } from '../../services/manufacturing';
 import { purchaseApi } from '../../services/operations';
@@ -20,9 +20,13 @@ import {
   MATERIAL_CATEGORIES, MATERIAL_UNITS, RESERVATION_REFERENCE_TYPES, RM_POST_QC_FLOW,
   TRANSACTION_TYPES, balanceLocationLabel, categoryLabel, formatCurrency, formatDateTime,
   inventoryConfirmMessage, inventorySuccessMessage, materialDisplayName, materialIdFromBalance,
-  performerName, putAwayPath, stockLocatorPath, stockWorkflowHint, suggestedPrQty, transactionLabel,
+  performerName, putAwayPath, stockLocatorPath, stockWorkflowHint, suggestedPrQty,
   transactionReferenceLabel, unitLabel,
 } from './inventoryUtils';
+import {
+  ActionStack, EmptyRow, InfoBanner, LocationPill, MaterialCell, StatTile,
+  TabShell, TabToolbar, TablePager, TextLink, TxTypeBadge, btnSm, fieldLabel,
+} from './inventoryLayout';
 import { colorSwatch, designIdOf, designLabel, formatPrice, sampleLabel, statusLabel as skuStatusLabel } from '../sku/skuUtils';
 import { downloadCsv } from '../../utils/csvExport';
 import {
@@ -31,7 +35,6 @@ import {
 import { MaterialMasterRequestsTab } from './MaterialMasterRequestsTab';
 
 const PAGE_SIZE = 20;
-const fieldLabel = 'mb-0.5 block text-[10px] font-medium text-erp-text-muted';
 const OPEN_PR_STATUSES = new Set(['DRAFT', 'SUBMITTED', 'APPROVED']);
 
 type TabId = 'materials' | 'stock' | 'alerts' | 'movements' | 'reservations' | 'requests';
@@ -508,7 +511,7 @@ export function InventoryPage() {
   };
 
   return (
-    <div className="inventory-page text-xs leading-snug [&_.erp-page-header]:mb-3 [&_.erp-page-title]:text-base [&_.erp-page-subtitle]:text-[10px]">
+    <div className="inventory-page space-y-3">
       <AlertBanner message={error} onDismiss={() => setError('')} />
       <SuccessBanner message={success} onDismiss={() => setSuccess('')} />
 
@@ -517,16 +520,18 @@ export function InventoryPage() {
         subtitle={scope === 'FINISHED_PRODUCT' ? (
           <>
             Finished SKUs available for production, warehouse, and dispatch.
-            <Link to="/products/skus" className="ml-2 text-[var(--erp-accent)]">SKU master →</Link>
-            <Link to="/warehouse/stock-locator?inventoryType=FINISHED_GOODS" className="ml-2 text-[var(--erp-accent)]">Find FG stock →</Link>
+            <Link to="/products/skus" className="ml-2 text-[var(--erp-accent)]">SKU master -&gt;</Link>
+            <Link to="/warehouse/stock-locator?inventoryType=FINISHED_GOODS" className="ml-2 text-[var(--erp-accent)]">Find FG stock -&gt;</Link>
           </>
-        ) : undefined}
+        ) : (
+          'Raw material master, stock balances, alerts, movements, and reservations.'
+        )}
         actions={(
           <div className="flex flex-wrap items-center gap-2">
             <div className="flex items-center gap-1.5">
-              <span className="whitespace-nowrap text-[10px] uppercase tracking-wide text-erp-text-muted">Inventory type</span>
+              <span className="whitespace-nowrap text-[11px] text-erp-text-muted">Type</span>
               <ErpSelect
-                className="w-[150px] !py-1 text-[11px]"
+                className="w-[170px] !py-1.5 text-[12px]"
                 value={scope}
                 onChange={(e) => selectScope(e.target.value as InventoryScope)}
               >
@@ -536,17 +541,17 @@ export function InventoryPage() {
             </div>
             {scope === 'RAW_MATERIAL' && canCreate && (
               <ErpButton
-                className="!px-2 !py-1 text-[10px]"
+                className={btnSm}
                 onClick={() => {
                   selectTab('materials');
                   setShowAddMaterial(true);
                 }}
               >
-                <Package size={12} className="mr-1 inline" /> Add material
+                <Package size={13} className="mr-1 inline" /> Add material
               </ErpButton>
             )}
             {scope === 'RAW_MATERIAL' && canExport && balances.length > 0 && (
-              <ErpButton variant="secondary" className="!px-2 !py-1 text-[10px]" onClick={() => downloadCsv('inventory-stock.csv', ['Location', 'Material', 'On hand', 'Reserved', 'Available', 'Unit'], balances.map((b) => [
+              <ErpButton variant="secondary" className={btnSm} onClick={() => downloadCsv('inventory-stock.csv', ['Location', 'Material', 'On hand', 'Reserved', 'Available', 'Unit'], balances.map((b) => [
                 balanceLocationLabel(b),
                 materialDisplayName(b.materialId),
                 b.onHand,
@@ -554,12 +559,12 @@ export function InventoryPage() {
                 b.available,
                 b.unit,
               ]))}>
-                <Download size={12} className="mr-1 inline" /> Export CSV
+                <Download size={13} className="mr-1 inline" /> Export CSV
               </ErpButton>
             )}
             <ErpButton
               variant="secondary"
-              className="!px-2 !py-1 text-[10px]"
+              className={btnSm}
               disabled={scope === 'FINISHED_PRODUCT' ? fgSkuFetching : isFetching}
               onClick={() => {
                 if (scope === 'FINISHED_PRODUCT') {
@@ -572,7 +577,7 @@ export function InventoryPage() {
                 }
               }}
             >
-              <RefreshCw size={12} className={(scope === 'FINISHED_PRODUCT' ? fgSkuFetching : isFetching) ? 'animate-spin' : ''} />
+              <RefreshCw size={13} className={(scope === 'FINISHED_PRODUCT' ? fgSkuFetching : isFetching) ? 'animate-spin' : ''} />
               <span className="ml-1">Refresh</span>
             </ErpButton>
           </div>
@@ -581,37 +586,28 @@ export function InventoryPage() {
 
       {scope === 'FINISHED_PRODUCT' ? (
         <div className="space-y-3">
-          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-            <ErpCard className="!p-3">
-              <p className="text-[10px] uppercase tracking-wide text-erp-text-muted">Total SKUs</p>
-              <p className="text-lg font-semibold">{skuStats?.total ?? '—'}</p>
-            </ErpCard>
-            <ErpCard className="!p-3">
-              <p className="text-[10px] uppercase tracking-wide text-erp-text-muted">Active</p>
-              <p className="text-lg font-semibold">{skuStats?.active ?? '—'}</p>
-            </ErpCard>
-            <ErpCard className="!p-3">
-              <p className="text-[10px] uppercase tracking-wide text-erp-text-muted">Draft</p>
-              <p className="text-lg font-semibold">{skuStats?.draft ?? '—'}</p>
-            </ErpCard>
-            <ErpCard className="!p-3">
-              <p className="text-[10px] uppercase tracking-wide text-erp-text-muted">FG stock locations</p>
-              <p className="text-lg font-semibold">{fgBalancesPage?.meta?.total ?? fgBalancesPage?.items?.length ?? '—'}</p>
-            </ErpCard>
+          <div className="grid grid-cols-2 overflow-hidden rounded-lg border border-[var(--erp-border)] bg-[var(--erp-border)] sm:grid-cols-4">
+            <StatTile icon={Package} label="Total SKUs" value={skuStats?.total ?? '-'} />
+            <StatTile icon={Check} label="Active" value={skuStats?.active ?? '-'} />
+            <StatTile icon={ClipboardList} label="Draft" value={skuStats?.draft ?? '-'} />
+            <StatTile icon={Warehouse} label="FG locations" value={fgBalancesPage?.meta?.total ?? fgBalancesPage?.items?.length ?? '-'} />
           </div>
 
           {!canReadSkus ? (
-            <ErpCard className="!p-3">
-              <p className="text-[11px] text-erp-text-muted">Finished products need <code className="text-[10px]">sku.read</code> or inventory access.</p>
+            <ErpCard className="!p-4">
+              <p className="text-[13px] text-erp-text-muted">Finished products need <code className="text-[12px]">sku.read</code> or inventory access.</p>
             </ErpCard>
           ) : (
             <ErpCard className="!p-0">
-              <div className="flex flex-wrap items-center gap-2 border-b border-[var(--erp-border)] p-3">
-                <div className="relative min-w-[180px] flex-1">
-                  <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-erp-text-muted" />
+              <TabToolbar
+                title="Finished SKUs"
+                hint="On-hand and available are summed across warehouse locations."
+              >
+                <div className="relative min-w-[200px] flex-1">
+                  <Search size={13} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-erp-text-muted" />
                   <ErpInput
-                    className="!py-1.5 pl-7 text-[11px]"
-                    placeholder="Search SKU code, name, design…"
+                    className="!py-1.5 pl-8 text-[12px]"
+                    placeholder="Search SKU code, name, design..."
                     value={fgSearchInput}
                     onChange={(e) => setFgSearchInput(e.target.value)}
                     onKeyDown={(e) => {
@@ -624,213 +620,166 @@ export function InventoryPage() {
                 </div>
                 <ErpButton
                   variant="secondary"
-                  className="!px-2 !py-1.5 text-[11px]"
+                  className={btnSm}
                   onClick={() => { setFgSearch(fgSearchInput.trim()); setFgPage(1); }}
                 >
                   Search
                 </ErpButton>
-                <Link to="/products/skus" className="text-[11px] text-[var(--erp-accent)]">Manage SKUs →</Link>
-              </div>
+                <Link to="/products/skus" className="mb-1 text-[12px] font-medium text-[var(--erp-accent)]">Manage SKUs -&gt;</Link>
+              </TabToolbar>
 
               {fgSkuLoading ? (
-                <p className="p-4 text-[11px] text-erp-text-muted">Loading finished SKUs…</p>
+                <p className="p-6 text-[13px] text-erp-text-muted">Loading finished SKUs...</p>
               ) : (
                 <div className="overflow-x-auto">
-                  <ErpDataTable className="w-full min-w-[1000px] text-[11px]">
+                  <ErpDataTable className="w-full min-w-[1040px] text-[12px]">
                     <thead>
                       <tr>
-                        <th className="px-3 py-2 text-left">SKU</th>
-                        <th className="px-3 py-2 text-left">Design</th>
-                        <th className="px-3 py-2 text-left">Sample</th>
-                        <th className="px-3 py-2 text-left">Size / Color</th>
-                        <th className="px-3 py-2 text-left">Price</th>
-                        <th className="px-3 py-2 text-right">On hand</th>
-                        <th className="px-3 py-2 text-right">Available</th>
-                        <th className="px-3 py-2 text-left">Status</th>
-                        <th className="px-3 py-2 text-right">Actions</th>
+                        <th>SKU</th>
+                        <th>Design</th>
+                        <th>Sample</th>
+                        <th>Size / Color</th>
+                        <th>Price</th>
+                        <th className="text-right">On hand</th>
+                        <th className="text-right">Available</th>
+                        <th>Status</th>
+                        <th className="text-right">Actions</th>
                       </tr>
                     </thead>
                     <tbody>
                       {fgSkus.map((s: Sku) => {
                         const stock = fgStockBySkuId.get(s._id);
                         return (
-                          <tr key={s._id} className="border-t border-[var(--erp-border)]">
-                            <td className="px-3 py-2">
-                              <span className="font-mono text-[10px]">{s.skuCode}</span>
-                              <p className="text-[10px] text-erp-text-muted">{s.name}</p>
+                          <tr key={s._id}>
+                            <td>
+                              <p className="font-mono text-[12px] font-medium">{s.skuCode}</p>
+                              <p className="text-[12px] text-erp-text-muted">{s.name}</p>
                             </td>
-                            <td className="px-3 py-2">
+                            <td>
                               {designIdOf(s) ? (
                                 <Link to={`/designs/${designIdOf(s)}/edit`} className="text-[var(--erp-accent)] hover:underline">
                                   {designLabel(s.designId)}
                                 </Link>
-                              ) : '—'}
+                              ) : '-'}
                             </td>
-                            <td className="px-3 py-2 text-[10px]">{sampleLabel(s.sampleId)}</td>
-                            <td className="px-3 py-2">{s.size} / {colorSwatch(s.color)}</td>
-                            <td className="px-3 py-2">{formatPrice(s.basePrice)}</td>
-                            <td className="px-3 py-2 text-right font-mono">
-                              {stock ? `${stock.onHand} ${stock.unit}` : '—'}
+                            <td className="text-erp-text-muted">{sampleLabel(s.sampleId)}</td>
+                            <td>{s.size} / {colorSwatch(s.color)}</td>
+                            <td>{formatPrice(s.basePrice)}</td>
+                            <td className="text-right font-mono">
+                              {stock ? `${stock.onHand} ${stock.unit}` : '-'}
                             </td>
-                            <td className="px-3 py-2 text-right font-mono">
-                              {stock ? `${stock.available} ${stock.unit}` : '—'}
+                            <td className="text-right font-mono">
+                              {stock ? `${stock.available} ${stock.unit}` : '-'}
                             </td>
-                            <td className="px-3 py-2"><ErpStatusBadge status={s.status} label={skuStatusLabel(s.status)} /></td>
-                            <td className="px-3 py-2 text-right">
-                              <div className="flex flex-wrap justify-end gap-1">
-                                <Link
-                                  to={stockLocatorPath({ inventoryType: 'FINISHED_GOODS', skuId: s._id, search: s.skuCode })}
-                                  className="text-[10px] text-[var(--erp-accent)]"
-                                >
+                            <td><ErpStatusBadge status={s.status} label={skuStatusLabel(s.status)} /></td>
+                            <td className="text-right">
+                              <ActionStack>
+                                <TextLink to={stockLocatorPath({ inventoryType: 'FINISHED_GOODS', skuId: s._id, search: s.skuCode })}>
                                   Locate
-                                </Link>
-                                <Link to="/boms" className="text-[10px] text-[var(--erp-accent)]">BOM →</Link>
-                              </div>
+                                </TextLink>
+                                <TextLink to="/boms">BOM -&gt;</TextLink>
+                              </ActionStack>
                             </td>
                           </tr>
                         );
                       })}
                       {fgSkus.length === 0 && (
-                        <tr>
-                          <td colSpan={9} className="px-4 py-8 text-center text-erp-text-muted">
-                            No finished SKUs yet — create them from approved samples in{' '}
-                            <Link to="/products/skus" className="text-[var(--erp-accent)]">Products → SKUs</Link>
-                          </td>
-                        </tr>
+                        <EmptyRow colSpan={9}>
+                          No finished SKUs yet - create them from approved samples in{' '}
+                          <Link to="/products/skus" className="text-[var(--erp-accent)]">Products -&gt; SKUs</Link>
+                        </EmptyRow>
                       )}
                     </tbody>
                   </ErpDataTable>
                 </div>
               )}
 
-              {fgSkuMeta && fgSkuMeta.totalPages > 0 && (
-                <div className="flex items-center justify-between border-t border-[var(--erp-border)] px-3 py-2">
-                  <p className="text-[10px] text-erp-text-muted">{fgSkuMeta.page}/{fgSkuMeta.totalPages} · {fgSkuMeta.total}</p>
-                  <div className="flex gap-1">
-                    <ErpButton variant="secondary" className="!px-2 !py-1 text-[10px]" disabled={fgPage <= 1} onClick={() => setFgPage((p) => p - 1)}>Prev</ErpButton>
-                    <ErpButton variant="secondary" className="!px-2 !py-1 text-[10px]" disabled={fgPage >= fgSkuMeta.totalPages} onClick={() => setFgPage((p) => p + 1)}>Next</ErpButton>
-                  </div>
-                </div>
+              {fgSkuMeta && (
+                <TablePager
+                  page={fgPage}
+                  totalPages={fgSkuMeta.totalPages}
+                  total={fgSkuMeta.total}
+                  onPrev={() => setFgPage((p) => p - 1)}
+                  onNext={() => setFgPage((p) => p + 1)}
+                />
               )}
             </ErpCard>
           )}
         </div>
       ) : (
       <>
-      <div className="mb-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
-        <ErpCard className="!p-3">
-          <div className="flex items-center gap-2">
-            <Package size={16} className="text-[var(--erp-accent)]" />
-            <div>
-              <p className="text-[10px] uppercase tracking-wide text-erp-text-muted">Materials</p>
-              <p className="text-lg font-semibold">{stats?.materialCount ?? '—'}</p>
-            </div>
-          </div>
-        </ErpCard>
-        <ErpCard className="!p-3">
-          <div className="flex items-center gap-2">
-            <Warehouse size={16} className="text-[var(--erp-accent)]" />
-            <div>
-              <p className="text-[10px] uppercase tracking-wide text-erp-text-muted">Stock value</p>
-              <p className="text-lg font-semibold">{stats ? formatCurrency(stats.stockValue ?? 0) : '—'}</p>
-            </div>
-          </div>
-        </ErpCard>
-        <ErpCard
-          className={`!p-3 ${(stats?.dockBalanceCount ?? 0) > 0 ? 'cursor-pointer ring-1 ring-[var(--erp-accent)]/40' : ''}`}
+      <div className="grid grid-cols-2 overflow-hidden rounded-lg border border-[var(--erp-border)] bg-[var(--erp-border)] sm:grid-cols-3 lg:grid-cols-5">
+        <StatTile icon={Package} label="Materials" value={stats?.materialCount ?? '-'} />
+        <StatTile icon={Warehouse} label="Stock value" value={stats ? formatCurrency(stats.stockValue ?? 0) : '-'} />
+        <StatTile
+          icon={Truck}
+          label="Dock receipts"
+          value={stats?.dockBalanceCount ?? '-'}
+          hint={(stats?.dockOnHand ?? 0) > 0
+            ? `${stats?.dockOnHand} units on unallocated dock`
+            : 'QC-passed purchases land here'}
+          highlight={(stats?.dockBalanceCount ?? 0) > 0 ? 'accent' : undefined}
           onClick={() => { selectTab('stock'); setStockPage(1); }}
-          role="button"
-          tabIndex={0}
-          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { selectTab('stock'); setStockPage(1); } }}
-        >
-          <div className="flex items-center gap-2">
-            <Truck size={16} className="text-[var(--erp-accent)]" />
-            <div>
-              <p className="text-[10px] uppercase tracking-wide text-erp-text-muted">Dock (new receipts)</p>
-              <p className="text-lg font-semibold">{stats?.dockBalanceCount ?? '—'}</p>
-              <p className="text-[9px] text-erp-text-muted">
-                {(stats?.dockOnHand ?? 0) > 0
-                  ? `${stats?.dockOnHand} units on unallocated dock — open Stock`
-                  : 'QC-passed purchases land here'}
-              </p>
-            </div>
-          </div>
-        </ErpCard>
-        <ErpCard
-          className={`!p-3 ${(stats?.lowStock ?? 0) + (stats?.outOfStock ?? 0) > 0 ? 'cursor-pointer ring-1 ring-amber-500/40' : ''}`}
+        />
+        <StatTile
+          icon={AlertTriangle}
+          label="Low / out"
+          value={(stats?.lowStock ?? 0) + (stats?.outOfStock ?? 0) || '-'}
+          hint="Open Alerts to request purchase"
+          highlight={(stats?.lowStock ?? 0) + (stats?.outOfStock ?? 0) > 0 ? 'warn' : undefined}
           onClick={() => { selectTab('alerts'); setStockPage(1); }}
-          role="button"
-          tabIndex={0}
-          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { selectTab('alerts'); setStockPage(1); } }}
-        >
-          <div className="flex items-center gap-2">
-            <AlertTriangle size={16} className="text-amber-500" />
-            <div>
-              <p className="text-[10px] uppercase tracking-wide text-erp-text-muted">Low / out</p>
-              <p className={`text-lg font-semibold ${(stats?.lowStock ?? 0) + (stats?.outOfStock ?? 0) > 0 ? 'text-amber-600' : ''}`}>
-                {(stats?.lowStock ?? 0) + (stats?.outOfStock ?? 0) || '—'}
-              </p>
-              <p className="text-[9px] text-erp-text-muted">Open Alerts → request purchase</p>
-            </div>
-          </div>
-        </ErpCard>
-        <ErpCard className="!p-3">
-          <div className="flex items-center gap-2">
-            <History size={16} className="text-erp-text-muted" />
-            <div>
-              <p className="text-[10px] uppercase tracking-wide text-erp-text-muted">Active reservations</p>
-              <p className="text-lg font-semibold">{stats?.activeReservations ?? '—'}</p>
-            </div>
-          </div>
-        </ErpCard>
+        />
+        <StatTile icon={History} label="Reservations" value={stats?.activeReservations ?? '-'} />
       </div>
 
       {(stats?.pendingMasterRequests ?? 0) > 0 && tab !== 'requests' && (
         <button
           type="button"
-          className="mb-3 flex w-full items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-left text-[11px] text-amber-800"
+          className="flex w-full items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2.5 text-left text-[13px] text-amber-800"
           onClick={() => selectTab('requests')}
         >
-          <ClipboardList size={14} />
+          <ClipboardList size={15} />
           {stats?.pendingMasterRequests} fabric request{stats?.pendingMasterRequests === 1 ? '' : 's'} waiting for store approval
         </button>
       )}
 
-      <ErpTabs
-        tabs={[
-          { id: 'materials', label: `Materials (${stats?.materialCount ?? '—'})` },
-          {
-            id: 'stock',
-            label: (stats?.dockBalanceCount ?? 0) > 0
-              ? `Stock (${stats?.dockBalanceCount} on dock)`
-              : `Stock balances (${stats?.balanceCount ?? '—'})`,
-          },
-          { id: 'alerts', label: `Alerts (${(stats?.lowStock ?? 0) + (stats?.outOfStock ?? 0)})` },
-          { id: 'requests', label: (stats?.pendingMasterRequests ?? 0) > 0
-            ? `Requests (${stats?.pendingMasterRequests})`
-            : 'Requests' },
-          { id: 'movements', label: 'Movements' },
-          { id: 'reservations', label: 'Reserve / release' },
-        ]}
-        active={tab}
-        onChange={(id) => selectTab(id as TabId)}
-      />
-
-      <div className="mt-3">
+      <TabShell
+        tabs={(
+          <ErpTabs
+            tabs={[
+              { id: 'materials', label: `Materials (${stats?.materialCount ?? '-'})` },
+              {
+                id: 'stock',
+                label: (stats?.dockBalanceCount ?? 0) > 0
+                  ? `Stock (${stats?.dockBalanceCount} on dock)`
+                  : `Stock (${stats?.balanceCount ?? '-'})`,
+              },
+              { id: 'alerts', label: `Alerts (${(stats?.lowStock ?? 0) + (stats?.outOfStock ?? 0)})` },
+              { id: 'requests', label: (stats?.pendingMasterRequests ?? 0) > 0
+                ? `Requests (${stats?.pendingMasterRequests})`
+                : 'Requests' },
+              { id: 'movements', label: 'Movements' },
+              { id: 'reservations', label: 'Reserve / release' },
+            ]}
+            active={tab}
+            onChange={(id) => selectTab(id as TabId)}
+          />
+        )}
+      >
         {tab === 'requests' && <MaterialMasterRequestsTab canApprove={canCreate} />}
         {tab === 'materials' && (
-          <div className="space-y-3">
+          <div>
             {canCreate && showImport && importRows.length > 0 && (
-              <ErpCard className="!p-3">
+              <div className="border-b border-[var(--erp-border)] px-4 py-3">
                 <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                   <div>
-                    <h3 className="text-[11px] font-semibold text-erp-text-primary">Import preview</h3>
-                    <p className="text-[10px] text-erp-text-muted">
+                    <h3 className="text-sm font-semibold text-erp-text-primary">Import preview</h3>
+                    <p className="text-[12px] text-erp-text-muted">
                       {importFileName} · {importRows.length} row(s) ready
                     </p>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
-                    <label className="flex items-center gap-1.5 text-[11px] text-erp-text-muted">
+                    <label className="flex items-center gap-1.5 text-[12px] text-erp-text-muted">
                       <input
                         type="checkbox"
                         checked={postOpeningStock}
@@ -840,439 +789,424 @@ export function InventoryPage() {
                     </label>
                     <ErpButton
                       variant="secondary"
-                      className="!px-2.5 !py-1.5 text-[11px]"
+                      className={btnSm}
                       onClick={() => { setShowImport(false); setImportRows([]); setImportFileName(''); }}
                     >
                       Cancel
                     </ErpButton>
                     <ErpButton
-                      className="!px-2.5 !py-1.5 text-[11px]"
+                      className={btnSm}
                       disabled={runBulkImport.isPending}
                       onClick={() => runBulkImport.mutate()}
                     >
-                      {runBulkImport.isPending ? 'Importing…' : `Import ${importRows.length}`}
+                      {runBulkImport.isPending ? 'Importing...' : `Import ${importRows.length}`}
                     </ErpButton>
                   </div>
                 </div>
-                <div className="overflow-x-auto max-h-64">
-                  <ErpDataTable className="w-full min-w-[900px] text-[11px]">
+                <div className="max-h-64 overflow-x-auto rounded-md border border-[var(--erp-border)]">
+                  <ErpDataTable className="w-full min-w-[900px] text-[12px]">
                     <thead>
                       <tr>
-                        <th className="px-2 py-1.5 text-left">Code</th>
-                        <th className="px-2 py-1.5 text-left">Name</th>
-                        <th className="px-2 py-1.5 text-left">Vendor</th>
-                        <th className="px-2 py-1.5 text-left">Category</th>
-                        <th className="px-2 py-1.5 text-left">Unit</th>
-                        <th className="px-2 py-1.5 text-right">Cost</th>
-                        <th className="px-2 py-1.5 text-right">Opening qty</th>
+                        <th>Code</th>
+                        <th>Name</th>
+                        <th>Vendor</th>
+                        <th>Category</th>
+                        <th>Unit</th>
+                        <th className="text-right">Cost</th>
+                        <th className="text-right">Opening qty</th>
                       </tr>
                     </thead>
                     <tbody>
                       {importRows.slice(0, 40).map((r, i) => (
-                        <tr key={`${r.materialCode}-${i}`} className="border-t border-[var(--erp-border)]">
-                          <td className="px-2 py-1.5 font-mono">{r.materialCode}</td>
-                          <td className="px-2 py-1.5">{r.name}</td>
-                          <td className="px-2 py-1.5 text-erp-text-muted">{r.vendorName || '—'}</td>
-                          <td className="px-2 py-1.5">{r.category}</td>
-                          <td className="px-2 py-1.5">{r.unit}</td>
-                          <td className="px-2 py-1.5 text-right">{r.unitCost || 0}</td>
-                          <td className="px-2 py-1.5 text-right">{r.openingQty || 0}</td>
+                        <tr key={`${r.materialCode}-${i}`}>
+                          <td className="font-mono">{r.materialCode}</td>
+                          <td>{r.name}</td>
+                          <td className="text-erp-text-muted">{r.vendorName || '-'}</td>
+                          <td>{r.category}</td>
+                          <td>{r.unit}</td>
+                          <td className="text-right">{r.unitCost || 0}</td>
+                          <td className="text-right">{r.openingQty || 0}</td>
                         </tr>
                       ))}
                     </tbody>
                   </ErpDataTable>
                 </div>
                 {importRows.length > 40 && (
-                  <p className="mt-1 text-[10px] text-erp-text-muted">Showing first 40 of {importRows.length} rows</p>
+                  <p className="mt-2 text-[12px] text-erp-text-muted">Showing first 40 of {importRows.length} rows</p>
                 )}
-              </ErpCard>
+              </div>
             )}
 
             {!canCreate && (
-              <ErpCard className="!p-3">
-                <p className="text-[11px] text-erp-text-primary">
-                  Material master create needs <code className="text-[10px]">inventory.create</code>
-                  {' '}(Factory Admin, Inventory Sub Admin, Inventory Manager, or Store Keeper).
-                </p>
-                {canUpdate ? (
-                  <p className="mt-1 text-[10px] text-erp-text-muted">
-                    You can post stock with <strong>Manual</strong> on existing materials, or use Purchase GRN → incoming QC.
-                  </p>
-                ) : (
-                  <p className="mt-1 text-[10px] text-erp-text-muted">This role is read-only on inventory.</p>
-                )}
-              </ErpCard>
+              <InfoBanner>
+                Material master create needs <code>inventory.create</code>
+                {' '}(Factory Admin, Inventory Sub Admin, Inventory Manager, or Store Keeper).
+                {canUpdate
+                  ? ' You can post stock with Manual on existing materials, or use Purchase GRN -&gt; incoming QC.'
+                  : ' This role is read-only on inventory.'}
+              </InfoBanner>
             )}
 
-            <ErpCard className="!p-3">
-              <div className="flex flex-wrap items-end gap-2">
-                <div className="min-w-[180px] flex-1">
-                  <label className={fieldLabel}>Search</label>
-                  <div className="relative">
-                    <Search size={12} className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-erp-text-muted" />
-                    <ErpInput className="!pl-7 !py-1.5 text-[11px]" placeholder="Code or name…" value={searchInput} onChange={(e) => setSearchInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { setSearch(searchInput.trim()); setMatPage(1); } }} />
-                  </div>
+            <TabToolbar
+              title="Material master"
+              hint="Codes used on purchase requisitions, BOMs, and stock receipts."
+            >
+              <div className="min-w-[180px]">
+                <label className={fieldLabel}>Search</label>
+                <div className="relative">
+                  <Search size={13} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-erp-text-muted" />
+                  <ErpInput
+                    className="!py-1.5 !pl-8 text-[12px]"
+                    placeholder="Code or name..."
+                    value={searchInput}
+                    onChange={(e) => setSearchInput(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') { setSearch(searchInput.trim()); setMatPage(1); } }}
+                  />
                 </div>
-                <div className="w-32">
-                  <label className={fieldLabel}>Category</label>
-                  <ErpSelect className="!py-1.5 text-[11px]" value={categoryFilter} onChange={(e) => { setCategoryFilter(e.target.value); setMatPage(1); }}>
-                    <option value="">All</option>
-                    {MATERIAL_CATEGORIES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
-                  </ErpSelect>
-                </div>
-                <ErpButton variant="secondary" className="!px-2 !py-1.5 text-[11px]" onClick={() => { setSearch(searchInput.trim()); setMatPage(1); }}>Search</ErpButton>
               </div>
-            </ErpCard>
+              <div className="w-36">
+                <label className={fieldLabel}>Category</label>
+                <ErpSelect className="!py-1.5 text-[12px]" value={categoryFilter} onChange={(e) => { setCategoryFilter(e.target.value); setMatPage(1); }}>
+                  <option value="">All</option>
+                  {MATERIAL_CATEGORIES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+                </ErpSelect>
+              </div>
+              <ErpButton variant="secondary" className={btnSm} onClick={() => { setSearch(searchInput.trim()); setMatPage(1); }}>Search</ErpButton>
+            </TabToolbar>
 
-            <ErpCard className="overflow-hidden !p-0">
-              {materialsLoading ? (
-                <p className="p-4 text-[11px] text-erp-text-muted">Loading materials…</p>
-              ) : (
-                <div className="overflow-x-auto">
-                  <ErpDataTable className="w-full min-w-[900px] text-[11px]">
-                    <thead>
-                      <tr>
-                        <th className="px-3 py-2 text-left">Code</th>
-                        <th className="px-3 py-2 text-left">Name</th>
-                        <th className="px-3 py-2 text-left">Category</th>
-                        <th className="px-3 py-2 text-left">Unit</th>
-                        <th className="px-3 py-2 text-left">Cost</th>
-                        <th className="px-3 py-2 text-left">Reorder</th>
-                        <th className="px-3 py-2 text-right">Actions</th>
+            {materialsLoading ? (
+              <p className="p-6 text-[13px] text-erp-text-muted">Loading materials...</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <ErpDataTable className="w-full min-w-[980px] text-[12px]">
+                  <thead>
+                    <tr>
+                      <th>Material</th>
+                      <th>Category</th>
+                      <th>Unit</th>
+                      <th className="text-right">Cost</th>
+                      <th className="text-right">Reorder</th>
+                      {canUpdate && <th className="text-right">Manual receipt</th>}
+                      {canUpdate && <th className="text-right">Edit</th>}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {materials.map((m: Material) => (
+                      <tr key={m._id}>
+                        <td>
+                          <p className="font-mono text-[12px] font-medium text-erp-text-primary">{m.materialCode}</p>
+                          <p className="text-[12px] text-erp-text-muted">{m.name}</p>
+                        </td>
+                        <td className="text-erp-text-muted">{categoryLabel(m.category)}</td>
+                        <td>{unitLabel(m.unit)}</td>
+                        <td className="text-right">{formatCurrency(m.unitCost || 0)}</td>
+                        <td className="text-right">{m.reorderLevel ?? 0}</td>
+                        {canUpdate && (
+                          <td className="text-right">
+                            <div className="inline-flex items-center justify-end gap-1.5">
+                              <ErpInput
+                                type="number"
+                                min={1}
+                                title="Quantity for Manual receipt (opening stock / correction)"
+                                aria-label="Manual receipt quantity"
+                                className="!w-[4.5rem] !py-1 text-[12px]"
+                                value={receiptQty[m._id] ?? 100}
+                                onChange={(e) => setReceiptQty({ ...receiptQty, [m._id]: Number(e.target.value) })}
+                              />
+                              <ErpButton
+                                variant="secondary"
+                                className={btnSm}
+                                title="Post manual stock receipt using the quantity in the box"
+                                onClick={() => setReceiptConfirm({
+                                  materialId: m._id,
+                                  quantity: receiptQty[m._id] ?? 100,
+                                  unit: m.unit,
+                                  label: `${m.materialCode} - ${receiptQty[m._id] ?? 100} ${unitLabel(m.unit)}`,
+                                })}
+                              >
+                                <ArrowDownToLine size={12} className="mr-1 inline" />Post
+                              </ErpButton>
+                            </div>
+                          </td>
+                        )}
+                        {canUpdate && (
+                          <td className="text-right">
+                            <ErpButton variant="secondary" className={btnSm} onClick={() => startEdit(m)}>
+                              <Pencil size={12} className="mr-1 inline" />Edit
+                            </ErpButton>
+                          </td>
+                        )}
                       </tr>
-                    </thead>
-                    <tbody>
-                      {materials.map((m: Material) => (
-                        <tr key={m._id} className="border-t border-[var(--erp-border)]">
-                          <td className="px-3 py-2 font-mono">{m.materialCode}</td>
-                          <td className="px-3 py-2">{m.name}</td>
-                          <td className="px-3 py-2 text-erp-text-muted">{categoryLabel(m.category)}</td>
-                          <td className="px-3 py-2">{unitLabel(m.unit)}</td>
-                          <td className="px-3 py-2">{formatCurrency(m.unitCost || 0)}</td>
-                          <td className="px-3 py-2">{m.reorderLevel ?? 0}</td>
-                          <td className="px-3 py-2 text-right">
-                            <div className="flex flex-wrap items-center justify-end gap-1">
-                              {canUpdate && (
-                                <ErpButton variant="secondary" className="!px-2 !py-1 text-[10px]" onClick={() => startEdit(m)}>Edit</ErpButton>
-                              )}
-                              {canUpdate && (
-                                <>
-                                  <ErpInput
-                                    type="number"
-                                    min={1}
-                                    title="Quantity for Manual receipt (opening stock / correction)"
-                                    aria-label="Manual receipt quantity"
-                                    className="!w-16 !py-1 text-[10px]"
-                                    value={receiptQty[m._id] ?? 100}
-                                    onChange={(e) => setReceiptQty({ ...receiptQty, [m._id]: Number(e.target.value) })}
-                                  />
-                                  <ErpButton
-                                    variant="secondary"
-                                    className="!px-2 !py-1 text-[10px]"
-                                    title="Post manual stock receipt using the quantity in the box"
-                                    onClick={() => setReceiptConfirm({
-                                      materialId: m._id,
-                                      quantity: receiptQty[m._id] ?? 100,
-                                      unit: m.unit,
-                                      label: `${m.materialCode} — ${receiptQty[m._id] ?? 100} ${unitLabel(m.unit)}`,
-                                    })}
-                                  >
-                                    <ArrowDownToLine size={10} className="mr-1 inline" />Manual
-                                  </ErpButton>
-                                </>
-                              )}
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                      {editId && materials.find((m) => m._id === editId) && (
-                        <tr className="bg-[var(--erp-surface-muted)]">
-                          <td colSpan={7} className="px-3 py-3">
-                            <div className="flex flex-wrap items-end gap-2">
-                              <div className="w-24">
-                                <label className={fieldLabel}>Unit cost</label>
-                                <ErpInput className="!py-1 text-[11px]" type="number" min={0} value={editForm.unitCost} onChange={(e) => setEditForm((f) => ({ ...f, unitCost: e.target.value }))} />
-                              </div>
-                              <div className="w-24">
-                                <label className={fieldLabel}>Reorder level</label>
-                                <ErpInput className="!py-1 text-[11px]" type="number" min={0} value={editForm.reorderLevel} onChange={(e) => setEditForm((f) => ({ ...f, reorderLevel: e.target.value }))} />
-                              </div>
-                              <ErpButton className="!px-2 !py-1 text-[10px]" disabled={updateMaterial.isPending} onClick={() => updateMaterial.mutate(editId)}>Save</ErpButton>
-                              <ErpButton variant="secondary" className="!px-2 !py-1 text-[10px]" onClick={() => setEditId(null)}>Cancel</ErpButton>
-                            </div>
-                          </td>
-                        </tr>
-                      )}
-                      {materials.length === 0 && (
-                        <tr>
-                          <td colSpan={7} className="px-4 py-8 text-center text-erp-text-muted">
-                            {canCreate
-                              ? 'No materials yet — use Add material, then Manual to post opening stock.'
-                              : 'No materials yet. Ask Factory Admin / Inventory Sub Admin / Inventory Manager / Store Keeper to create the material master first.'}
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </ErpDataTable>
-                </div>
-              )}
-              {matMeta && matMeta.totalPages > 0 && (
-                <div className="flex items-center justify-between border-t border-[var(--erp-border)] px-3 py-2">
-                  <p className="text-[10px] text-erp-text-muted">{matMeta.page}/{matMeta.totalPages} · {matMeta.total} total</p>
-                  <div className="flex gap-1">
-                    <ErpButton variant="secondary" className="!px-2 !py-1 text-[10px]" disabled={matPage <= 1} onClick={() => setMatPage((p) => p - 1)}>Prev</ErpButton>
-                    <ErpButton variant="secondary" className="!px-2 !py-1 text-[10px]" disabled={matPage >= matMeta.totalPages} onClick={() => setMatPage((p) => p + 1)}>Next</ErpButton>
-                  </div>
-                </div>
-              )}
-            </ErpCard>
+                    ))}
+                    {materials.length === 0 && (
+                      <EmptyRow colSpan={canUpdate ? 7 : 5}>
+                        {canCreate
+                          ? 'No materials yet - use Add material, then Manual receipt to post opening stock.'
+                          : 'No materials yet. Ask Factory Admin / Inventory Sub Admin / Inventory Manager / Store Keeper to create the material master first.'}
+                      </EmptyRow>
+                    )}
+                  </tbody>
+                </ErpDataTable>
+              </div>
+            )}
+            {matMeta && (
+              <TablePager
+                page={matPage}
+                totalPages={matMeta.totalPages}
+                total={matMeta.total}
+                onPrev={() => setMatPage((p) => p - 1)}
+                onNext={() => setMatPage((p) => p + 1)}
+              />
+            )}
           </div>
         )}
 
         {(tab === 'stock' || tab === 'alerts') && (
-          <div className="space-y-3">
+          <div>
+            <TabToolbar
+              title={tab === 'alerts' ? 'Stock alerts' : 'Stock balances'}
+              hint={tab === 'alerts'
+                ? 'Materials below reorder level or with zero available.'
+                : 'Balances by dock or bin. Put away dock receipts in Warehouse.'}
+            >
+              <div className="min-w-[200px]">
+                <label className={fieldLabel}>Filter</label>
+                <ErpInput
+                  className="!py-1.5 text-[12px]"
+                  placeholder="Material code or name..."
+                  value={stockSearch}
+                  onChange={(e) => { setStockSearch(e.target.value); setStockPage(1); }}
+                />
+              </div>
+              {canRequestPurchase && (
+                <button
+                  type="button"
+                  className="mb-0.5 text-[12px] font-medium text-[var(--erp-accent)] hover:underline"
+                  onClick={() => navigate('/purchase')}
+                >
+                  Open Purchase -&gt;
+                </button>
+              )}
+            </TabToolbar>
+
             {tab === 'stock' && !materialsLoading && (stats?.materialCount ?? 0) === 0 && (
-              <ErpCard className="!p-3">
-                <p className="text-[11px] text-erp-text-primary">No materials or stock yet.</p>
-                <p className="mt-1 text-[10px] text-erp-text-muted">
-                  Create a material master first, then post stock with Manual receipt (or Purchase → GRN → QC).
-                </p>
+              <InfoBanner>
+                No materials or stock yet. Create a material master first, then post stock with Manual receipt (or Purchase -&gt; GRN -&gt; QC).
                 {canCreate && (
-                  <ErpButton className="mt-2 !px-2 !py-1 text-[10px]" onClick={() => selectTab('materials')}>
-                    Go to Materials → Add
-                  </ErpButton>
+                  <button type="button" className="font-medium text-[var(--erp-accent)] hover:underline" onClick={() => selectTab('materials')}>
+                    Go to Materials -&gt;
+                  </button>
                 )}
-              </ErpCard>
+              </InfoBanner>
             )}
             {tab === 'stock' && balances.some((b) => !b.storageBinId && (b.available ?? 0) > 0) && (
-              <ErpCard className="!p-3">
-                <p className="mb-2 text-[10px] font-medium uppercase tracking-wide text-erp-text-muted">Stock on dock — next step</p>
-                <div className="flex flex-wrap items-center gap-1 text-[10px]">
+              <InfoBanner tone="accent" icon={<Truck size={14} className="text-[var(--erp-accent)]" />}>
+                <span className="flex flex-wrap items-center gap-1">
                   {RM_POST_QC_FLOW.map((step, i) => (
                     <span key={step.id} className="flex items-center gap-1">
-                      {i > 0 && <ArrowRight size={10} className="text-erp-text-muted" />}
+                      {i > 0 && <ArrowRight size={11} className="text-erp-text-muted" />}
                       <span
-                        className={`rounded px-1.5 py-0.5 ${step.id === 'dock' ? 'bg-[var(--erp-accent-muted)] font-medium' : 'text-erp-text-muted'}`}
+                        className={`rounded px-1.5 py-0.5 ${step.id === 'dock' ? 'bg-white/70 font-medium' : 'text-erp-text-muted'}`}
                         title={step.detail}
                       >
                         {step.label}
                       </span>
                     </span>
                   ))}
-                </div>
-                <ul className="mt-2 space-y-1 text-[10px] text-erp-text-muted">
-                  {balances.filter((b) => !b.storageBinId && (b.available ?? 0) > 0).map((b) => (
-                    <li key={b._id} className="flex flex-wrap items-center justify-between gap-2">
-                      <span>{materialDisplayName(b.materialId)} — {b.available} {unitLabel(b.unit)} on dock</span>
-                      {canPutAway ? (
-                        <Link to={putAwayPath(materialIdFromBalance(b))} className="text-[var(--erp-accent)]">Put away →</Link>
-                      ) : (
-                        <Link to={stockLocatorPath({ materialId: materialIdFromBalance(b) })} className="text-[var(--erp-accent)]">Locate →</Link>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              </ErpCard>
+                </span>
+                <span className="text-erp-text-muted">
+                  {balances.filter((b) => !b.storageBinId && (b.available ?? 0) > 0).length} material(s) on dock - use Put away in the Warehouse column.
+                </span>
+              </InfoBanner>
             )}
             {tab === 'alerts' && (stats?.dockBalanceCount ?? 0) > 0 && (
-              <div className="flex flex-wrap items-center gap-2 rounded border border-[var(--erp-accent)]/30 bg-[var(--erp-accent-muted)] px-3 py-2 text-[10px]">
-                <Package size={14} className="text-[var(--erp-accent)]" />
-                <span>
-                  {(stats?.dockBalanceCount ?? 0)} material(s) with new QC stock on the dock
-                  {(stats?.dockOnHand ?? 0) > 0 ? ` (${stats?.dockOnHand} units)` : ''}.
-                </span>
+              <InfoBanner tone="accent" icon={<Package size={14} className="text-[var(--erp-accent)]" />}>
+                {(stats?.dockBalanceCount ?? 0)} material(s) with new QC stock on the dock
+                {(stats?.dockOnHand ?? 0) > 0 ? ` (${stats?.dockOnHand} units)` : ''}.
                 <button type="button" className="font-medium text-[var(--erp-accent)] hover:underline" onClick={() => selectTab('stock')}>
-                  View Stock →
+                  View Stock -&gt;
                 </button>
-              </div>
+              </InfoBanner>
             )}
             {tab === 'alerts' && (stats?.lowStock ?? 0) + (stats?.outOfStock ?? 0) > 0 && (
-              <div className="flex flex-wrap items-center gap-2 rounded border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[10px] text-amber-800">
-                <AlertTriangle size={14} />
-                <span>Materials below reorder level or with zero available.</span>
-                {canRequestPurchase ? (
-                  <span className="font-medium">Set qty on a row → Request purchase (creates & submits PR).</span>
-                ) : (
-                  <Link to="/purchase" className="font-medium text-[var(--erp-accent)]">Open Purchase →</Link>
+              <InfoBanner tone="warn" icon={<AlertTriangle size={14} />}>
+                Set quantity on a row, then Request purchase (creates and submits a PR).
+                {!canRequestPurchase && (
+                  <Link to="/purchase" className="font-medium text-[var(--erp-accent)]">Open Purchase -&gt;</Link>
                 )}
-              </div>
+              </InfoBanner>
             )}
-            <ErpCard className="!p-3">
-              <label className={fieldLabel}>Filter</label>
-              <ErpInput className="max-w-sm !py-1.5 text-[11px]" placeholder="Material code or name…" value={stockSearch} onChange={(e) => { setStockSearch(e.target.value); setStockPage(1); }} />
-            </ErpCard>
-            <ErpCard className="overflow-hidden !p-0">
-              {stockLoading ? (
-                <p className="p-4 text-[11px] text-erp-text-muted">Loading stock…</p>
-              ) : (
-                <div className="overflow-x-auto">
-                  <ErpDataTable className="w-full min-w-[800px] text-[11px]">
-                    <thead>
-                      <tr>
-                        <th className="px-3 py-2 text-left">Location</th>
-                        <th className="px-3 py-2 text-left">Material</th>
-                        <th className="px-3 py-2 text-right">On hand</th>
-                        <th className="px-3 py-2 text-right">Reserved</th>
-                        <th className="px-3 py-2 text-right">Available</th>
-                        <th className="px-3 py-2 text-right">Reorder</th>
-                        <th className="px-3 py-2 text-right">Value</th>
-                        <th className="px-3 py-2 text-left">Status</th>
-                        <th className="px-3 py-2 text-right">Next</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {balances.map((b: InventoryBalance) => {
-                        const st = stockStatus(b);
-                        const hint = stockWorkflowHint(b);
-                        const onDock = !b.storageBinId;
-                        const materialId = materialIdFromBalance(b);
-                        const existingPr = materialId
-                          ? (requestedByMaterial.get(materialId) || justRequested[materialId])
-                          : undefined;
-                        const showPr = canRequestPurchase && needsPurchase(b);
-                        const defaultPrQty = suggestedPrQty(b);
-                        return (
-                          <tr
-                            key={b._id}
-                            className={`border-t border-[var(--erp-border)] ${needsPurchase(b) ? 'bg-amber-500/5' : ''}`}
-                          >
-                            <td className="px-3 py-2 font-mono text-[10px] text-erp-text-muted">{balanceLocationLabel(b)}</td>
-                            <td className="px-3 py-2">{materialDisplayName(b.materialId)}</td>
-                            <td className="px-3 py-2 text-right">{b.onHand} {unitLabel(b.unit)}</td>
-                            <td className="px-3 py-2 text-right text-erp-text-muted">{b.reserved}</td>
-                            <td className="px-3 py-2 text-right font-medium">{b.available}</td>
-                            <td className="px-3 py-2 text-right text-erp-text-muted">{b.reorderLevel ?? '—'}</td>
-                            <td className="px-3 py-2 text-right">{b.stockValue != null ? formatCurrency(b.stockValue) : '—'}</td>
-                            <td className="px-3 py-2">
-                              <ErpStatusBadge status={st.status} label={st.label} />
-                              {hint && <p className="mt-0.5 text-[9px] text-erp-text-muted">{hint}</p>}
-                              {existingPr && (
-                                <p className="mt-0.5 text-[9px] text-[var(--erp-accent)]">
-                                  PR {existingPr.prNumber} · {existingPr.status.replace(/_/g, ' ')}
-                                </p>
-                              )}
-                            </td>
-                            <td className="px-3 py-2 text-right text-[10px]">
-                              <div className="flex flex-wrap items-center justify-end gap-1">
-                                {showPr && existingPr && (
-                                  <ErpButton
-                                    variant="secondary"
-                                    className="!px-2 !py-1 text-[10px] opacity-90"
-                                    disabled
-                                    title={`Already requested as ${existingPr.prNumber}`}
-                                  >
-                                    <Check size={10} className="mr-1 inline" />
-                                    Requested
-                                  </ErpButton>
-                                )}
-                                {showPr && !existingPr && (
-                                  <>
-                                    <ErpInput
-                                      type="number"
-                                      min={1}
-                                      title="Quantity to request on the purchase requisition"
-                                      aria-label="Purchase request quantity"
-                                      className="!w-14 !py-1 text-[10px]"
-                                      value={prQty[b._id] ?? defaultPrQty}
-                                      onChange={(e) => setPrQty({ ...prQty, [b._id]: Number(e.target.value) })}
-                                    />
-                                    <ErpButton
-                                      className="!px-2 !py-1 text-[10px]"
-                                      disabled={requestPurchase.isPending}
-                                      onClick={() => promptRequestPurchase(b)}
-                                    >
-                                      <ShoppingCart size={10} className="mr-1 inline" />
-                                      Request
-                                    </ErpButton>
-                                  </>
-                                )}
-                                <Link to={stockLocatorPath({ materialId })} className="text-[var(--erp-accent)]">Locate</Link>
-                                {onDock && (b.available ?? 0) > 0 && canPutAway && (
-                                  <Link to={putAwayPath(materialId)} className="ml-1 text-[var(--erp-accent)]">Put away</Link>
-                                )}
-                                {!onDock && (b.available ?? 0) > 0 && canPutAway && (
-                                  <Link to={`/warehouse/operations/picking?materialId=${materialId}`} className="ml-1 text-[var(--erp-accent)]">Pick</Link>
-                                )}
-                                {canRequestPurchase && (
-                                  <button
-                                    type="button"
-                                    className="ml-1 text-[var(--erp-accent)] hover:underline"
-                                    onClick={() => navigate('/purchase')}
-                                  >
-                                    Purchase →
-                                  </button>
-                                )}
-                              </div>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                      {balances.length === 0 && (
-                        <tr>
-                          <td colSpan={9} className="px-4 py-8 text-center text-erp-text-muted">
-                            {tab === 'alerts' ? (
-                              <>No stock alerts — all materials above reorder level</>
-                            ) : (
-                              <>No balances yet — receive via <Link to="/purchase" className="text-[var(--erp-accent)]">Purchase GRN</Link> + incoming QC</>
+
+            {stockLoading ? (
+              <p className="p-6 text-[13px] text-erp-text-muted">Loading stock...</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <ErpDataTable className="w-full min-w-[1080px] text-[12px]">
+                  <thead>
+                    <tr>
+                      <th>Location</th>
+                      <th>Material</th>
+                      <th className="text-right">On hand</th>
+                      <th className="text-right">Reserved</th>
+                      <th className="text-right">Available</th>
+                      <th className="text-right">Reorder</th>
+                      <th className="text-right">Value</th>
+                      <th>Status</th>
+                      <th className="text-right">Purchase</th>
+                      <th className="text-right">Warehouse</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {balances.map((b: InventoryBalance) => {
+                      const st = stockStatus(b);
+                      const hint = stockWorkflowHint(b);
+                      const onDock = !b.storageBinId;
+                      const materialId = materialIdFromBalance(b);
+                      const existingPr = materialId
+                        ? (requestedByMaterial.get(materialId) || justRequested[materialId])
+                        : undefined;
+                      const showPr = canRequestPurchase && needsPurchase(b);
+                      const defaultPrQty = suggestedPrQty(b);
+                      return (
+                        <tr
+                          key={b._id}
+                          className={needsPurchase(b) ? 'bg-amber-500/5' : ''}
+                          title={hint || undefined}
+                        >
+                          <td>
+                            <LocationPill label={balanceLocationLabel(b)} onDock={onDock} />
+                          </td>
+                          <td><MaterialCell materialId={b.materialId} /></td>
+                          <td className="whitespace-nowrap text-right">{b.onHand} {unitLabel(b.unit)}</td>
+                          <td className="text-right text-erp-text-muted">{b.reserved}</td>
+                          <td className="text-right font-medium">{b.available}</td>
+                          <td className="text-right text-erp-text-muted">{b.reorderLevel ?? '-'}</td>
+                          <td className="text-right">{b.stockValue != null ? formatCurrency(b.stockValue) : '-'}</td>
+                          <td>
+                            <ErpStatusBadge status={st.status} label={st.label} />
+                            {existingPr && (
+                              <p className="mt-1 text-[11px] text-[var(--erp-accent)]">
+                                PR {existingPr.prNumber} · {existingPr.status.replace(/_/g, ' ')}
+                              </p>
                             )}
                           </td>
+                          <td className="text-right">
+                            {showPr && existingPr && (
+                              <ErpButton
+                                variant="secondary"
+                                className={`${btnSm} opacity-90`}
+                                disabled
+                                title={`Already requested as ${existingPr.prNumber}`}
+                              >
+                                <Check size={12} className="mr-1 inline" />
+                                Requested
+                              </ErpButton>
+                            )}
+                            {showPr && !existingPr && (
+                              <div className="inline-flex items-center justify-end gap-1.5">
+                                <ErpInput
+                                  type="number"
+                                  min={1}
+                                  title="Quantity to request on the purchase requisition"
+                                  aria-label="Purchase request quantity"
+                                  className="!w-[4.5rem] !py-1 text-[12px]"
+                                  value={prQty[b._id] ?? defaultPrQty}
+                                  onChange={(e) => setPrQty({ ...prQty, [b._id]: Number(e.target.value) })}
+                                />
+                                <ErpButton
+                                  className={btnSm}
+                                  disabled={requestPurchase.isPending}
+                                  onClick={() => promptRequestPurchase(b)}
+                                >
+                                  <ShoppingCart size={12} className="mr-1 inline" />
+                                  Request
+                                </ErpButton>
+                              </div>
+                            )}
+                            {!showPr && <span className="text-erp-text-muted">-</span>}
+                          </td>
+                          <td className="text-right">
+                            <ActionStack>
+                              <TextLink to={stockLocatorPath({ materialId })}>
+                                <MapPin size={11} className="mr-0.5 inline" />Locate
+                              </TextLink>
+                              {onDock && (b.available ?? 0) > 0 && canPutAway && (
+                                <TextLink to={putAwayPath(materialId)}>Put away</TextLink>
+                              )}
+                              {!onDock && (b.available ?? 0) > 0 && canPutAway && (
+                                <TextLink to={`/warehouse/operations/picking?materialId=${materialId}`}>Pick</TextLink>
+                              )}
+                            </ActionStack>
+                          </td>
                         </tr>
-                      )}
-                    </tbody>
-                  </ErpDataTable>
-                </div>
-              )}
-              {stockMeta && stockMeta.totalPages > 0 && (
-                <div className="flex items-center justify-between border-t border-[var(--erp-border)] px-3 py-2">
-                  <p className="text-[10px] text-erp-text-muted">{stockMeta.page}/{stockMeta.totalPages} · {stockMeta.total} total</p>
-                  <div className="flex gap-1">
-                    <ErpButton variant="secondary" className="!px-2 !py-1 text-[10px]" disabled={stockPage <= 1} onClick={() => setStockPage((p) => p - 1)}>Prev</ErpButton>
-                    <ErpButton variant="secondary" className="!px-2 !py-1 text-[10px]" disabled={stockPage >= stockMeta.totalPages} onClick={() => setStockPage((p) => p + 1)}>Next</ErpButton>
-                  </div>
-                </div>
-              )}
-            </ErpCard>
+                      );
+                    })}
+                    {balances.length === 0 && (
+                      <EmptyRow colSpan={10}>
+                        {tab === 'alerts' ? (
+                          <>No stock alerts - all materials above reorder level</>
+                        ) : (
+                          <>No balances yet - receive via <Link to="/purchase" className="text-[var(--erp-accent)]">Purchase GRN</Link> + incoming QC</>
+                        )}
+                      </EmptyRow>
+                    )}
+                  </tbody>
+                </ErpDataTable>
+              </div>
+            )}
+            {stockMeta && (
+              <TablePager
+                page={stockPage}
+                totalPages={stockMeta.totalPages}
+                total={stockMeta.total}
+                onPrev={() => setStockPage((p) => p - 1)}
+                onNext={() => setStockPage((p) => p + 1)}
+              />
+            )}
           </div>
         )}
 
         {tab === 'reservations' && (
           canUpdate ? (
-          <div className="grid gap-3 lg:grid-cols-2">
-            <ErpCard className="!p-3">
-              <h3 className="mb-2 text-[11px] font-semibold">Reserve stock</h3>
-              <p className="mb-2 text-[10px] text-erp-text-muted">
-                Ad-hoc holds only. Prefer <Link to="/samples" className="text-[var(--erp-accent)]">Samples → Reserve</Link> or{' '}
-                <Link to="/production/orders" className="text-[var(--erp-accent)]">Production → Reserve</Link> for workflow reservations.
+          <div className="grid gap-0 lg:grid-cols-2 lg:divide-x lg:divide-[var(--erp-border)]">
+            <div className="p-4">
+              <h3 className="text-sm font-semibold text-erp-text-primary">Reserve stock</h3>
+              <p className="mt-1 mb-4 text-[12px] leading-relaxed text-erp-text-muted">
+                Ad-hoc holds only. Prefer{' '}
+                <Link to="/samples" className="text-[var(--erp-accent)]">Samples -&gt; Reserve</Link>
+                {' '}or{' '}
+                <Link to="/production/orders" className="text-[var(--erp-accent)]">Production -&gt; Reserve</Link>
+                {' '}for workflow reservations.
               </p>
-              <div className="grid gap-2 sm:grid-cols-2">
+              <div className="grid gap-3 sm:grid-cols-2">
                 <div className="sm:col-span-2">
                   <label className={fieldLabel}>Material</label>
-                  <ErpSelect className="w-full !py-1.5 text-[11px]" value={reserveForm.materialId} onChange={(e) => setReserveForm((f) => ({ ...f, materialId: e.target.value }))}>
-                    <option value="">Select…</option>
-                    {materialsAll.map((m) => <option key={m._id} value={m._id}>{m.materialCode} — {m.name}</option>)}
+                  <ErpSelect className="w-full !py-1.5 text-[12px]" value={reserveForm.materialId} onChange={(e) => setReserveForm((f) => ({ ...f, materialId: e.target.value }))}>
+                    <option value="">Select...</option>
+                    {materialsAll.map((m) => <option key={m._id} value={m._id}>{m.materialCode} - {m.name}</option>)}
                   </ErpSelect>
                   {reserveAvail && reserveForm.materialId && (
-                    <p className={`mt-1 text-[10px] ${(reserveAvail.available ?? 0) < Number(reserveForm.quantity) ? 'text-amber-700' : 'text-erp-text-muted'}`}>
+                    <p className={`mt-1.5 text-[12px] ${(reserveAvail.available ?? 0) < Number(reserveForm.quantity) ? 'text-amber-700' : 'text-erp-text-muted'}`}>
                       Available: {reserveAvail.available ?? 0} {unitLabel(reserveAvail.unit)}
                     </p>
                   )}
                 </div>
                 <div>
                   <label className={fieldLabel}>Quantity</label>
-                  <ErpInput type="number" min={1} className="!py-1.5 text-[11px]" value={reserveForm.quantity} onChange={(e) => setReserveForm((f) => ({ ...f, quantity: e.target.value }))} />
+                  <ErpInput type="number" min={1} className="!py-1.5 text-[12px]" value={reserveForm.quantity} onChange={(e) => setReserveForm((f) => ({ ...f, quantity: e.target.value }))} />
                 </div>
                 <div>
                   <label className={fieldLabel}>Reference type</label>
-                  <ErpSelect className="!py-1.5 text-[11px]" value={reserveForm.referenceType} onChange={(e) => setReserveForm((f) => ({ ...f, referenceType: e.target.value }))}>
+                  <ErpSelect className="!py-1.5 text-[12px]" value={reserveForm.referenceType} onChange={(e) => setReserveForm((f) => ({ ...f, referenceType: e.target.value }))}>
                     {RESERVATION_REFERENCE_TYPES.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
                   </ErpSelect>
                 </div>
                 <div className="sm:col-span-2">
-                  <label className={fieldLabel}>Reference ID (sample or production order ObjectId)</label>
-                  <ErpInput className="!py-1.5 font-mono text-[11px]" value={reserveForm.referenceId} onChange={(e) => setReserveForm((f) => ({ ...f, referenceId: e.target.value }))} placeholder="24-char document id" />
+                  <label className={fieldLabel}>Reference ID</label>
+                  <ErpInput className="!py-1.5 font-mono text-[12px]" value={reserveForm.referenceId} onChange={(e) => setReserveForm((f) => ({ ...f, referenceId: e.target.value }))} placeholder="Sample or production order document id" />
                 </div>
                 <ErpButton
-                  className="sm:col-span-2 !py-1.5 text-[11px]"
+                  className={`sm:col-span-2 ${btnSm}`}
                   disabled={!reserveForm.materialId || !reserveForm.referenceId || reserveStock.isPending}
                   onClick={() => {
                     const qty = Number(reserveForm.quantity);
@@ -1288,24 +1222,24 @@ export function InventoryPage() {
                   Reserve
                 </ErpButton>
               </div>
-            </ErpCard>
-            <ErpCard className="!p-3">
-              <h3 className="mb-2 text-[11px] font-semibold">Release reservations</h3>
-              <p className="mb-2 text-[10px] text-erp-text-muted">Clears active holds for a sample or production order reference.</p>
-              <div className="grid gap-2">
+            </div>
+            <div className="border-t border-[var(--erp-border)] p-4 lg:border-t-0">
+              <h3 className="text-sm font-semibold text-erp-text-primary">Release reservations</h3>
+              <p className="mt-1 mb-4 text-[12px] leading-relaxed text-erp-text-muted">Clears active holds for a sample or production order reference.</p>
+              <div className="grid gap-3">
                 <div>
                   <label className={fieldLabel}>Reference type</label>
-                  <ErpSelect className="!py-1.5 text-[11px]" value={releaseForm.referenceType} onChange={(e) => setReleaseForm((f) => ({ ...f, referenceType: e.target.value }))}>
+                  <ErpSelect className="!py-1.5 text-[12px]" value={releaseForm.referenceType} onChange={(e) => setReleaseForm((f) => ({ ...f, referenceType: e.target.value }))}>
                     {RESERVATION_REFERENCE_TYPES.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
                   </ErpSelect>
                 </div>
                 <div>
                   <label className={fieldLabel}>Reference ID</label>
-                  <ErpInput className="!py-1.5 font-mono text-[11px]" value={releaseForm.referenceId} onChange={(e) => setReleaseForm((f) => ({ ...f, referenceId: e.target.value }))} />
+                  <ErpInput className="!py-1.5 font-mono text-[12px]" value={releaseForm.referenceId} onChange={(e) => setReleaseForm((f) => ({ ...f, referenceId: e.target.value }))} />
                 </div>
                 <ErpButton
                   variant="secondary"
-                  className="!py-1.5 text-[11px]"
+                  className={btnSm}
                   disabled={!releaseForm.referenceId || releaseStock.isPending}
                   onClick={() => promptConfirm(
                     'Release reservations',
@@ -1316,85 +1250,88 @@ export function InventoryPage() {
                   Release all for reference
                 </ErpButton>
               </div>
-            </ErpCard>
+            </div>
           </div>
           ) : (
-            <ErpCard className="!p-4 text-[11px] text-erp-text-muted">
+            <p className="p-6 text-[13px] text-erp-text-muted">
               Reserve and release require <code className="font-mono">inventory.update</code>. View active holds via stock balances (reserved column) and movement history.
-            </ErpCard>
+            </p>
           )
         )}
 
         {tab === 'movements' && (
-          <div className="space-y-3">
-            <ErpCard className="!p-3">
-              <div className="flex flex-wrap items-end gap-2">
-                <div className="w-40">
-                  <label className={fieldLabel}>Type</label>
-                  <ErpSelect className="!py-1.5 text-[11px]" value={txType} onChange={(e) => { setTxType(e.target.value); setTxPage(1); }}>
-                    {TRANSACTION_TYPES.map((t) => <option key={t.value || 'all'} value={t.value}>{t.label}</option>)}
-                  </ErpSelect>
-                </div>
-                <div className="min-w-[160px] flex-1">
-                  <label className={fieldLabel}>Material</label>
-                  <ErpSelect className="!py-1.5 text-[11px]" value={txMaterialId} onChange={(e) => { setTxMaterialId(e.target.value); setTxPage(1); }}>
-                    <option value="">All materials</option>
-                    {materialsAll.map((m) => <option key={m._id} value={m._id}>{m.materialCode}</option>)}
-                  </ErpSelect>
-                </div>
-                <History size={14} className="mb-2 text-erp-text-muted" />
-                <span className="mb-2 text-[10px] text-erp-text-muted">Receipts from QC, reservations from samples & production, transfers from warehouse</span>
+          <div>
+            <TabToolbar
+              title="Movement history"
+              hint="Receipts from QC, reservations from samples and production, transfers from warehouse."
+            >
+              <div className="w-40">
+                <label className={fieldLabel}>Type</label>
+                <ErpSelect className="!py-1.5 text-[12px]" value={txType} onChange={(e) => { setTxType(e.target.value); setTxPage(1); }}>
+                  {TRANSACTION_TYPES.map((t) => <option key={t.value || 'all'} value={t.value}>{t.label}</option>)}
+                </ErpSelect>
               </div>
-            </ErpCard>
-            <ErpCard className="overflow-hidden !p-0">
-              {txLoading ? (
-                <p className="p-4 text-[11px] text-erp-text-muted">Loading movements…</p>
-              ) : (
-                <div className="overflow-x-auto">
-                  <ErpDataTable className="w-full min-w-[900px] text-[11px]">
-                    <thead>
-                      <tr>
-                        <th className="px-3 py-2 text-left">When</th>
-                        <th className="px-3 py-2 text-left">Type</th>
-                        <th className="px-3 py-2 text-left">Material</th>
-                        <th className="px-3 py-2 text-right">Qty</th>
-                        <th className="px-3 py-2 text-left">Reference</th>
-                        <th className="px-3 py-2 text-left">By</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {transactions.map((t: InventoryTransaction) => (
-                        <tr key={t._id} className="border-t border-[var(--erp-border)]">
-                          <td className="px-3 py-2 text-erp-text-muted">{formatDateTime(t.createdAt)}</td>
-                          <td className="px-3 py-2">{transactionLabel(t.type)}</td>
-                          <td className="px-3 py-2">{materialDisplayName(t.materialId as Material)}</td>
-                          <td className="px-3 py-2 text-right">{t.quantity} {unitLabel(t.unit)}</td>
-                          <td className="px-3 py-2 font-mono text-[10px] text-erp-text-muted">{transactionReferenceLabel(t)}</td>
-                          <td className="px-3 py-2 text-erp-text-muted">{performerName(t.performedBy)}</td>
+              <div className="min-w-[160px]">
+                <label className={fieldLabel}>Material</label>
+                <ErpSelect className="!py-1.5 text-[12px]" value={txMaterialId} onChange={(e) => { setTxMaterialId(e.target.value); setTxPage(1); }}>
+                  <option value="">All materials</option>
+                  {materialsAll.map((m) => <option key={m._id} value={m._id}>{m.materialCode}</option>)}
+                </ErpSelect>
+              </div>
+            </TabToolbar>
+            {txLoading ? (
+              <p className="p-6 text-[13px] text-erp-text-muted">Loading movements...</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <ErpDataTable className="w-full min-w-[900px] text-[12px]">
+                  <thead>
+                    <tr>
+                      <th>When</th>
+                      <th>Type</th>
+                      <th>Material</th>
+                      <th className="text-right">Qty</th>
+                      <th>Reference</th>
+                      <th>By</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {transactions.map((t: InventoryTransaction) => {
+                      const inbound = t.type === 'RECEIPT' || t.type === 'RESERVATION_RELEASE';
+                      const outbound = t.type === 'ISSUE' || t.type === 'RESERVATION';
+                      return (
+                        <tr key={t._id}>
+                          <td className="whitespace-nowrap text-erp-text-muted">{formatDateTime(t.createdAt)}</td>
+                          <td><TxTypeBadge type={t.type} /></td>
+                          <td><MaterialCell materialId={t.materialId as Material} /></td>
+                          <td className={`text-right font-medium ${inbound ? 'text-emerald-700' : outbound ? 'text-red-700' : ''}`}>
+                            {inbound ? '+' : outbound ? '-' : ''}{t.quantity} {unitLabel(t.unit)}
+                          </td>
+                          <td className="font-mono text-[11px] text-erp-text-muted">{transactionReferenceLabel(t)}</td>
+                          <td className="text-erp-text-muted">{performerName(t.performedBy)}</td>
                         </tr>
-                      ))}
-                      {transactions.length === 0 && (
-                        <tr>
-                          <td colSpan={6} className="px-4 py-8 text-center text-erp-text-muted">No movements yet — stock changes appear after GRN/QC, reserve, issue, or warehouse ops</td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </ErpDataTable>
-                </div>
-              )}
-              {txMeta && txMeta.totalPages > 0 && (
-                <div className="flex items-center justify-between border-t border-[var(--erp-border)] px-3 py-2">
-                  <p className="text-[10px] text-erp-text-muted">{txMeta.page}/{txMeta.totalPages} · {txMeta.total} total</p>
-                  <div className="flex gap-1">
-                    <ErpButton variant="secondary" className="!px-2 !py-1 text-[10px]" disabled={txPage <= 1} onClick={() => setTxPage((p) => p - 1)}>Prev</ErpButton>
-                    <ErpButton variant="secondary" className="!px-2 !py-1 text-[10px]" disabled={txPage >= txMeta.totalPages} onClick={() => setTxPage((p) => p + 1)}>Next</ErpButton>
-                  </div>
-                </div>
-              )}
-            </ErpCard>
+                      );
+                    })}
+                    {transactions.length === 0 && (
+                      <EmptyRow colSpan={6}>
+                        No movements yet - stock changes appear after GRN/QC, reserve, issue, or warehouse ops
+                      </EmptyRow>
+                    )}
+                  </tbody>
+                </ErpDataTable>
+              </div>
+            )}
+            {txMeta && (
+              <TablePager
+                page={txPage}
+                totalPages={txMeta.totalPages}
+                total={txMeta.total}
+                onPrev={() => setTxPage((p) => p - 1)}
+                onNext={() => setTxPage((p) => p + 1)}
+              />
+            )}
           </div>
         )}
-      </div>
+      </TabShell>
       </>
       )}
 
@@ -1419,6 +1356,47 @@ export function InventoryPage() {
         onCancel={() => setConfirmAction(null)}
         onConfirm={() => confirmAction?.fn()}
       />
+
+      {editId && (
+        <ModalShell onClose={() => setEditId(null)} maxWidth="max-w-md">
+          <div className="rounded-lg border border-[var(--erp-border)] bg-[var(--erp-surface,var(--erp-header-bg,#fff))] shadow-2xl">
+            <div className="flex items-center justify-between border-b border-[var(--erp-border)] px-4 py-3">
+              <div>
+                <h3 className="text-sm font-semibold text-erp-text-primary">Edit material</h3>
+                <p className="mt-0.5 font-mono text-[12px] text-erp-text-muted">
+                  {materials.find((m) => m._id === editId)?.materialCode}
+                  {' '}
+                  {materials.find((m) => m._id === editId)?.name}
+                </p>
+              </div>
+              <button
+                type="button"
+                className="rounded p-1 text-erp-text-muted hover:bg-[var(--erp-surface-muted)] hover:text-erp-text-primary"
+                onClick={() => setEditId(null)}
+                aria-label="Close"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div className="grid gap-3 p-4 sm:grid-cols-2">
+              <div>
+                <label className={fieldLabel}>Unit cost</label>
+                <ErpInput className="!py-1.5 text-[12px]" type="number" min={0} value={editForm.unitCost} onChange={(e) => setEditForm((f) => ({ ...f, unitCost: e.target.value }))} />
+              </div>
+              <div>
+                <label className={fieldLabel}>Reorder level</label>
+                <ErpInput className="!py-1.5 text-[12px]" type="number" min={0} value={editForm.reorderLevel} onChange={(e) => setEditForm((f) => ({ ...f, reorderLevel: e.target.value }))} />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 border-t border-[var(--erp-border)] px-4 py-3">
+              <ErpButton variant="secondary" className={btnSm} onClick={() => setEditId(null)}>Cancel</ErpButton>
+              <ErpButton className={btnSm} disabled={updateMaterial.isPending} onClick={() => updateMaterial.mutate(editId)}>
+                {updateMaterial.isPending ? 'Saving...' : 'Save'}
+              </ErpButton>
+            </div>
+          </div>
+        </ModalShell>
+      )}
 
       {showAddMaterial && (
         <ModalShell onClose={closeAddMaterial} maxWidth="max-w-xl">
@@ -1450,7 +1428,7 @@ export function InventoryPage() {
                 </ErpButton>
                 <label className="inline-flex h-8 cursor-pointer items-center rounded-md border border-[var(--erp-border)] bg-white px-2.5 text-[11px] hover:bg-[var(--erp-surface-muted)]">
                   <Upload className="mr-1 inline h-3.5 w-3.5" />
-                  {importBusy ? 'Reading…' : 'Upload Excel / CSV'}
+                  {importBusy ? 'Reading...' : 'Upload Excel / CSV'}
                   <input
                     type="file"
                     accept=".xlsx,.xls,.csv"
@@ -1467,39 +1445,39 @@ export function InventoryPage() {
               <div className="grid gap-3 sm:grid-cols-2">
                 <div>
                   <label className={fieldLabel}>Code</label>
-                  <ErpInput className="w-full !py-1.5 font-mono text-[11px]" value={form.materialCode} onChange={(e) => setForm({ ...form, materialCode: e.target.value })} required autoFocus />
+                  <ErpInput className="w-full !py-1.5 font-mono text-[12px]" value={form.materialCode} onChange={(e) => setForm({ ...form, materialCode: e.target.value })} required autoFocus />
                 </div>
                 <div>
                   <label className={fieldLabel}>Name</label>
-                  <ErpInput className="w-full !py-1.5 text-[11px]" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
+                  <ErpInput className="w-full !py-1.5 text-[12px]" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
                 </div>
                 <div>
                   <label className={fieldLabel}>Category</label>
-                  <ErpSelect className="w-full !py-1.5 text-[11px]" value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>
+                  <ErpSelect className="w-full !py-1.5 text-[12px]" value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>
                     {MATERIAL_CATEGORIES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
                   </ErpSelect>
                 </div>
                 <div>
                   <label className={fieldLabel}>Unit</label>
-                  <ErpSelect className="w-full !py-1.5 text-[11px]" value={form.unit} onChange={(e) => setForm({ ...form, unit: e.target.value })}>
+                  <ErpSelect className="w-full !py-1.5 text-[12px]" value={form.unit} onChange={(e) => setForm({ ...form, unit: e.target.value })}>
                     {MATERIAL_UNITS.map((u) => <option key={u.value} value={u.value}>{u.label}</option>)}
                   </ErpSelect>
                 </div>
                 <div>
                   <label className={fieldLabel}>Unit cost</label>
-                  <ErpInput type="number" min={0} className="w-full !py-1.5 text-[11px]" value={form.unitCost} onChange={(e) => setForm({ ...form, unitCost: Number(e.target.value) })} />
+                  <ErpInput type="number" min={0} className="w-full !py-1.5 text-[12px]" value={form.unitCost} onChange={(e) => setForm({ ...form, unitCost: Number(e.target.value) })} />
                 </div>
                 <div>
                   <label className={fieldLabel}>Reorder at</label>
-                  <ErpInput type="number" min={0} className="w-full !py-1.5 text-[11px]" value={form.reorderLevel} onChange={(e) => setForm({ ...form, reorderLevel: Number(e.target.value) })} />
+                  <ErpInput type="number" min={0} className="w-full !py-1.5 text-[12px]" value={form.reorderLevel} onChange={(e) => setForm({ ...form, reorderLevel: Number(e.target.value) })} />
                 </div>
               </div>
               <div className="flex justify-end gap-2 border-t border-[var(--erp-border)] pt-3">
-                <ErpButton type="button" variant="secondary" className="!px-3 !py-1.5 text-[11px]" onClick={closeAddMaterial} disabled={createMaterial.isPending}>
+                <ErpButton type="button" variant="secondary" className={btnSm} onClick={closeAddMaterial} disabled={createMaterial.isPending}>
                   Cancel
                 </ErpButton>
-                <ErpButton type="submit" className="!px-3 !py-1.5 text-[11px]" disabled={createMaterial.isPending}>
-                  {createMaterial.isPending ? 'Adding…' : 'Add'}
+                <ErpButton type="submit" className={btnSm} disabled={createMaterial.isPending}>
+                  {createMaterial.isPending ? 'Adding...' : 'Add'}
                 </ErpButton>
               </div>
             </form>

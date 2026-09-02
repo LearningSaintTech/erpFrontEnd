@@ -1,11 +1,13 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, Plus, RefreshCw } from 'lucide-react';
+import { AlertTriangle, Plus, RefreshCw, ShieldCheck, X } from 'lucide-react';
 import { capaApi } from '../../services/admin';
 import { qualityApi } from '../../services/operations';
 import type { CapaRecord } from '../../types/api';
 import {
-  ErpPageHeader, ErpButton, ErpCard, ErpDataTable, ErpInput, ErpSelect, ErpStatusBadge,
+  ActionStack, ComposeSection, EmptyRow, ErpButton, ErpDataTable, ErpInput, ErpPageHeader,
+  ErpSelect, ErpStatusBadge, StatTile, TabShell, TabToolbar, TablePager, btnSm, fieldLabel,
 } from '../../components/erp';
 import { AlertBanner } from '../../components/AlertBanner';
 import { SuccessBanner } from '../users/SuccessBanner';
@@ -14,8 +16,6 @@ import { useAuth } from '../../app/providers/AuthProvider';
 import { formatDateTime, isOverdue, statusLabel } from './qualityUtils';
 
 const PAGE_SIZE = 15;
-const fieldLabel = 'mb-0.5 block text-[10px] font-medium text-erp-text-muted';
-const btnSm = '!px-2 !py-1 text-[10px]';
 
 export function CapaPage() {
   const qc = useQueryClient();
@@ -128,213 +128,209 @@ export function CapaPage() {
   };
 
   return (
-    <div>
+    <div className="space-y-3">
       <AlertBanner message={error} onDismiss={() => setError('')} />
       <SuccessBanner message={success} onDismiss={() => setSuccess('')} />
 
       <ErpPageHeader
         title="CAPA"
-        subtitle="Corrective and preventive actions for quality issues"
+        subtitle={(
+          <>
+            Corrective and preventive actions for quality issues.
+            <Link to="/quality/inspections" className="ml-2 text-[var(--erp-accent)]">Inspections -&gt;</Link>
+          </>
+        )}
         actions={(
           <div className="flex gap-2">
-            <ErpButton variant="secondary" onClick={() => refetch()} disabled={isFetching}>
+            <ErpButton variant="secondary" className={btnSm} onClick={() => refetch()} disabled={isFetching}>
               <RefreshCw className={`mr-1 inline h-3.5 w-3.5 ${isFetching ? 'animate-spin' : ''}`} />
               Refresh
             </ErpButton>
             {canCreate && (
-              <ErpButton onClick={() => setShowForm((v) => !v)}>
-                <Plus className="mr-1 inline h-3.5 w-3.5" />
-                New CAPA
+              <ErpButton className={btnSm} onClick={() => setShowForm((v) => !v)}>
+                {showForm ? <X className="mr-1 inline h-3.5 w-3.5" /> : <Plus className="mr-1 inline h-3.5 w-3.5" />}
+                {showForm ? 'Cancel' : 'New CAPA'}
               </ErpButton>
             )}
           </div>
         )}
       />
 
-      <div className="mb-6 grid gap-3 sm:grid-cols-3">
-        <ErpCard className="p-3">
-          <span className="text-[10px] text-erp-text-muted">Open CAPA</span>
-          <p className="mt-1 text-lg font-semibold">{stats?.openCapa ?? '—'}</p>
-        </ErpCard>
-        <ErpCard className="p-3">
-          <span className="text-[10px] text-erp-text-muted">Failed inspections</span>
-          <p className="mt-1 text-lg font-semibold">{stats?.failed ?? '—'}</p>
-        </ErpCard>
-        <ErpCard className="p-3">
-          <span className="text-[10px] text-erp-text-muted">Rework items</span>
-          <p className="mt-1 text-lg font-semibold">{stats?.rework ?? '—'}</p>
-        </ErpCard>
+      <div className="grid grid-cols-1 overflow-hidden rounded-lg border border-[var(--erp-border)] bg-[var(--erp-border)] sm:grid-cols-3">
+        <StatTile icon={ShieldCheck} label="Open CAPA" value={stats?.openCapa ?? '-'} highlight={(stats?.openCapa ?? 0) > 0 ? 'warn' : undefined} />
+        <StatTile icon={AlertTriangle} label="Failed inspections" value={stats?.failed ?? '-'} />
+        <StatTile icon={AlertTriangle} label="Rework items" value={stats?.rework ?? '-'} />
       </div>
 
-      {showForm && canCreate && (
-        <ErpCard className="mb-6 p-4">
-          <h3 className="mb-3 text-sm font-medium">Create CAPA</h3>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <label>
-              <span className={fieldLabel}>Type</span>
-              <ErpSelect value={form.type} onChange={(e) => setForm((f) => ({ ...f, type: e.target.value }))}>
-                {(catalog?.capaTypes ?? ['CORRECTIVE', 'PREVENTIVE']).map((t) => (
-                  <option key={t} value={t}>{t}</option>
-                ))}
-              </ErpSelect>
-            </label>
-            <label>
-              <span className={fieldLabel}>Due date</span>
-              <ErpInput type="date" value={form.dueDate} onChange={(e) => setForm((f) => ({ ...f, dueDate: e.target.value }))} />
-            </label>
-            <label className="sm:col-span-2">
-              <span className={fieldLabel}>Description</span>
-              <ErpInput
-                value={form.description}
-                onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
-                placeholder="Describe the quality issue and required action"
-              />
-            </label>
-            <label>
-              <span className={fieldLabel}>Root cause</span>
-              <ErpInput value={form.rootCause} onChange={(e) => setForm((f) => ({ ...f, rootCause: e.target.value }))} />
-            </label>
-            <label>
-              <span className={fieldLabel}>Action plan</span>
-              <ErpInput value={form.actionPlan} onChange={(e) => setForm((f) => ({ ...f, actionPlan: e.target.value }))} />
-            </label>
-            <label className="sm:col-span-2">
-              <span className={fieldLabel}>Linked inspection (optional)</span>
-              <ErpSelect
-                value={form.inspectionId}
-                onChange={(e) => setForm((f) => ({ ...f, inspectionId: e.target.value }))}
-              >
-                <option value="">None</option>
-                {failedInspections.map((i) => (
-                  <option key={i._id} value={i._id}>
-                    {i.inspectionNumber} — {i.inspectionType} ({i.result})
-                  </option>
-                ))}
-              </ErpSelect>
-            </label>
-          </div>
-          <div className="mt-4 flex gap-2">
-            <ErpButton
-              disabled={!form.description.trim() || create.isPending}
-              onClick={() => create.mutate()}
-            >
-              Save CAPA
-            </ErpButton>
-            <ErpButton variant="secondary" onClick={() => setShowForm(false)}>Cancel</ErpButton>
-          </div>
-        </ErpCard>
-      )}
+      <TabShell>
+        {showForm && canCreate && (
+          <ComposeSection title="Create CAPA" hint="Link an optional failed inspection, then track root cause and due date.">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <label className={fieldLabel}>Type</label>
+                <ErpSelect className="!py-1.5 text-[12px]" value={form.type} onChange={(e) => setForm((f) => ({ ...f, type: e.target.value }))}>
+                  {(catalog?.capaTypes ?? ['CORRECTIVE', 'PREVENTIVE']).map((t) => (
+                    <option key={t} value={t}>{t}</option>
+                  ))}
+                </ErpSelect>
+              </div>
+              <div>
+                <label className={fieldLabel}>Due date</label>
+                <ErpInput className="!py-1.5 text-[12px]" type="date" value={form.dueDate} onChange={(e) => setForm((f) => ({ ...f, dueDate: e.target.value }))} />
+              </div>
+              <div className="sm:col-span-2">
+                <label className={fieldLabel}>Description</label>
+                <ErpInput
+                  className="!py-1.5 text-[12px]"
+                  value={form.description}
+                  onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
+                  placeholder="Describe the quality issue and required action"
+                />
+              </div>
+              <div>
+                <label className={fieldLabel}>Root cause</label>
+                <ErpInput className="!py-1.5 text-[12px]" value={form.rootCause} onChange={(e) => setForm((f) => ({ ...f, rootCause: e.target.value }))} />
+              </div>
+              <div>
+                <label className={fieldLabel}>Action plan</label>
+                <ErpInput className="!py-1.5 text-[12px]" value={form.actionPlan} onChange={(e) => setForm((f) => ({ ...f, actionPlan: e.target.value }))} />
+              </div>
+              <div className="sm:col-span-2">
+                <label className={fieldLabel}>Linked inspection (optional)</label>
+                <ErpSelect
+                  className="!py-1.5 text-[12px]"
+                  value={form.inspectionId}
+                  onChange={(e) => setForm((f) => ({ ...f, inspectionId: e.target.value }))}
+                >
+                  <option value="">None</option>
+                  {failedInspections.map((i) => (
+                    <option key={i._id} value={i._id}>
+                      {i.inspectionNumber} - {i.inspectionType} ({i.result})
+                    </option>
+                  ))}
+                </ErpSelect>
+              </div>
+            </div>
+            <div className="mt-3 flex gap-2">
+              <ErpButton className={btnSm} disabled={!form.description.trim() || create.isPending} onClick={() => create.mutate()}>
+                {create.isPending ? 'Saving...' : 'Save CAPA'}
+              </ErpButton>
+              <ErpButton variant="secondary" className={btnSm} onClick={() => setShowForm(false)}>Cancel</ErpButton>
+            </div>
+          </ComposeSection>
+        )}
 
-      <ErpCard className="p-4">
-        <div className="mb-4 flex flex-wrap items-end gap-3">
-          <label>
-            <span className={fieldLabel}>Status filter</span>
-            <ErpSelect value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}>
+        <TabToolbar title="CAPA records" hint="Open, in-progress, and closed actions.">
+          <div className="w-40">
+            <label className={fieldLabel}>Status</label>
+            <ErpSelect className="!py-1.5 text-[12px]" value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}>
               <option value="">All</option>
               <option value="OPEN">Open</option>
               <option value="IN_PROGRESS">In progress</option>
               <option value="CLOSED">Closed</option>
             </ErpSelect>
-          </label>
+          </div>
+        </TabToolbar>
+
+        <div className="overflow-x-auto">
+          <ErpDataTable className="w-full min-w-[720px] text-[12px]">
+            <thead>
+              <tr>
+                <th>Number</th>
+                <th>Type</th>
+                <th>Description</th>
+                <th>Due</th>
+                <th>Status</th>
+                <th className="text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {isLoading ? (
+                <EmptyRow colSpan={6}>Loading...</EmptyRow>
+              ) : records.map((r) => (
+                <tr key={r._id}>
+                  <td className="whitespace-nowrap font-mono font-medium">{r.capaNumber}</td>
+                  <td>{r.type}</td>
+                  <td className="max-w-[280px] truncate" title={r.description}>{r.description}</td>
+                  <td className={`whitespace-nowrap ${isOverdue(r.dueDate) && r.status !== 'CLOSED' ? 'text-red-600' : 'text-erp-text-muted'}`}>
+                    {r.dueDate ? formatDateTime(r.dueDate).split(',')[0] : '-'}
+                    {isOverdue(r.dueDate) && r.status !== 'CLOSED' && (
+                      <AlertTriangle className="ml-1 inline h-3.5 w-3.5" />
+                    )}
+                  </td>
+                  <td><ErpStatusBadge status={r.status} label={statusLabel(r.status)} /></td>
+                  <td className="text-right">
+                    <ActionStack>
+                      {canUpdate && r.status !== 'CLOSED' && (
+                        <ErpButton variant="secondary" className={btnSm} onClick={() => openEdit(r)}>Edit</ErpButton>
+                      )}
+                      {canApprove && r.status !== 'CLOSED' && (
+                        <ErpButton variant="secondary" className={btnSm} onClick={() => setConfirmCloseId(r._id)}>Close</ErpButton>
+                      )}
+                    </ActionStack>
+                  </td>
+                </tr>
+              ))}
+              {!isLoading && records.length === 0 && (
+                <EmptyRow colSpan={6}>No CAPA records</EmptyRow>
+              )}
+            </tbody>
+          </ErpDataTable>
         </div>
 
-        <ErpDataTable>
-          <thead>
-            <tr>
-              <th>Number</th>
-              <th>Type</th>
-              <th>Description</th>
-              <th>Due</th>
-              <th>Status</th>
-              <th className="text-right">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {isLoading ? (
-              <tr><td colSpan={6} className="py-8 text-center text-erp-text-muted">Loading…</td></tr>
-            ) : records.map((r) => (
-              <tr key={r._id}>
-                <td className="font-mono text-xs">{r.capaNumber}</td>
-                <td>{r.type}</td>
-                <td className="max-w-[240px] truncate" title={r.description}>{r.description}</td>
-                <td className={`text-xs ${isOverdue(r.dueDate) && r.status !== 'CLOSED' ? 'text-red-500' : 'text-erp-text-muted'}`}>
-                  {r.dueDate ? formatDateTime(r.dueDate).split(',')[0] : '—'}
-                  {isOverdue(r.dueDate) && r.status !== 'CLOSED' && (
-                    <AlertTriangle className="ml-1 inline h-3 w-3" />
-                  )}
-                </td>
-                <td><ErpStatusBadge status={r.status} label={statusLabel(r.status)} /></td>
-                <td className="text-right">
-                  <div className="flex justify-end gap-1">
-                    {canUpdate && r.status !== 'CLOSED' && (
-                      <ErpButton variant="secondary" className={btnSm} onClick={() => openEdit(r)}>
-                        Edit
-                      </ErpButton>
-                    )}
-                    {canApprove && r.status !== 'CLOSED' && (
-                      <ErpButton
-                        variant="secondary"
-                        className={btnSm}
-                        onClick={() => setConfirmCloseId(r._id)}
-                      >
-                        Close
-                      </ErpButton>
-                    )}
-                  </div>
-                </td>
-              </tr>
-            ))}
-            {!isLoading && records.length === 0 && (
-              <tr><td colSpan={6} className="py-8 text-center text-erp-text-muted">No CAPA records</td></tr>
-            )}
-          </tbody>
-        </ErpDataTable>
-
-        {meta && meta.totalPages > 1 && (
-          <div className="mt-4 flex items-center justify-between text-xs text-erp-text-muted">
-            <span>Page {meta.page} of {meta.totalPages}</span>
-            <div className="flex gap-2">
-              <ErpButton variant="secondary" className={btnSm} disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
-                Previous
-              </ErpButton>
-              <ErpButton variant="secondary" className={btnSm} disabled={page >= meta.totalPages} onClick={() => setPage((p) => p + 1)}>
-                Next
-              </ErpButton>
-            </div>
-          </div>
+        {meta && (
+          <TablePager
+            page={page}
+            totalPages={meta.totalPages}
+            total={meta.total}
+            onPrev={() => setPage((p) => p - 1)}
+            onNext={() => setPage((p) => p + 1)}
+          />
         )}
-      </ErpCard>
+      </TabShell>
 
       {editId && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <ErpCard className="w-full max-w-md p-5">
-            <h3 className="mb-4 text-base font-semibold">Update CAPA</h3>
-            <div className="space-y-3">
-              <label>
-                <span className={fieldLabel}>Status</span>
-                <ErpSelect value={editForm.status} onChange={(e) => setEditForm((f) => ({ ...f, status: e.target.value }))}>
+        <div className="fixed inset-0 z-[10000] flex items-center justify-center overflow-y-auto bg-black/45 p-4" onClick={() => setEditId(null)} role="presentation">
+          <div
+            className="my-auto w-full max-w-md rounded-lg border border-[var(--erp-border)] bg-[var(--erp-surface,var(--erp-header-bg,#fff))] shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+          >
+            <div className="flex items-start justify-between border-b border-[var(--erp-border)] px-4 py-3">
+              <h3 className="text-sm font-semibold text-erp-text-primary">Update CAPA</h3>
+              <button type="button" className="rounded p-1 text-erp-text-muted hover:bg-[var(--erp-surface-muted)]" onClick={() => setEditId(null)} aria-label="Close">
+                <X size={16} />
+              </button>
+            </div>
+            <div className="space-y-3 p-4">
+              <div>
+                <label className={fieldLabel}>Status</label>
+                <ErpSelect className="!py-1.5 text-[12px]" value={editForm.status} onChange={(e) => setEditForm((f) => ({ ...f, status: e.target.value }))}>
                   <option value="OPEN">Open</option>
                   <option value="IN_PROGRESS">In progress</option>
                 </ErpSelect>
-              </label>
-              <label>
-                <span className={fieldLabel}>Root cause</span>
-                <ErpInput value={editForm.rootCause} onChange={(e) => setEditForm((f) => ({ ...f, rootCause: e.target.value }))} />
-              </label>
-              <label>
-                <span className={fieldLabel}>Action plan</span>
-                <ErpInput value={editForm.actionPlan} onChange={(e) => setEditForm((f) => ({ ...f, actionPlan: e.target.value }))} />
-              </label>
-              <label>
-                <span className={fieldLabel}>Due date</span>
-                <ErpInput type="date" value={editForm.dueDate} onChange={(e) => setEditForm((f) => ({ ...f, dueDate: e.target.value }))} />
-              </label>
+              </div>
+              <div>
+                <label className={fieldLabel}>Root cause</label>
+                <ErpInput className="!py-1.5 text-[12px]" value={editForm.rootCause} onChange={(e) => setEditForm((f) => ({ ...f, rootCause: e.target.value }))} />
+              </div>
+              <div>
+                <label className={fieldLabel}>Action plan</label>
+                <ErpInput className="!py-1.5 text-[12px]" value={editForm.actionPlan} onChange={(e) => setEditForm((f) => ({ ...f, actionPlan: e.target.value }))} />
+              </div>
+              <div>
+                <label className={fieldLabel}>Due date</label>
+                <ErpInput className="!py-1.5 text-[12px]" type="date" value={editForm.dueDate} onChange={(e) => setEditForm((f) => ({ ...f, dueDate: e.target.value }))} />
+              </div>
             </div>
-            <div className="mt-4 flex justify-end gap-2">
-              <ErpButton variant="secondary" onClick={() => setEditId(null)}>Cancel</ErpButton>
-              <ErpButton disabled={update.isPending} onClick={() => update.mutate()}>Save</ErpButton>
+            <div className="flex justify-end gap-2 border-t border-[var(--erp-border)] px-4 py-3">
+              <ErpButton variant="secondary" className={btnSm} onClick={() => setEditId(null)}>Cancel</ErpButton>
+              <ErpButton className={btnSm} disabled={update.isPending} onClick={() => update.mutate()}>
+                {update.isPending ? 'Saving...' : 'Save'}
+              </ErpButton>
             </div>
-          </ErpCard>
+          </div>
         </div>
       )}
 

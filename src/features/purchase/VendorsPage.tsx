@@ -1,11 +1,12 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Download, Plus, RefreshCw, Search, X } from 'lucide-react';
+import { Download, Plus, RefreshCw, Search, Users, X } from 'lucide-react';
 import { purchaseApi } from '../../services/operations';
 import { AlertBanner } from '../../components/AlertBanner';
 import {
-  ErpButton, ErpCard, ErpDataTable, ErpInput, ErpPageHeader, ErpStatusBadge,
+  ComposeSection, EmptyRow, ErpButton, ErpDataTable, ErpInput, ErpPageHeader, ErpStatusBadge,
+  StatTile, TabShell, TabToolbar, TablePager, btnSm, fieldLabel,
 } from '../../components/erp';
 import type { Supplier } from '../../types/api';
 import { useAuth } from '../../app/providers/AuthProvider';
@@ -13,7 +14,6 @@ import { SuccessBanner } from '../users/SuccessBanner';
 import { downloadCsv } from '../../utils/csvExport';
 
 const PAGE_SIZE = 50;
-const fieldLabel = 'mb-0.5 block text-[10px] font-medium text-erp-text-muted';
 
 const emptyForm = {
   supplierCode: '',
@@ -100,10 +100,15 @@ export function VendorsPage() {
     setError('');
   };
 
+  const runSearch = () => {
+    setSearch(searchInput);
+    setPage(1);
+  };
+
   const exportCsv = () => {
     downloadCsv(
       'vendors.csv',
-      ['Vendor ID', 'Name', 'Contact Person', 'Mobile', 'Email', 'GST No.', 'Material Supplied', 'Payment Terms', 'Status'],
+      ['Vendor ID', 'Name', 'Contact Person', 'Mobile', 'Email', 'GST No.', 'Material Supplied', 'Payment Terms', 'Lead days', 'Status'],
       items.map((s) => [
         s.supplierCode,
         s.name,
@@ -113,49 +118,39 @@ export function VendorsPage() {
         s.gstNumber || '',
         s.materialsSupplied || '',
         s.paymentTerms || '',
+        String(s.leadTimeDays ?? ''),
         s.status || 'ACTIVE',
       ]),
     );
   };
 
   return (
-    <div className="p-4 md:p-6">
+    <div className="space-y-3">
+      <AlertBanner message={error} onDismiss={() => setError('')} />
+      <SuccessBanner message={success} onDismiss={() => setSuccess('')} />
+
       <ErpPageHeader
         title="Vendors"
-        subtitle={`Supplier master · ${stats?.suppliers ?? items.length} vendors`}
+        subtitle={(
+          <>
+            Supplier master used on POs and RFQs.
+            <Link to="/purchase" className="ml-2 text-[var(--erp-accent)]">Purchase -&gt;</Link>
+          </>
+        )}
         actions={(
           <>
-            <Link
-              to="/purchase"
-              className="inline-flex h-8 items-center text-[11px] text-[var(--erp-accent)] hover:underline"
-            >
-              Purchase →
-            </Link>
-            <ErpButton
-              variant="secondary"
-              className="inline-flex h-8 items-center !px-2.5 text-[11px]"
-              onClick={() => refetch()}
-              disabled={isFetching}
-            >
+            <ErpButton variant="secondary" className={btnSm} onClick={() => refetch()} disabled={isFetching}>
               <RefreshCw className={`mr-1 inline h-3.5 w-3.5 ${isFetching ? 'animate-spin' : ''}`} />
               Refresh
             </ErpButton>
             {canExport && (
-              <ErpButton
-                variant="secondary"
-                className="inline-flex h-8 items-center !px-2.5 text-[11px]"
-                onClick={exportCsv}
-                disabled={!items.length}
-              >
+              <ErpButton variant="secondary" className={btnSm} onClick={exportCsv} disabled={!items.length}>
                 <Download className="mr-1 inline h-3.5 w-3.5" />
                 Export
               </ErpButton>
             )}
             {canManage && (
-              <ErpButton
-                className="inline-flex h-8 items-center !px-2.5 text-[11px]"
-                onClick={() => (showForm ? closeForm() : setShowForm(true))}
-              >
+              <ErpButton className={btnSm} onClick={() => (showForm ? closeForm() : setShowForm(true))}>
                 {showForm ? (
                   <>
                     <X className="mr-1 inline h-3.5 w-3.5" />
@@ -173,174 +168,174 @@ export function VendorsPage() {
         )}
       />
 
-      {error && <AlertBanner message={error} onDismiss={() => setError('')} />}
-      {success && <SuccessBanner message={success} />}
+      <div className="grid grid-cols-1 overflow-hidden rounded-lg border border-[var(--erp-border)] bg-[var(--erp-border)] sm:grid-cols-2">
+        <StatTile icon={Users} label="Vendors" value={stats?.suppliers ?? items.length} />
+        <StatTile icon={Users} label="On this page" value={items.length} />
+      </div>
 
-      {canManage && showForm && (
-        <ErpCard className="mb-3 !p-3">
-          <h3 className="mb-2 text-[11px] font-semibold">New vendor</h3>
-          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-            <div>
-              <label className={fieldLabel}>Vendor ID</label>
-              <ErpInput
-                className="!py-1.5 text-[11px] font-mono"
-                value={form.supplierCode}
-                onChange={(e) => setForm({ ...form, supplierCode: e.target.value })}
-                placeholder="V0038"
-              />
+      <TabShell>
+        {canManage && showForm && (
+          <ComposeSection title="New vendor" hint="Saved to the supplier master used on POs and RFQs.">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <div>
+                <label className={fieldLabel}>Vendor ID</label>
+                <ErpInput
+                  className="!py-1.5 font-mono text-[12px]"
+                  value={form.supplierCode}
+                  onChange={(e) => setForm({ ...form, supplierCode: e.target.value })}
+                  placeholder="V0038"
+                />
+              </div>
+              <div className="sm:col-span-2">
+                <label className={fieldLabel}>Name</label>
+                <ErpInput
+                  className="!py-1.5 text-[12px]"
+                  value={form.name}
+                  onChange={(e) => setForm({ ...form, name: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className={fieldLabel}>Contact person</label>
+                <ErpInput
+                  className="!py-1.5 text-[12px]"
+                  value={form.contactPerson}
+                  onChange={(e) => setForm({ ...form, contactPerson: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className={fieldLabel}>Mobile</label>
+                <ErpInput
+                  className="!py-1.5 font-mono text-[12px]"
+                  value={form.phone}
+                  onChange={(e) => setForm({ ...form, phone: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className={fieldLabel}>Email</label>
+                <ErpInput
+                  className="!py-1.5 text-[12px]"
+                  type="email"
+                  value={form.contactEmail}
+                  onChange={(e) => setForm({ ...form, contactEmail: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className={fieldLabel}>GST No.</label>
+                <ErpInput
+                  className="!py-1.5 font-mono text-[12px]"
+                  value={form.gstNumber}
+                  onChange={(e) => setForm({ ...form, gstNumber: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className={fieldLabel}>Material supplied</label>
+                <ErpInput
+                  className="!py-1.5 text-[12px]"
+                  value={form.materialsSupplied}
+                  onChange={(e) => setForm({ ...form, materialsSupplied: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className={fieldLabel}>Payment terms</label>
+                <ErpInput
+                  className="!py-1.5 text-[12px]"
+                  value={form.paymentTerms}
+                  onChange={(e) => setForm({ ...form, paymentTerms: e.target.value })}
+                  placeholder="On Delivery / Net 7 / Advance"
+                />
+              </div>
+              <div>
+                <label className={fieldLabel}>Lead days</label>
+                <ErpInput
+                  className="!py-1.5 text-[12px]"
+                  type="number"
+                  min={0}
+                  value={form.leadTimeDays}
+                  onChange={(e) => setForm({ ...form, leadTimeDays: e.target.value })}
+                />
+              </div>
+              <div className="flex items-end gap-2">
+                <ErpButton
+                  className={btnSm}
+                  disabled={!form.supplierCode.trim() || !form.name.trim() || createVendor.isPending}
+                  onClick={() => createVendor.mutate()}
+                >
+                  {createVendor.isPending ? 'Saving...' : 'Save'}
+                </ErpButton>
+                <ErpButton variant="secondary" className={btnSm} onClick={closeForm}>
+                  Cancel
+                </ErpButton>
+              </div>
             </div>
-            <div className="sm:col-span-2 lg:col-span-2">
-              <label className={fieldLabel}>Name</label>
-              <ErpInput
-                className="!py-1.5 text-[11px]"
-                value={form.name}
-                onChange={(e) => setForm({ ...form, name: e.target.value })}
-              />
-            </div>
-            <div>
-              <label className={fieldLabel}>Contact person</label>
-              <ErpInput
-                className="!py-1.5 text-[11px]"
-                value={form.contactPerson}
-                onChange={(e) => setForm({ ...form, contactPerson: e.target.value })}
-              />
-            </div>
-            <div>
-              <label className={fieldLabel}>Mobile</label>
-              <ErpInput
-                className="!py-1.5 text-[11px] font-mono"
-                value={form.phone}
-                onChange={(e) => setForm({ ...form, phone: e.target.value })}
-              />
-            </div>
-            <div>
-              <label className={fieldLabel}>Email</label>
-              <ErpInput
-                className="!py-1.5 text-[11px]"
-                type="email"
-                value={form.contactEmail}
-                onChange={(e) => setForm({ ...form, contactEmail: e.target.value })}
-              />
-            </div>
-            <div>
-              <label className={fieldLabel}>GST No.</label>
-              <ErpInput
-                className="!py-1.5 text-[11px] font-mono"
-                value={form.gstNumber}
-                onChange={(e) => setForm({ ...form, gstNumber: e.target.value })}
-              />
-            </div>
-            <div>
-              <label className={fieldLabel}>Material supplied</label>
-              <ErpInput
-                className="!py-1.5 text-[11px]"
-                value={form.materialsSupplied}
-                onChange={(e) => setForm({ ...form, materialsSupplied: e.target.value })}
-              />
-            </div>
-            <div>
-              <label className={fieldLabel}>Payment terms</label>
-              <ErpInput
-                className="!py-1.5 text-[11px]"
-                value={form.paymentTerms}
-                onChange={(e) => setForm({ ...form, paymentTerms: e.target.value })}
-                placeholder="On Delivery / Net 7 / Advance"
-              />
-            </div>
-            <div className="flex items-end gap-2">
-              <ErpButton
-                className="flex-1 !py-1.5 text-[11px]"
-                disabled={!form.supplierCode.trim() || !form.name.trim() || createVendor.isPending}
-                onClick={() => createVendor.mutate()}
-              >
-                Save
-              </ErpButton>
-              <ErpButton variant="secondary" className="!py-1.5 text-[11px]" onClick={closeForm}>
-                Cancel
-              </ErpButton>
-            </div>
-          </div>
-        </ErpCard>
-      )}
+          </ComposeSection>
+        )}
 
-      <ErpCard className="!p-0">
-        <div className="flex flex-wrap items-center gap-2 border-b border-[var(--erp-border)] p-3">
-          <div className="relative min-w-[180px] flex-1">
-            <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-erp-text-muted" />
+        <TabToolbar title="Vendor master" hint="Search by vendor ID, name, GST, or material.">
+          <div className="relative min-w-[200px]">
+            <Search size={13} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-erp-text-muted" />
             <ErpInput
-              className="!py-1.5 pl-7 text-[11px]"
-              placeholder="Search vendor ID, name, GST, material…"
+              className="!py-1.5 pl-8 text-[12px]"
+              placeholder="Search vendor ID, name, GST, material..."
               value={searchInput}
               onChange={(e) => setSearchInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  setSearch(searchInput);
-                  setPage(1);
-                }
-              }}
+              onKeyDown={(e) => { if (e.key === 'Enter') runSearch(); }}
             />
           </div>
-          <ErpButton
-            variant="secondary"
-            className="!px-2 !py-1.5 text-[11px]"
-            onClick={() => { setSearch(searchInput); setPage(1); }}
-          >
-            Search
-          </ErpButton>
-        </div>
+          <ErpButton variant="secondary" className={btnSm} onClick={runSearch}>Search</ErpButton>
+        </TabToolbar>
 
         {isLoading ? (
-          <p className="p-4 text-[11px] text-erp-text-muted">Loading…</p>
+          <p className="p-6 text-[13px] text-erp-text-muted">Loading...</p>
         ) : (
           <div className="overflow-x-auto">
-            <ErpDataTable className="w-full min-w-[1100px] text-[11px]">
+            <ErpDataTable className="w-full min-w-[1100px] text-[12px]">
               <thead>
                 <tr>
-                  <th className="px-3 py-2 text-left">Vendor ID</th>
-                  <th className="px-3 py-2 text-left">Name</th>
-                  <th className="px-3 py-2 text-left">Contact Person</th>
-                  <th className="px-3 py-2 text-left">Mobile</th>
-                  <th className="px-3 py-2 text-left">Email</th>
-                  <th className="px-3 py-2 text-left">GST No.</th>
-                  <th className="px-3 py-2 text-left">Material Supplied</th>
-                  <th className="px-3 py-2 text-left">Payment Terms</th>
-                  <th className="px-3 py-2 text-left">Status</th>
+                  <th>Vendor ID</th>
+                  <th>Name</th>
+                  <th>Contact</th>
+                  <th>Mobile</th>
+                  <th>Email</th>
+                  <th>GST</th>
+                  <th>Material</th>
+                  <th>Payment</th>
+                  <th>Lead</th>
+                  <th>Status</th>
                 </tr>
               </thead>
               <tbody>
                 {items.map((s) => (
-                  <tr key={s._id} className="border-t border-[var(--erp-border)]">
-                    <td className="px-3 py-2 font-mono whitespace-nowrap">{s.supplierCode}</td>
-                    <td className="px-3 py-2">{s.name}</td>
-                    <td className="px-3 py-2 text-erp-text-muted">{s.contactPerson || '—'}</td>
-                    <td className="px-3 py-2 font-mono whitespace-nowrap">{s.phone || '—'}</td>
-                    <td className="px-3 py-2 text-erp-text-muted">{s.contactEmail || '—'}</td>
-                    <td className="px-3 py-2 font-mono text-[10px] whitespace-nowrap">{s.gstNumber || '—'}</td>
-                    <td className="px-3 py-2">{s.materialsSupplied || '—'}</td>
-                    <td className="px-3 py-2 whitespace-nowrap">{s.paymentTerms || '—'}</td>
-                    <td className="px-3 py-2"><ErpStatusBadge status={s.status || 'ACTIVE'} /></td>
+                  <tr key={s._id}>
+                    <td className="whitespace-nowrap font-mono">{s.supplierCode}</td>
+                    <td className="font-medium">{s.name}</td>
+                    <td className="text-erp-text-muted">{s.contactPerson || '-'}</td>
+                    <td className="whitespace-nowrap font-mono">{s.phone || '-'}</td>
+                    <td className="text-erp-text-muted">{s.contactEmail || '-'}</td>
+                    <td className="whitespace-nowrap font-mono text-[11px]">{s.gstNumber || '-'}</td>
+                    <td>{s.materialsSupplied || '-'}</td>
+                    <td className="whitespace-nowrap">{s.paymentTerms || '-'}</td>
+                    <td className="text-right">{s.leadTimeDays ?? '-'}</td>
+                    <td><ErpStatusBadge status={s.status || 'ACTIVE'} /></td>
                   </tr>
                 ))}
                 {items.length === 0 && (
-                  <tr>
-                    <td colSpan={9} className="px-4 py-8 text-center text-erp-text-muted">No vendors found</td>
-                  </tr>
+                  <EmptyRow colSpan={10}>No vendors found</EmptyRow>
                 )}
               </tbody>
             </ErpDataTable>
           </div>
         )}
 
-        {meta && meta.totalPages > 0 && (
-          <div className="flex items-center justify-between border-t border-[var(--erp-border)] px-3 py-2">
-            <p className="text-[10px] text-erp-text-muted">{meta.page}/{meta.totalPages} · {meta.total}</p>
-            <div className="flex gap-1">
-              <ErpButton variant="secondary" className="!px-2 !py-1 text-[10px]" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>Prev</ErpButton>
-              <ErpButton variant="secondary" className="!px-2 !py-1 text-[10px]" disabled={page >= meta.totalPages} onClick={() => setPage((p) => p + 1)}>Next</ErpButton>
-            </div>
-          </div>
+        {meta && (
+          <TablePager
+            page={page}
+            totalPages={meta.totalPages}
+            total={meta.total}
+            onPrev={() => setPage((p) => p - 1)}
+            onNext={() => setPage((p) => p + 1)}
+          />
         )}
-      </ErpCard>
+      </TabShell>
     </div>
   );
 }

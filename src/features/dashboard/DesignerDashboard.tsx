@@ -93,14 +93,14 @@ export function DesignerDashboard() {
     { label: 'Unread alerts', value: unread, link: '/notifications', icon: Bell },
   ];
 
-  const alerts: AlertItem[] = [
+  const alerts = ([
     { id: 'revision', label: 'Revisions to fix', count: revisions, link: '/designs', severity: 'danger' },
     { id: 'draft', label: 'Drafts to finish', count: draftOnly, link: '/designs', severity: 'warning' },
     { id: 'rejected', label: 'Rejected — clone if needed', count: rejected, link: '/designs', severity: 'warning' },
     { id: 'review', label: 'Waiting in review', count: inReview, link: '/designs', severity: 'info' },
     { id: 'approved', label: 'Approved — awaiting release', count: approved, link: '/designs', severity: 'info' },
     { id: 'notify', label: 'Unread notifications', count: unread, link: '/notifications', severity: 'info' },
-  ].filter((a) => a.count > 0);
+  ] satisfies AlertItem[]).filter((a) => a.count > 0);
 
   const statusChart = recordToChart(stats?.byStatus);
   const categoryChart = recordToChart(stats?.byCategory);

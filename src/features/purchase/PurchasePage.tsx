@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
-  ArrowRight, ClipboardList, Download, FileText, Package, RefreshCw, Search, ShoppingCart, Truck, Users,
+  ArrowRight, ClipboardList, Download, FileText, RefreshCw, Search, ShoppingCart, Truck, X,
 } from 'lucide-react';
 import { purchaseApi } from '../../services/operations';
 import { inventoryApi } from '../../services/manufacturing';
@@ -10,10 +10,12 @@ import { approvalApi } from '../../services/approvals';
 import { AlertBanner } from '../../components/AlertBanner';
 import { ApprovalsHint } from '../../components/ApprovalsHint';
 import {
-  ErpPageHeader, ErpStatusBadge, ErpButton, ErpCard, ErpDataTable, ErpInput, ErpSelect, ErpTabs,
+  ActionStack, ComposeSection, EmptyRow, ErpButton, ErpDataTable, ErpInput, ErpPageHeader,
+  ErpSelect, ErpStatusBadge, ErpTabs, StatTile, TabShell, TabToolbar, TablePager, TextLink,
+  btnSm, fieldLabel,
 } from '../../components/erp';
 import type {
-  ApprovalInstance, GoodsReceipt, Material, PurchaseOrder, PurchaseRequisition, Quotation, Rfq, Supplier,
+  ApprovalInstance, GoodsReceipt, Material, PurchaseLine, PurchaseOrder, PurchaseRequisition, Quotation, Rfq, Supplier,
 } from '../../types/api';
 import { useAuth } from '../../app/providers/AuthProvider';
 import { SuccessBanner } from '../users/SuccessBanner';
@@ -24,18 +26,33 @@ import {
 } from '../approvals/approvalUtils';
 import {
   findGrnsForPo, findPoForPr, formatCurrency, grnLineSummary, grnNextStep, historyPurchaseLabel,
-  lineSummary, materialLabel, poNumber, prNumber, prSourceLabel, purchaseSuccessMessage,
-  RM_PURCHASE_FLOW, statusLabel, supplierIdOf, supplierLabel, workflowHint,
+  materialLabel, poNumber, prNumber, prSourceLabel, purchaseSuccessMessage,
+  RM_PURCHASE_FLOW, statusLabel, supplierLabel, workflowHint,
 } from './purchaseUtils';
 import { unitLabel } from '../inventory/inventoryUtils';
 import { downloadCsv } from '../../utils/csvExport';
 
 const PAGE_SIZE = 15;
-const fieldLabel = 'mb-0.5 block text-[10px] font-medium text-erp-text-muted';
 
 type TabId = 'pr' | 'po' | 'grn' | 'rfq' | 'suppliers' | 'history';
 
 type PrLine = { materialId: string; requiredQty: number; unit: string; estimatedUnitCost: number };
+
+function LinesList({ lines }: { lines?: PurchaseLine[] }) {
+  if (!lines?.length) return <span className="text-erp-text-muted">-</span>;
+  return (
+    <ul className="space-y-0.5">
+      {lines.map((l, i) => (
+        <li key={i} className="text-[12px] leading-snug">
+          <span className="text-erp-text-primary">{materialLabel(l.materialId)}</span>
+          <span className="text-erp-text-muted">
+            {' '}{l.requiredQty ?? l.orderedQty ?? l.quantity ?? 0} {l.unit || ''}
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
+}
 
 export function PurchasePage() {
   const qc = useQueryClient();
@@ -46,9 +63,7 @@ export function PurchasePage() {
   const canApprove = permissions.includes('*') || permissions.includes('purchase.approve');
   const canExport = permissions.includes('*') || permissions.includes('purchase.export');
   const canReadApprovals = permissions.includes('*') || permissions.includes('approval.read');
-  /** PO / RFQ / suppliers — Purchase Manager (and admin), not Store Keeper requesters */
   const canExecute = canCreate && canApprove;
-  /** GRN receive — Store Keeper or Purchase Manager */
   const canReceive = canCreate;
 
   const [tab, setTab] = useState<TabId>('pr');
@@ -99,13 +114,11 @@ export function PurchasePage() {
         case 'po':
           return purchaseApi.listPOsPage({
             ...params,
-            // Searching (e.g. View PO from History) includes closed/received orders
             ...(search ? {} : { status: 'DRAFT,APPROVED,SENT,PARTIAL' }),
           });
         case 'grn':
           return purchaseApi.listGRNsPage({
             ...params,
-            // Include COMPLETED so Store Keeper can open Stock after QC; search finds all
             ...(search ? {} : { status: 'DRAFT,PENDING_QC,COMPLETED' }),
           });
         case 'history':
@@ -208,9 +221,15 @@ export function PurchasePage() {
     setConfirmAction({ label, message, fn });
   };
 
-  const openGrnForPo = (poId: string) => {
-    setTab('grn');
+  const goTab = (id: TabId) => {
+    setTab(id);
     setPage(1);
+    setSearch('');
+    setSearchInput('');
+  };
+
+  const openGrnForPo = (poId: string) => {
+    goTab('grn');
     setGrnPoId(poId);
     setGrnQtys({});
   };
@@ -227,7 +246,7 @@ export function PurchasePage() {
     const qty = Number(prQty);
     if (!mat || !qty || qty <= 0) return;
     if (prLines.some((l) => l.materialId === mat._id)) {
-      setError('Material already on this PR — adjust quantity or remove the line first');
+      setError('Material already on this PR - adjust quantity or remove the line first');
       return;
     }
     setPrLines((lines) => [...lines, {
@@ -238,6 +257,10 @@ export function PurchasePage() {
     }]);
     setPrMaterialId('');
     setError('');
+  };
+
+  const removePrLine = (materialId: string) => {
+    setPrLines((lines) => lines.filter((l) => l.materialId !== materialId));
   };
 
   const createSupplier = useMutation({
@@ -353,8 +376,31 @@ export function PurchasePage() {
     });
   };
 
+  const runSearch = () => {
+    setSearch(searchInput);
+    setPage(1);
+  };
+
+  const tabTitle =
+    tab === 'pr' ? 'Requisitions'
+      : tab === 'po' ? 'Purchase orders'
+        : tab === 'grn' ? 'Goods receipts'
+          : tab === 'rfq' ? 'RFQs'
+            : tab === 'suppliers' ? 'Suppliers'
+              : 'Purchase history';
+
+  const tabHint =
+    tab === 'pr' ? 'Create, submit, and approve requisitions before PO or RFQ.'
+      : tab === 'po' ? 'Create from an approved PR, then approve, send, and receive.'
+        : tab === 'grn' ? 'Receive against an open PO. Stock updates after incoming QC.'
+          : tab === 'rfq' ? 'Send RFQs from approved PRs, record quotes, then select a winner.'
+            : tab === 'suppliers' ? 'Vendor master used on POs and RFQs.'
+              : 'Converted PRs with linked PO and GRN.';
+
+  const listColSpan = tab === 'suppliers' ? 9 : tab === 'po' ? 6 : tab === 'history' ? 6 : tab === 'rfq' ? 5 : 5;
+
   return (
-    <div className="purchase-page text-xs leading-snug [&_.erp-page-header]:mb-3 [&_.erp-page-title]:text-base [&_.erp-page-subtitle]:text-[10px]">
+    <div className="purchase-page space-y-3">
       <AlertBanner message={error} onDismiss={() => setError('')} />
       <SuccessBanner message={success} onDismiss={() => setSuccess('')} />
 
@@ -362,17 +408,16 @@ export function PurchasePage() {
         title="Purchase"
         subtitle={(
           <>
-            Store Keeper PR → Purchase Manager + Admin approve → Purchase Manager PO/RFQ → GRN → QC → stock.
-            <Link to="/approvals" className="ml-2 text-[var(--erp-accent)]">Approvals →</Link>
-            <Link to="/production/orders" className="ml-2 text-[var(--erp-accent)]">Production →</Link>
-            <Link to="/quality" className="ml-2 text-[var(--erp-accent)]">Quality →</Link>
-            <Link to="/inventory" className="ml-2 text-[var(--erp-accent)]">Inventory →</Link>
+            Store Keeper PR -&gt; dual approval -&gt; PO/RFQ -&gt; GRN -&gt; QC -&gt; stock.
+            <Link to="/approvals" className="ml-2 text-[var(--erp-accent)]">Approvals -&gt;</Link>
+            <Link to="/quality" className="ml-2 text-[var(--erp-accent)]">Quality -&gt;</Link>
+            <Link to="/inventory" className="ml-2 text-[var(--erp-accent)]">Inventory -&gt;</Link>
           </>
         )}
         actions={(
           <div className="flex gap-2">
             {canExport && items.length > 0 && (
-              <ErpButton variant="secondary" className="!px-2 !py-1 text-[10px]" onClick={() => {
+              <ErpButton variant="secondary" className={btnSm} onClick={() => {
                 if (tab === 'po') {
                   downloadCsv('purchase-orders.csv', ['PO', 'Status', 'Total'], (items as PurchaseOrder[]).map((p) => [p.poNumber, p.status, (p as PurchaseOrder & { totalAmount?: number }).totalAmount ?? '']));
                 } else if (tab === 'pr') {
@@ -397,190 +442,212 @@ export function PurchasePage() {
                   );
                 }
               }}>
-                <Download size={12} className="mr-1 inline" /> Export CSV
+                <Download size={13} className="mr-1 inline" /> Export CSV
               </ErpButton>
             )}
-            <ErpButton variant="secondary" className="!px-2 !py-1 text-[10px]" disabled={isFetching} onClick={() => { refetch(); invalidate(); }}>
-              <RefreshCw size={12} className={isFetching ? 'animate-spin' : ''} />
+            <ErpButton variant="secondary" className={btnSm} disabled={isFetching} onClick={() => { refetch(); invalidate(); }}>
+              <RefreshCw size={13} className={isFetching ? 'animate-spin' : ''} />
               <span className="ml-1">Refresh</span>
             </ErpButton>
           </div>
         )}
       />
 
-      <div className="mb-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-        <ErpCard className="!p-3">
-          <div className="flex items-center gap-2">
-            <ClipboardList size={16} className="text-amber-500" />
-            <div>
-              <p className="text-[10px] uppercase tracking-wide text-erp-text-muted">PR pending</p>
-              <p className="text-lg font-semibold">{(stats?.prDraft ?? 0) + (stats?.prSubmitted ?? 0)}</p>
-            </div>
-          </div>
-        </ErpCard>
-        <ErpCard className="!p-3">
-          <div className="flex items-center gap-2">
-            <ShoppingCart size={16} className="text-[var(--erp-accent)]" />
-            <div>
-              <p className="text-[10px] uppercase tracking-wide text-erp-text-muted">Open POs</p>
-              <p className="text-lg font-semibold">{stats?.poOpen ?? '—'}</p>
-            </div>
-          </div>
-        </ErpCard>
-        <ErpCard className="!p-3">
-          <div className="flex items-center gap-2">
-            <Truck size={16} className="text-[var(--erp-accent)]" />
-            <div>
-              <p className="text-[10px] uppercase tracking-wide text-erp-text-muted">GRN QC queue</p>
-              <p className="text-lg font-semibold">{stats?.grnPendingQc ?? '—'}</p>
-            </div>
-          </div>
-        </ErpCard>
-        <ErpCard className="!p-3">
-          <div className="flex items-center gap-2">
-            <FileText size={16} className="text-emerald-600" />
-            <div>
-              <p className="text-[10px] uppercase tracking-wide text-erp-text-muted">Open PO value</p>
-              <p className="text-lg font-semibold">{stats ? formatCurrency(stats.openPoValue) : '—'}</p>
-            </div>
-          </div>
-        </ErpCard>
+      <div className="grid grid-cols-2 overflow-hidden rounded-lg border border-[var(--erp-border)] bg-[var(--erp-border)] sm:grid-cols-4">
+        <StatTile
+          icon={ClipboardList}
+          label="PR pending"
+          value={(stats?.prDraft ?? 0) + (stats?.prSubmitted ?? 0)}
+          hint="Draft + submitted requisitions"
+          highlight={(stats?.prDraft ?? 0) + (stats?.prSubmitted ?? 0) > 0 ? 'warn' : undefined}
+          onClick={() => goTab('pr')}
+        />
+        <StatTile
+          icon={ShoppingCart}
+          label="Open POs"
+          value={stats?.poOpen ?? '-'}
+          onClick={() => goTab('po')}
+        />
+        <StatTile
+          icon={Truck}
+          label="GRN QC queue"
+          value={stats?.grnPendingQc ?? '-'}
+          highlight={(stats?.grnPendingQc ?? 0) > 0 ? 'accent' : undefined}
+          onClick={() => goTab('grn')}
+        />
+        <StatTile
+          icon={FileText}
+          label="Open PO value"
+          value={stats ? formatCurrency(stats.openPoValue) : '-'}
+          onClick={() => goTab('po')}
+        />
       </div>
 
-      <ErpCard className="mb-3 !p-3">
-        <p className="mb-2 text-[10px] font-medium uppercase tracking-wide text-erp-text-muted">Raw material procurement flow</p>
-        <div className="flex flex-wrap items-center gap-1 text-[10px]">
-          {RM_PURCHASE_FLOW.map((step, i) => (
-            <span key={step.id} className="flex items-center gap-1">
-              {i > 0 && <ArrowRight size={10} className="text-erp-text-muted" />}
-              <span
-                className={`rounded px-1.5 py-0.5 ${
-                  (step.id === activeFlowStep || (activeFlowStep === 'grn' && step.id === 'grn'))
-                    ? 'bg-[var(--erp-accent-muted)] font-medium'
-                    : 'text-erp-text-muted'
-                }`}
-                title={step.detail}
-              >
-                {step.label}
-              </span>
+      <div className="flex flex-wrap items-center gap-1.5 rounded-lg border border-[var(--erp-border)] bg-[var(--erp-surface)] px-3 py-2 text-[12px]">
+        <span className="mr-1 text-[11px] font-medium uppercase tracking-wide text-erp-text-muted">Flow</span>
+        {RM_PURCHASE_FLOW.map((step, i) => (
+          <span key={step.id} className="flex items-center gap-1">
+            {i > 0 && <ArrowRight size={11} className="text-erp-text-muted" />}
+            <span
+              className={`rounded px-1.5 py-0.5 ${
+                step.id === activeFlowStep || (activeFlowStep === 'grn' && step.id === 'qc')
+                  ? 'bg-[var(--erp-accent-muted)] font-medium'
+                  : 'text-erp-text-muted'
+              }`}
+              title={step.detail}
+            >
+              {step.label}
             </span>
-          ))}
-        </div>
-        <p className="mt-2 text-[10px] text-erp-text-muted">
-          Store Keeper creates PRs → Purchase Manager then Factory Admin approve → Purchase Manager runs RFQ/PO.
-          After QC pass, stock lands on the unallocated dock; optional bin put-away feeds reserve/issue for samples and batches.
-        </p>
-      </ErpCard>
+          </span>
+        ))}
+      </div>
 
-      <ErpTabs
-        tabs={[
-          { id: 'pr', label: `Requisitions (${(stats?.prDraft ?? 0) + (stats?.prSubmitted ?? 0) + (stats?.prApproved ?? 0)})` },
-          { id: 'po', label: `Orders (${stats?.poOpen ?? 0} open)` },
-          { id: 'grn', label: `Receipts (${(stats?.grnDraft ?? 0) + (stats?.grnPendingQc ?? 0)})` },
-          ...(canExecute ? [
-            { id: 'rfq' as const, label: `RFQ (${stats?.rfqOpen ?? 0})` },
-            { id: 'suppliers' as const, label: `Suppliers (${stats?.suppliers ?? 0})` },
-          ] : []),
-          { id: 'history', label: 'History' },
-        ]}
-        active={tab}
-        onChange={(id) => { setTab(id as TabId); setPage(1); setSearch(''); setSearchInput(''); }}
-      />
-
-      <div className="mt-3 space-y-3">
+      <TabShell
+        tabs={(
+          <ErpTabs
+            tabs={[
+              { id: 'pr', label: `Requisitions (${(stats?.prDraft ?? 0) + (stats?.prSubmitted ?? 0) + (stats?.prApproved ?? 0)})` },
+              { id: 'po', label: `Orders (${stats?.poOpen ?? 0} open)` },
+              { id: 'grn', label: `Receipts (${(stats?.grnDraft ?? 0) + (stats?.grnPendingQc ?? 0)})` },
+              ...(canExecute ? [
+                { id: 'rfq' as const, label: `RFQ (${stats?.rfqOpen ?? 0})` },
+                { id: 'suppliers' as const, label: `Suppliers (${stats?.suppliers ?? 0})` },
+              ] : []),
+              { id: 'history', label: 'History' },
+            ]}
+            active={tab}
+            onChange={(id) => goTab(id as TabId)}
+          />
+        )}
+      >
         {tab === 'pr' && canCreate && (
-          <ErpCard className="!p-3">
-            <h3 className="mb-2 text-[11px] font-semibold">New purchase requisition</h3>
-            <p className="mb-2 text-[10px] text-erp-text-muted">
-              {canExecute
-                ? 'Create a PR, submit it, then approve via L1 Purchase Manager → L2 Factory Admin before PO/RFQ.'
-                : 'Create and submit a PR. Purchase Manager and Factory Admin must approve before purchasing proceeds.'}
-            </p>
+          <ComposeSection
+            title="New purchase requisition"
+            hint={canExecute
+              ? 'Add lines, create the PR, then submit. Approval is L1 Purchase Manager then L2 Factory Admin.'
+              : 'Add lines, create and submit. Purchase Manager and Factory Admin must approve before PO/RFQ.'}
+          >
             {materialsError && (
-              <p className="mb-2 text-[10px] text-red-600">Could not load materials. Check factory access and purchase permissions.</p>
+              <p className="mb-2 text-[12px] text-red-600">Could not load materials. Check factory access and purchase permissions.</p>
             )}
             {!materialsError && materials.length === 0 && (
-              <p className="mb-2 text-[10px] text-erp-text-muted">No materials in this factory — add materials in Inventory first.</p>
+              <p className="mb-2 text-[12px] text-erp-text-muted">
+                No materials in this factory - add them in{' '}
+                <Link to="/inventory" className="text-[var(--erp-accent)]">Inventory</Link> first.
+              </p>
             )}
             <div className="flex flex-wrap items-end gap-2">
-              <div className="min-w-[180px] flex-1">
+              <div className="min-w-[220px] flex-1">
                 <label className={fieldLabel}>Material</label>
-                <ErpSelect className="w-full !py-1.5 text-[11px]" value={prMaterialId} onChange={(e) => setPrMaterialId(e.target.value)}>
-                  <option value="">Select…</option>
+                <ErpSelect className="w-full !py-1.5 text-[12px]" value={prMaterialId} onChange={(e) => setPrMaterialId(e.target.value)}>
+                  <option value="">Select...</option>
                   {materials.map((m: Material) => (
-                    <option key={m._id} value={m._id}>{m.materialCode} — {m.name}</option>
+                    <option key={m._id} value={m._id}>{m.materialCode} - {m.name}</option>
                   ))}
                 </ErpSelect>
               </div>
-              <div className="w-24">
+              <div className="w-28">
                 <label className={fieldLabel}>Qty</label>
-                <ErpInput className="!py-1.5 text-[11px]" type="number" min={1} value={prQty} onChange={(e) => setPrQty(e.target.value)} />
+                <ErpInput className="!py-1.5 text-[12px]" type="number" min={1} value={prQty} onChange={(e) => setPrQty(e.target.value)} />
               </div>
-              <ErpButton variant="secondary" className="!px-2 !py-1.5 text-[11px]" onClick={addPrLine}>Add line</ErpButton>
-              <ErpButton className="!px-3 !py-1.5 text-[11px]" disabled={!prLines.length || createPR.isPending || materials.length === 0} onClick={() => createPR.mutate()}>
-                Create PR ({prLines.length} lines)
-              </ErpButton>
+              <ErpButton variant="secondary" className={btnSm} onClick={addPrLine}>Add line</ErpButton>
             </div>
             {prLines.length > 0 && (
-              <p className="mt-2 text-[10px] text-erp-text-muted">
-                {prLines.map((l, i) => {
-                  const m = materials.find((x: Material) => x._id === l.materialId);
-                  return <span key={i}>{i > 0 && ' · '}{m?.materialCode} {l.requiredQty} {l.unit}</span>;
-                })}
-              </p>
+              <div className="mt-3 overflow-hidden rounded-md border border-[var(--erp-border)]">
+                <ErpDataTable className="w-full text-[12px]">
+                  <thead>
+                    <tr>
+                      <th>Material</th>
+                      <th className="text-right">Qty</th>
+                      <th>Unit</th>
+                      <th className="text-right" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {prLines.map((l) => {
+                      const m = materials.find((x: Material) => x._id === l.materialId);
+                      return (
+                        <tr key={l.materialId}>
+                          <td>
+                            <p className="font-mono text-[12px] font-medium">{m?.materialCode || l.materialId}</p>
+                            <p className="text-[12px] text-erp-text-muted">{m?.name}</p>
+                          </td>
+                          <td className="text-right">{l.requiredQty}</td>
+                          <td>{unitLabel(l.unit)}</td>
+                          <td className="text-right">
+                            <button
+                              type="button"
+                              className="rounded p-1 text-erp-text-muted hover:bg-[var(--erp-surface-muted)] hover:text-erp-text-primary"
+                              onClick={() => removePrLine(l.materialId)}
+                              aria-label="Remove line"
+                            >
+                              <X size={14} />
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </ErpDataTable>
+              </div>
             )}
-          </ErpCard>
+            <div className="mt-3">
+              <ErpButton className={btnSm} disabled={!prLines.length || createPR.isPending || materials.length === 0} onClick={() => createPR.mutate()}>
+                {createPR.isPending ? 'Creating...' : `Create PR (${prLines.length} line${prLines.length === 1 ? '' : 's'})`}
+              </ErpButton>
+            </div>
+          </ComposeSection>
         )}
 
         {tab === 'po' && canExecute && approvedPrs.length > 0 && (
-          <ErpCard className="!p-3">
-            <h3 className="mb-2 text-[11px] font-semibold">Create PO from approved PR</h3>
-            <p className="mb-2 text-[10px] text-erp-text-muted">Only PRs still in APPROVED status appear here. Converted PRs are already linked to an order — use the Orders list below.</p>
+          <ComposeSection
+            title="Create PO from approved PR"
+            hint="Only PRs still in APPROVED status appear here. Converted PRs are on History and Orders."
+          >
             <div className="flex flex-wrap items-end gap-2">
-              <div className="min-w-[160px]">
+              <div className="min-w-[180px]">
                 <label className={fieldLabel}>PR</label>
-                <ErpSelect className="w-full !py-1.5 text-[11px]" value={poPrId} onChange={(e) => setPoPrId(e.target.value)}>
-                  <option value="">Select PR…</option>
+                <ErpSelect className="w-full !py-1.5 text-[12px]" value={poPrId} onChange={(e) => setPoPrId(e.target.value)}>
+                  <option value="">Select PR...</option>
                   {approvedPrs.map((pr: PurchaseRequisition) => (
                     <option key={pr._id} value={pr._id}>{pr.prNumber}</option>
                   ))}
                 </ErpSelect>
               </div>
-              <div className="min-w-[160px]">
+              <div className="min-w-[200px] flex-1">
                 <label className={fieldLabel}>Supplier</label>
-                <ErpSelect className="w-full !py-1.5 text-[11px]" value={poSupplierId} onChange={(e) => setPoSupplierId(e.target.value)}>
-                  <option value="">Select supplier…</option>
+                <ErpSelect className="w-full !py-1.5 text-[12px]" value={poSupplierId} onChange={(e) => setPoSupplierId(e.target.value)}>
+                  <option value="">Select supplier...</option>
                   {suppliers.map((s: Supplier) => (
-                    <option key={s._id} value={s._id}>{s.supplierCode} — {s.name}</option>
+                    <option key={s._id} value={s._id}>{s.supplierCode} - {s.name}</option>
                   ))}
                 </ErpSelect>
               </div>
-              <ErpButton className="!px-3 !py-1.5 text-[11px]" disabled={!poPrId || !poSupplierId || workflow.isPending} onClick={() => workflow.mutate({ type: 'createPo', body: { prId: poPrId, supplierId: poSupplierId } })}>
+              <ErpButton className={btnSm} disabled={!poPrId || !poSupplierId || workflow.isPending} onClick={() => workflow.mutate({ type: 'createPo', body: { prId: poPrId, supplierId: poSupplierId } })}>
                 Create PO
               </ErpButton>
             </div>
-          </ErpCard>
+          </ComposeSection>
         )}
 
         {tab === 'grn' && canReceive && (
-          <ErpCard className="!p-3">
-            <h3 className="mb-2 text-[11px] font-semibold">Goods receipt (GRN)</h3>
-            <p className="mb-2 text-[10px] text-erp-text-muted">
-              Receive against an open PO → submit incoming QC → Quality inspects → passed qty receipts to unallocated dock (optional put-away bin in QC).
-            </p>
+          <ComposeSection
+            title="Receive goods (GRN)"
+            hint="Record quantities against an open PO, then submit incoming QC. Stock is not updated until QC passes."
+          >
             <div className="flex flex-wrap items-end gap-2">
-              <div className="min-w-[200px]">
+              <div className="min-w-[240px] flex-1">
                 <label className={fieldLabel}>Open PO</label>
-                <ErpSelect className="w-full !py-1.5 text-[11px]" value={grnPoId} onChange={(e) => { setGrnPoId(e.target.value); setGrnQtys({}); }}>
-                  <option value="">Select PO…</option>
+                <ErpSelect className="w-full !py-1.5 text-[12px]" value={grnPoId} onChange={(e) => { setGrnPoId(e.target.value); setGrnQtys({}); }}>
+                  <option value="">Select PO...</option>
                   {openPos.map((po: PurchaseOrder) => (
-                    <option key={po._id} value={po._id}>{po.poNumber} — {supplierLabel(po.supplierId)} ({statusLabel(po.status)})</option>
+                    <option key={po._id} value={po._id}>{po.poNumber} - {supplierLabel(po.supplierId)} ({statusLabel(po.status)})</option>
                   ))}
                 </ErpSelect>
               </div>
               {grnPreview && grnPreview.lines.length > 0 && (
                 <ErpButton
-                  className="!px-3 !py-1.5 text-[11px]"
+                  className={btnSm}
                   disabled={workflow.isPending}
                   onClick={() => promptConfirm(
                     'Create GRN',
@@ -592,177 +659,252 @@ export function PurchasePage() {
                 </ErpButton>
               )}
             </div>
-            {grnPreview?.lines.map((l) => {
-              const mid = materialKey(l.materialId);
-              return (
-              <div key={mid} className="mt-2 flex items-center gap-2 text-[10px]">
-                <span className="min-w-[140px]">{l.materialCode} — {l.materialName}</span>
-                <span className="text-erp-text-muted">Remaining {l.remainingQty} {unitLabel(l.unit)}</span>
-                <ErpInput type="number" min={0} max={l.remainingQty} className="!w-20 !py-1 text-[10px]" value={grnQtys[mid] ?? l.remainingQty} onChange={(e) => setGrnQtys({ ...grnQtys, [mid]: Number(e.target.value) })} />
+            {grnPreview && grnPreview.lines.length > 0 && (
+              <div className="mt-3 overflow-hidden rounded-md border border-[var(--erp-border)]">
+                <ErpDataTable className="w-full text-[12px]">
+                  <thead>
+                    <tr>
+                      <th>Material</th>
+                      <th className="text-right">Remaining</th>
+                      <th className="text-right">Receive qty</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {grnPreview.lines.map((l) => {
+                      const mid = materialKey(l.materialId);
+                      return (
+                        <tr key={mid}>
+                          <td>
+                            <p className="font-mono text-[12px] font-medium">{l.materialCode}</p>
+                            <p className="text-[12px] text-erp-text-muted">{l.materialName}</p>
+                          </td>
+                          <td className="whitespace-nowrap text-right text-erp-text-muted">
+                            {l.remainingQty} {unitLabel(l.unit)}
+                          </td>
+                          <td className="text-right">
+                            <ErpInput
+                              type="number"
+                              min={0}
+                              max={l.remainingQty}
+                              className="ml-auto !w-24 !py-1 text-[12px]"
+                              value={grnQtys[mid] ?? l.remainingQty}
+                              onChange={(e) => setGrnQtys({ ...grnQtys, [mid]: Number(e.target.value) })}
+                            />
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </ErpDataTable>
               </div>
-            );})}
-          </ErpCard>
+            )}
+          </ComposeSection>
         )}
 
         {tab === 'rfq' && canExecute && approvedPrs.length > 0 && (
-          <ErpCard className="!p-3">
-            <h3 className="mb-2 text-[11px] font-semibold">RFQ & quotation</h3>
-            <div className="flex flex-wrap items-end gap-2">
-              <div className="min-w-[140px]">
-                <label className={fieldLabel}>From PR</label>
-                <ErpSelect className="w-full !py-1.5 text-[11px]" value={rfqPrId} onChange={(e) => setRfqPrId(e.target.value)}>
-                  <option value="">PR…</option>
-                  {approvedPrs.map((pr: PurchaseRequisition) => (
-                    <option key={pr._id} value={pr._id}>{pr.prNumber}</option>
-                  ))}
-                </ErpSelect>
+          <ComposeSection
+            title="RFQ and quotation"
+            hint="Create an RFQ from an approved PR, send it, then record supplier quotes and select a winner to create a PO."
+          >
+            <div className="grid gap-4 lg:grid-cols-2">
+              <div className="rounded-md border border-[var(--erp-border)] p-3">
+                <p className="mb-2 text-[12px] font-medium text-erp-text-primary">Create RFQ</p>
+                <div className="flex flex-wrap items-end gap-2">
+                  <div className="min-w-[140px] flex-1">
+                    <label className={fieldLabel}>From PR</label>
+                    <ErpSelect className="w-full !py-1.5 text-[12px]" value={rfqPrId} onChange={(e) => setRfqPrId(e.target.value)}>
+                      <option value="">PR...</option>
+                      {approvedPrs.map((pr: PurchaseRequisition) => (
+                        <option key={pr._id} value={pr._id}>{pr.prNumber}</option>
+                      ))}
+                    </ErpSelect>
+                  </div>
+                  <div className="min-w-[140px] flex-1">
+                    <label className={fieldLabel}>Supplier</label>
+                    <ErpSelect className="w-full !py-1.5 text-[12px]" value={rfqSupplierIds[0] || ''} onChange={(e) => setRfqSupplierIds(e.target.value ? [e.target.value] : [])}>
+                      <option value="">Supplier...</option>
+                      {suppliers.map((s: Supplier) => (
+                        <option key={s._id} value={s._id}>{s.name}</option>
+                      ))}
+                    </ErpSelect>
+                  </div>
+                  <ErpButton variant="secondary" className={btnSm} disabled={!rfqPrId || !rfqSupplierIds.length} onClick={() => workflow.mutate({ type: 'rfq', id: rfqPrId, supplierIds: rfqSupplierIds })}>
+                    Create RFQ
+                  </ErpButton>
+                </div>
               </div>
-              <div className="min-w-[140px]">
-                <label className={fieldLabel}>Suppliers</label>
-                <ErpSelect className="w-full !py-1.5 text-[11px]" value={rfqSupplierIds[0] || ''} onChange={(e) => setRfqSupplierIds(e.target.value ? [e.target.value] : [])}>
-                  <option value="">Supplier…</option>
-                  {suppliers.map((s: Supplier) => (
-                    <option key={s._id} value={s._id}>{s.name}</option>
-                  ))}
-                </ErpSelect>
+              <div className="rounded-md border border-[var(--erp-border)] p-3">
+                <p className="mb-2 text-[12px] font-medium text-erp-text-primary">Add quote</p>
+                <div className="flex flex-wrap items-end gap-2">
+                  <div className="min-w-[120px] flex-1">
+                    <label className={fieldLabel}>RFQ</label>
+                    <ErpSelect className="w-full !py-1.5 text-[12px]" value={quoteRfqId} onChange={(e) => setQuoteRfqId(e.target.value)}>
+                      <option value="">Select...</option>
+                      {(items as Rfq[]).filter((r: Rfq) => ['DRAFT', 'SENT'].includes(r.status)).map((r) => (
+                        <option key={r._id} value={r._id}>{r.rfqNumber}</option>
+                      ))}
+                    </ErpSelect>
+                  </div>
+                  <div className="min-w-[120px] flex-1">
+                    <label className={fieldLabel}>Supplier</label>
+                    <ErpSelect className="w-full !py-1.5 text-[12px]" value={quoteSupplierId} onChange={(e) => setQuoteSupplierId(e.target.value)}>
+                      <option value="">Select...</option>
+                      {suppliers.map((s: Supplier) => (
+                        <option key={s._id} value={s._id}>{s.name}</option>
+                      ))}
+                    </ErpSelect>
+                  </div>
+                  <div className="w-24">
+                    <label className={fieldLabel}>Unit Rs</label>
+                    <ErpInput className="!py-1.5 text-[12px]" type="number" value={quotePrice} onChange={(e) => setQuotePrice(e.target.value)} />
+                  </div>
+                  <ErpButton variant="secondary" className={btnSm} onClick={submitQuote}>Add quote</ErpButton>
+                </div>
               </div>
-              <ErpButton variant="secondary" className="!px-2 !py-1.5 text-[11px]" disabled={!rfqPrId || !rfqSupplierIds.length} onClick={() => workflow.mutate({ type: 'rfq', id: rfqPrId, supplierIds: rfqSupplierIds })}>Create RFQ</ErpButton>
             </div>
-            <div className="mt-2 flex flex-wrap items-end gap-2 border-t border-[var(--erp-border)] pt-2">
-              <div className="min-w-[120px]">
-                <label className={fieldLabel}>RFQ</label>
-                <ErpSelect className="w-full !py-1.5 text-[11px]" value={quoteRfqId} onChange={(e) => setQuoteRfqId(e.target.value)}>
-                  <option value="">Select…</option>
-                  {(items as Rfq[]).filter((r: Rfq) => ['DRAFT', 'SENT'].includes(r.status)).map((r) => (
-                    <option key={r._id} value={r._id}>{r.rfqNumber}</option>
-                  ))}
-                </ErpSelect>
-              </div>
-              <div className="min-w-[120px]">
-                <label className={fieldLabel}>Supplier quote</label>
-                <ErpSelect className="w-full !py-1.5 text-[11px]" value={quoteSupplierId} onChange={(e) => setQuoteSupplierId(e.target.value)}>
-                  <option value="">…</option>
-                  {suppliers.map((s: Supplier) => (
-                    <option key={s._id} value={s._id}>{s.name}</option>
-                  ))}
-                </ErpSelect>
-              </div>
-              <div className="w-20">
-                <label className={fieldLabel}>Unit ₹</label>
-                <ErpInput className="!py-1.5 text-[11px]" type="number" value={quotePrice} onChange={(e) => setQuotePrice(e.target.value)} />
-              </div>
-              <ErpButton variant="secondary" className="!px-2 !py-1.5 text-[11px]" onClick={submitQuote}>Add quote</ErpButton>
-            </div>
-          </ErpCard>
+          </ComposeSection>
         )}
 
         {tab === 'suppliers' && canExecute && (
-          <ErpCard className="!p-3">
-            <h3 className="mb-2 text-[11px] font-semibold">Add supplier</h3>
+          <ComposeSection title="Add supplier" hint="Used when creating POs and RFQs.">
             <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
               <div>
                 <label className={fieldLabel}>Code</label>
-                <ErpInput className="!py-1.5 text-[11px] font-mono" value={supplierForm.supplierCode} onChange={(e) => setSupplierForm({ ...supplierForm, supplierCode: e.target.value })} />
+                <ErpInput className="!py-1.5 font-mono text-[12px]" value={supplierForm.supplierCode} onChange={(e) => setSupplierForm({ ...supplierForm, supplierCode: e.target.value })} />
               </div>
               <div className="sm:col-span-2">
                 <label className={fieldLabel}>Name</label>
-                <ErpInput className="!py-1.5 text-[11px]" value={supplierForm.name} onChange={(e) => setSupplierForm({ ...supplierForm, name: e.target.value })} />
+                <ErpInput className="!py-1.5 text-[12px]" value={supplierForm.name} onChange={(e) => setSupplierForm({ ...supplierForm, name: e.target.value })} />
+              </div>
+              <div>
+                <label className={fieldLabel}>Email</label>
+                <ErpInput className="!py-1.5 text-[12px]" type="email" value={supplierForm.contactEmail} onChange={(e) => setSupplierForm({ ...supplierForm, contactEmail: e.target.value })} />
               </div>
               <div>
                 <label className={fieldLabel}>Lead days</label>
-                <ErpInput className="!py-1.5 text-[11px]" type="number" value={supplierForm.leadTimeDays} onChange={(e) => setSupplierForm({ ...supplierForm, leadTimeDays: e.target.value })} />
+                <ErpInput className="!py-1.5 text-[12px]" type="number" value={supplierForm.leadTimeDays} onChange={(e) => setSupplierForm({ ...supplierForm, leadTimeDays: e.target.value })} />
               </div>
-              <div className="flex items-end">
-                <ErpButton className="w-full !py-1.5 text-[11px]" disabled={!supplierForm.supplierCode || !supplierForm.name || createSupplier.isPending} onClick={() => createSupplier.mutate()}>Add</ErpButton>
+              <div className="flex items-end lg:col-span-5">
+                <ErpButton className={btnSm} disabled={!supplierForm.supplierCode || !supplierForm.name || createSupplier.isPending} onClick={() => createSupplier.mutate()}>
+                  {createSupplier.isPending ? 'Adding...' : 'Add supplier'}
+                </ErpButton>
               </div>
             </div>
-          </ErpCard>
+          </ComposeSection>
         )}
 
-        {tab === 'history' && (
-          <ErpCard className="!p-3">
-            <p className="text-[10px] text-erp-text-muted">
-              Past purchases: PRs converted to PO (and linked GRN / QC). Active work stays on Requisitions, Orders, and Receipts.
-            </p>
-          </ErpCard>
-        )}
-
-        <ErpCard className="!p-0">
-          <div className="flex flex-wrap items-center gap-2 border-b border-[var(--erp-border)] p-3">
-            <div className="relative min-w-[180px] flex-1">
-              <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-erp-text-muted" />
-              <ErpInput className="!py-1.5 pl-7 text-[11px]" placeholder="Search…" value={searchInput} onChange={(e) => setSearchInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { setSearch(searchInput); setPage(1); } }} />
-            </div>
-            <ErpButton variant="secondary" className="!px-2 !py-1.5 text-[11px]" onClick={() => { setSearch(searchInput); setPage(1); }}>Search</ErpButton>
+        <TabToolbar title={tabTitle} hint={tabHint}>
+          <div className="relative min-w-[200px]">
+            <Search size={13} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-erp-text-muted" />
+            <ErpInput
+              className="!py-1.5 pl-8 text-[12px]"
+              placeholder="Search..."
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') runSearch(); }}
+            />
           </div>
+          <ErpButton variant="secondary" className={btnSm} onClick={runSearch}>Search</ErpButton>
+        </TabToolbar>
 
-          {isLoading ? (
-            <p className="p-4 text-[11px] text-erp-text-muted">Loading…</p>
-          ) : (
-            <div className="overflow-x-auto">
-              <ErpDataTable className={`w-full text-[11px] ${tab === 'suppliers' ? 'min-w-[1100px]' : 'min-w-[800px]'}`}>
-                <thead>
-                  <tr>
-                    {tab === 'suppliers' ? (
-                      <>
-                        <th className="px-3 py-2 text-left">Vendor ID</th>
-                        <th className="px-3 py-2 text-left">Name</th>
-                        <th className="px-3 py-2 text-left">Contact Person</th>
-                        <th className="px-3 py-2 text-left">Mobile</th>
-                        <th className="px-3 py-2 text-left">Email</th>
-                        <th className="px-3 py-2 text-left">GST No.</th>
-                        <th className="px-3 py-2 text-left">Material Supplied</th>
-                        <th className="px-3 py-2 text-left">Payment Terms</th>
-                        <th className="px-3 py-2 text-left">Status</th>
-                      </>
-                    ) : (
-                      <>
-                        <th className="px-3 py-2 text-left">Document</th>
-                        <th className="px-3 py-2 text-left">Details</th>
-                        <th className="px-3 py-2 text-left">Status</th>
-                        <th className="px-3 py-2 text-right">Actions</th>
-                      </>
-                    )}
-                  </tr>
-                </thead>
-                <tbody>
-                  {tab === 'pr' && (items as PurchaseRequisition[]).map((pr) => {
-                    const approval = prApprovalByDocId.get(pr._id);
-                    const canActLevel = approval
-                      ? canActOnApproval(approval, permissions, userId)
-                      : canApprove;
-                    const levelHint = approval
-                      ? `${workflowLevelLabel(approval)} · needs ${requiredApproverLabel(approval)}`
-                      : null;
-                    return (
-                    <tr key={pr._id} className="border-t border-[var(--erp-border)]">
-                      <td className="px-3 py-2 font-mono">
+        {isLoading ? (
+          <p className="p-6 text-[13px] text-erp-text-muted">Loading...</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <ErpDataTable className={`w-full text-[12px] ${tab === 'suppliers' ? 'min-w-[1100px]' : 'min-w-[880px]'}`}>
+              <thead>
+                <tr>
+                  {tab === 'suppliers' ? (
+                    <>
+                      <th>Vendor ID</th>
+                      <th>Name</th>
+                      <th>Contact</th>
+                      <th>Mobile</th>
+                      <th>Email</th>
+                      <th>GST</th>
+                      <th>Material</th>
+                      <th>Payment</th>
+                      <th>Status</th>
+                    </>
+                  ) : tab === 'po' ? (
+                    <>
+                      <th>PO</th>
+                      <th>Supplier</th>
+                      <th className="text-right">Amount</th>
+                      <th>Lines</th>
+                      <th>Status</th>
+                      <th className="text-right">Actions</th>
+                    </>
+                  ) : tab === 'history' ? (
+                    <>
+                      <th>PR</th>
+                      <th>PO / supplier</th>
+                      <th>GRN</th>
+                      <th>Lines</th>
+                      <th>Status</th>
+                      <th className="text-right">Actions</th>
+                    </>
+                  ) : tab === 'rfq' ? (
+                    <>
+                      <th>RFQ</th>
+                      <th>PR</th>
+                      <th>Status</th>
+                      <th>Quotes</th>
+                      <th className="text-right">Actions</th>
+                    </>
+                  ) : tab === 'grn' ? (
+                    <>
+                      <th>GRN</th>
+                      <th>PO</th>
+                      <th>Lines</th>
+                      <th>Status</th>
+                      <th className="text-right">Actions</th>
+                    </>
+                  ) : (
+                    <>
+                      <th>PR</th>
+                      <th>Source</th>
+                      <th>Lines</th>
+                      <th>Status</th>
+                      <th className="text-right">Actions</th>
+                    </>
+                  )}
+                </tr>
+              </thead>
+              <tbody>
+                {tab === 'pr' && (items as PurchaseRequisition[]).map((pr) => {
+                  const approval = prApprovalByDocId.get(pr._id);
+                  const canActLevel = approval
+                    ? canActOnApproval(approval, permissions, userId)
+                    : canApprove;
+                  const levelHint = approval
+                    ? `${workflowLevelLabel(approval)} · needs ${requiredApproverLabel(approval)}`
+                    : null;
+                  return (
+                    <tr key={pr._id}>
+                      <td className="whitespace-nowrap font-mono font-medium">
                         {pr.prNumber}
                         {(pr as PurchaseRequisition & { sourceType?: string }).sourceType === 'MRP' && (
-                          <span className="ml-1 rounded bg-amber-100 px-1 text-[9px] text-amber-800">MRP</span>
+                          <span className="ml-1 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-sans font-medium text-amber-800">MRP</span>
                         )}
                       </td>
-                      <td className="px-3 py-2 text-[10px] text-erp-text-muted">
-                        {lineSummary(pr.lines)}
-                        <span className="mt-0.5 block text-[9px]">{prSourceLabel(pr as PurchaseRequisition & { sourceType?: string })}</span>
-                      </td>
-                      <td className="px-3 py-2">
+                      <td className="text-erp-text-muted">{prSourceLabel(pr as PurchaseRequisition & { sourceType?: string })}</td>
+                      <td><LinesList lines={pr.lines} /></td>
+                      <td>
                         <ErpStatusBadge status={pr.status} label={statusLabel(pr.status)} />
-                        <p className="mt-0.5 text-[10px] text-erp-text-muted">
+                        <p className="mt-1 max-w-[220px] text-[11px] leading-snug text-erp-text-muted">
                           {pr.status === 'SUBMITTED' && levelHint
                             ? levelHint
                             : workflowHint('pr', pr.status)}
                         </p>
                         {pr.status === 'SUBMITTED' && approval && (approval.currentLevel ?? 1) > 1 && (
-                          <p className="mt-0.5 text-[9px] text-emerald-700">
-                            L1 done (Purchase Manager) — waiting on Factory Admin
-                          </p>
+                          <p className="mt-1 text-[11px] text-emerald-700">L1 done - waiting on Factory Admin</p>
                         )}
                       </td>
-                      <td className="px-3 py-2 text-right">
-                        <div className="flex flex-wrap justify-end gap-1">
+                      <td className="text-right">
+                        <ActionStack>
                           {canUpdate && (pr.status === 'DRAFT' || pr.status === 'REJECTED') && (
-                            <ErpButton className="!px-2 !py-1 text-[10px]" onClick={() => promptConfirm('Submit PR for approval?', 'Starts dual approval: Purchase Manager (L1) then Factory Admin (L2).', () => workflow.mutate({ type: 'submitPr', id: pr._id }))}>
+                            <ErpButton className={btnSm} onClick={() => promptConfirm('Submit PR for approval?', 'Starts dual approval: Purchase Manager (L1) then Factory Admin (L2).', () => workflow.mutate({ type: 'submitPr', id: pr._id }))}>
                               {pr.status === 'REJECTED' ? 'Resubmit' : 'Submit'}
                             </ErpButton>
                           )}
@@ -775,192 +917,191 @@ export function PurchasePage() {
                             />
                           )}
                           {pr.status === 'SUBMITTED' && canActLevel && (
-                            <>
+                            <div className="flex justify-end gap-1.5">
                               <ErpButton
-                                className="!px-2 !py-1 text-[10px]"
+                                className={btnSm}
                                 onClick={() => workflow.mutate({ type: 'approvePr', id: pr._id })}
                               >
                                 {(approval?.currentLevel ?? 1) > 1 ? 'Approve L2' : 'Approve L1'}
                               </ErpButton>
-                              <ErpButton variant="secondary" className="!px-2 !py-1 text-[10px]" onClick={() => setRejectPrId(pr._id)}>Reject</ErpButton>
-                            </>
+                              <ErpButton variant="secondary" className={btnSm} onClick={() => setRejectPrId(pr._id)}>Reject</ErpButton>
+                            </div>
                           )}
                           {canExecute && pr.status === 'APPROVED' && (
-                            <ErpButton className="!px-2 !py-1 text-[10px]" onClick={() => { setPoPrId(pr._id); setTab('po'); }}>Create PO</ErpButton>
+                            <ErpButton className={btnSm} onClick={() => { goTab('po'); setPoPrId(pr._id); }}>Create PO</ErpButton>
                           )}
-                        </div>
+                        </ActionStack>
                       </td>
                     </tr>
-                  );})}
+                  );
+                })}
 
-                  {tab === 'history' && (items as PurchaseRequisition[]).map((pr) => {
-                    const linkedPo = findPoForPr(posForPrLink, pr);
-                    const linkedGrns = linkedPo ? findGrnsForPo(historyGrns, linkedPo._id) : [];
-                    const latestGrn = linkedGrns[0];
-                    return (
-                      <tr key={pr._id} className="border-t border-[var(--erp-border)]">
-                        <td className="px-3 py-2 font-mono">
-                          {pr.prNumber}
+                {tab === 'history' && (items as PurchaseRequisition[]).map((pr) => {
+                  const linkedPo = findPoForPr(posForPrLink, pr);
+                  const linkedGrns = linkedPo ? findGrnsForPo(historyGrns, linkedPo._id) : [];
+                  const latestGrn = linkedGrns[0];
+                  return (
+                    <tr key={pr._id}>
+                      <td className="whitespace-nowrap font-mono font-medium">{pr.prNumber}</td>
+                      <td>
+                        {linkedPo ? (
+                          <>
+                            <p className="font-mono text-[12px] font-medium">{linkedPo.poNumber}</p>
+                            <p className="text-[12px] text-erp-text-muted">{supplierLabel(linkedPo.supplierId)} · {formatCurrency(linkedPo.totalAmount)}</p>
+                          </>
+                        ) : (
+                          <span className="text-erp-text-muted">PO not found</span>
+                        )}
+                      </td>
+                      <td>
+                        {latestGrn ? (
+                          <>
+                            <p className="font-mono text-[12px]">{latestGrn.grnNumber}</p>
+                            <p className="text-[11px] text-erp-text-muted">{statusLabel(latestGrn.status)}</p>
+                          </>
+                        ) : '-'}
+                      </td>
+                      <td><LinesList lines={pr.lines} /></td>
+                      <td>
+                        <ErpStatusBadge
+                          status={latestGrn?.status === 'COMPLETED' ? 'DELIVERED' : 'SHIPPED'}
+                          label={latestGrn?.status === 'COMPLETED' ? 'Completed' : 'In history'}
+                        />
+                        <p className="mt-1 max-w-[220px] text-[11px] leading-snug text-erp-text-muted">
+                          {historyPurchaseLabel(linkedPo, linkedGrns)}
+                        </p>
+                      </td>
+                      <td className="text-right">
+                        <ActionStack>
                           {linkedPo && (
-                            <span className="mt-0.5 block text-[9px] text-erp-text-muted">{linkedPo.poNumber}</span>
+                            <ErpButton className={btnSm} onClick={() => goToPo(linkedPo)}>View PO</ErpButton>
                           )}
-                        </td>
-                        <td className="px-3 py-2 text-[10px] text-erp-text-muted">
-                          {lineSummary(pr.lines)}
-                          {linkedPo && (
-                            <span className="mt-0.5 block text-[9px]">
-                              {supplierLabel(linkedPo.supplierId)} · {formatCurrency(linkedPo.totalAmount)}
-                            </span>
+                          {latestGrn?.status === 'COMPLETED' && (
+                            <>
+                              <TextLink to="/inventory?tab=stock">Inventory</TextLink>
+                              <TextLink to="/warehouse/operations/put-away">Put away</TextLink>
+                            </>
                           )}
-                          {latestGrn && (
-                            <span className="mt-0.5 block text-[9px] text-[var(--erp-accent)]">
-                              {latestGrn.grnNumber} · {statusLabel(latestGrn.status)}
-                            </span>
+                          {latestGrn?.status === 'PENDING_QC' && (
+                            <TextLink to="/quality/inspections">QC -&gt;</TextLink>
                           )}
-                        </td>
-                        <td className="px-3 py-2">
-                          <ErpStatusBadge
-                            status={latestGrn?.status === 'COMPLETED' ? 'DELIVERED' : 'SHIPPED'}
-                            label={latestGrn?.status === 'COMPLETED' ? 'Completed' : 'In history'}
-                          />
-                          <p className="mt-0.5 text-[10px] text-erp-text-muted">
-                            {historyPurchaseLabel(linkedPo, linkedGrns)}
-                          </p>
-                        </td>
-                        <td className="px-3 py-2 text-right">
-                          <div className="flex flex-wrap justify-end gap-1">
-                            {linkedPo && (
-                              <ErpButton className="!px-2 !py-1 text-[10px]" onClick={() => goToPo(linkedPo)}>View PO</ErpButton>
-                            )}
-                            {latestGrn?.status === 'COMPLETED' && (
-                              <>
-                                <Link to="/inventory?tab=stock" className="self-center text-[10px] text-[var(--erp-accent)]">Inventory</Link>
-                                <Link to="/warehouse/operations/put-away" className="self-center text-[10px] text-[var(--erp-accent)]">Put away</Link>
-                              </>
-                            )}
-                            {latestGrn?.status === 'PENDING_QC' && (
-                              <Link to="/quality" className="self-center text-[10px] text-[var(--erp-accent)]">QC →</Link>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-
-                  {tab === 'po' && (items as PurchaseOrder[]).map((po) => (
-                    <tr key={po._id} className="border-t border-[var(--erp-border)]">
-                      <td className="px-3 py-2 font-mono">{po.poNumber}</td>
-                      <td className="px-3 py-2 text-[10px]">
-                        {po.prId && <span className="block font-mono text-[9px] text-erp-text-muted">PR {prNumber(po.prId)}</span>}
-                        {supplierLabel(po.supplierId)} · {formatCurrency(po.totalAmount)}
-                        <span className="mt-0.5 block text-[9px] text-erp-text-muted">{lineSummary(po.lines)}</span>
-                      </td>
-                      <td className="px-3 py-2">
-                        <ErpStatusBadge status={po.status} label={statusLabel(po.status)} />
-                        <p className="mt-0.5 text-[10px] text-erp-text-muted">{workflowHint('po', po.status)}</p>
-                      </td>
-                      <td className="px-3 py-2 text-right">
-                        <div className="flex flex-wrap justify-end gap-1">
-                          {canApprove && po.status === 'DRAFT' && (
-                            <ErpButton className="!px-2 !py-1 text-[10px]" onClick={() => workflow.mutate({ type: 'approvePo', id: po._id })}>Approve</ErpButton>
-                          )}
-                          {canExecute && po.status === 'APPROVED' && (
-                            <ErpButton variant="secondary" className="!px-2 !py-1 text-[10px]" onClick={() => workflow.mutate({ type: 'sendPo', id: po._id })}>Send</ErpButton>
-                          )}
-                          {canReceive && ['APPROVED', 'SENT', 'PARTIAL'].includes(po.status) && (
-                            <ErpButton variant="secondary" className="!px-2 !py-1 text-[10px]" onClick={() => openGrnForPo(po._id)}>Receive GRN</ErpButton>
-                          )}
-                        </div>
+                        </ActionStack>
                       </td>
                     </tr>
-                  ))}
+                  );
+                })}
 
-                  {tab === 'grn' && (items as GoodsReceipt[]).map((grn) => {
-                    const next = grnNextStep(grn.status);
-                    return (
-                      <tr key={grn._id} className="border-t border-[var(--erp-border)]">
-                        <td className="px-3 py-2 font-mono">{grn.grnNumber}</td>
-                        <td className="px-3 py-2 text-[10px]">
-                          PO {poNumber(grn.poId)}
-                          <span className="mt-0.5 block text-[9px] text-erp-text-muted">{grnLineSummary(grn)}</span>
-                        </td>
-                        <td className="px-3 py-2">
-                          <ErpStatusBadge status={grn.status} label={statusLabel(grn.status)} />
-                          <p className="mt-0.5 text-[10px] text-erp-text-muted">{workflowHint('grn', grn.status)}</p>
-                        </td>
-                        <td className="px-3 py-2 text-right">
-                          <div className="flex flex-wrap justify-end gap-1">
-                            {canUpdate && grn.status === 'DRAFT' && (
-                              <ErpButton
-                                variant="secondary"
-                                className="!px-2 !py-1 text-[10px]"
-                                onClick={() => promptConfirm(
-                                  'Submit for incoming QC',
-                                  'Send GRN to Quality? Physical stock is not updated until QC passes.',
-                                  () => workflow.mutate({ type: 'submitGrn', id: grn._id }),
-                                )}
-                              >
-                                Submit QC
-                              </ErpButton>
-                            )}
-                            {grn.status === 'PENDING_QC' && next && (
-                              <Link to={next.path} className="inline-flex items-center text-[10px] text-[var(--erp-accent)]">{next.label} →</Link>
-                            )}
-                            {grn.status === 'COMPLETED' && (
-                              <>
-                                <Link to="/inventory?tab=stock" className="text-[10px] text-[var(--erp-accent)]">View stock</Link>
-                                <Link to="/warehouse/operations/put-away" className="text-[10px] text-[var(--erp-accent)]">Put away</Link>
-                                <Link to="/production/orders" className="text-[10px] text-[var(--erp-accent)]">Production</Link>
-                              </>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
+                {tab === 'po' && (items as PurchaseOrder[]).map((po) => (
+                  <tr key={po._id}>
+                    <td className="whitespace-nowrap">
+                      <p className="font-mono font-medium">{po.poNumber}</p>
+                      {po.prId && <p className="text-[11px] text-erp-text-muted">PR {prNumber(po.prId)}</p>}
+                    </td>
+                    <td>{supplierLabel(po.supplierId)}</td>
+                    <td className="whitespace-nowrap text-right font-medium">{formatCurrency(po.totalAmount)}</td>
+                    <td><LinesList lines={po.lines} /></td>
+                    <td>
+                      <ErpStatusBadge status={po.status} label={statusLabel(po.status)} />
+                      <p className="mt-1 max-w-[200px] text-[11px] leading-snug text-erp-text-muted">{workflowHint('po', po.status)}</p>
+                    </td>
+                    <td className="text-right">
+                      <ActionStack>
+                        {canApprove && po.status === 'DRAFT' && (
+                          <ErpButton className={btnSm} onClick={() => workflow.mutate({ type: 'approvePo', id: po._id })}>Approve</ErpButton>
+                        )}
+                        {canExecute && po.status === 'APPROVED' && (
+                          <ErpButton variant="secondary" className={btnSm} onClick={() => workflow.mutate({ type: 'sendPo', id: po._id })}>Send</ErpButton>
+                        )}
+                        {canReceive && ['APPROVED', 'SENT', 'PARTIAL'].includes(po.status) && (
+                          <ErpButton variant="secondary" className={btnSm} onClick={() => openGrnForPo(po._id)}>Receive GRN</ErpButton>
+                        )}
+                      </ActionStack>
+                    </td>
+                  </tr>
+                ))}
 
-                  {tab === 'rfq' && (items as Rfq[]).map((rfq) => (
-                    <RfqRow key={rfq._id} rfq={rfq} canUpdate={canUpdate} canApprove={canApprove} onSend={() => workflow.mutate({ type: 'sendRfq', id: rfq._id })} onSelect={(id) => workflow.mutate({ type: 'selectQuote', id })} />
-                  ))}
-
-                  {tab === 'suppliers' && (items as Supplier[]).map((s) => (
-                    <tr key={s._id} className="border-t border-[var(--erp-border)]">
-                      <td className="px-3 py-2 font-mono whitespace-nowrap">{s.supplierCode}</td>
-                      <td className="px-3 py-2">{s.name}</td>
-                      <td className="px-3 py-2 text-erp-text-muted">{s.contactPerson || '—'}</td>
-                      <td className="px-3 py-2 font-mono whitespace-nowrap">{s.phone || '—'}</td>
-                      <td className="px-3 py-2 text-erp-text-muted">{s.contactEmail || '—'}</td>
-                      <td className="px-3 py-2 font-mono text-[10px] whitespace-nowrap">{s.gstNumber || '—'}</td>
-                      <td className="px-3 py-2">{s.materialsSupplied || '—'}</td>
-                      <td className="px-3 py-2 whitespace-nowrap">{s.paymentTerms || '—'}</td>
-                      <td className="px-3 py-2"><ErpStatusBadge status={s.status || 'ACTIVE'} /></td>
-                    </tr>
-                  ))}
-
-                  {items.length === 0 && (
-                    <tr>
-                      <td colSpan={tab === 'suppliers' ? 9 : 4} className="px-4 py-8 text-center text-erp-text-muted">
-                        {tab === 'history'
-                          ? 'No past purchases yet — converted PRs appear here after PO creation'
-                          : 'No records'}
+                {tab === 'grn' && (items as GoodsReceipt[]).map((grn) => {
+                  const next = grnNextStep(grn.status);
+                  return (
+                    <tr key={grn._id}>
+                      <td className="whitespace-nowrap font-mono font-medium">{grn.grnNumber}</td>
+                      <td className="font-mono text-erp-text-muted">PO {poNumber(grn.poId)}</td>
+                      <td className="text-[12px] text-erp-text-muted">{grnLineSummary(grn)}</td>
+                      <td>
+                        <ErpStatusBadge status={grn.status} label={statusLabel(grn.status)} />
+                        <p className="mt-1 max-w-[220px] text-[11px] leading-snug text-erp-text-muted">{workflowHint('grn', grn.status)}</p>
+                      </td>
+                      <td className="text-right">
+                        <ActionStack>
+                          {canUpdate && grn.status === 'DRAFT' && (
+                            <ErpButton
+                              variant="secondary"
+                              className={btnSm}
+                              onClick={() => promptConfirm(
+                                'Submit for incoming QC',
+                                'Send GRN to Quality? Physical stock is not updated until QC passes.',
+                                () => workflow.mutate({ type: 'submitGrn', id: grn._id }),
+                              )}
+                            >
+                              Submit QC
+                            </ErpButton>
+                          )}
+                          {grn.status === 'PENDING_QC' && next && (
+                            <TextLink to={next.path}>{next.label} -&gt;</TextLink>
+                          )}
+                          {grn.status === 'COMPLETED' && (
+                            <>
+                              <TextLink to="/inventory?tab=stock">View stock</TextLink>
+                              <TextLink to="/warehouse/operations/put-away">Put away</TextLink>
+                              <TextLink to="/production/orders">Production</TextLink>
+                            </>
+                          )}
+                        </ActionStack>
                       </td>
                     </tr>
-                  )}
-                </tbody>
-              </ErpDataTable>
-            </div>
-          )}
-          {meta && meta.totalPages > 0 && (
-            <div className="flex items-center justify-between border-t border-[var(--erp-border)] px-3 py-2">
-              <p className="text-[10px] text-erp-text-muted">{meta.page}/{meta.totalPages} · {meta.total}</p>
-              <div className="flex gap-1">
-                <ErpButton variant="secondary" className="!px-2 !py-1 text-[10px]" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>Prev</ErpButton>
-                <ErpButton variant="secondary" className="!px-2 !py-1 text-[10px]" disabled={page >= meta.totalPages} onClick={() => setPage((p) => p + 1)}>Next</ErpButton>
-              </div>
-            </div>
-          )}
-        </ErpCard>
-      </div>
+                  );
+                })}
+
+                {tab === 'rfq' && (items as Rfq[]).map((rfq) => (
+                  <RfqRow key={rfq._id} rfq={rfq} canUpdate={canUpdate} canApprove={canApprove} onSend={() => workflow.mutate({ type: 'sendRfq', id: rfq._id })} onSelect={(id) => workflow.mutate({ type: 'selectQuote', id })} />
+                ))}
+
+                {tab === 'suppliers' && (items as Supplier[]).map((s) => (
+                  <tr key={s._id}>
+                    <td className="whitespace-nowrap font-mono">{s.supplierCode}</td>
+                    <td className="font-medium">{s.name}</td>
+                    <td className="text-erp-text-muted">{s.contactPerson || '-'}</td>
+                    <td className="whitespace-nowrap font-mono">{s.phone || '-'}</td>
+                    <td className="text-erp-text-muted">{s.contactEmail || '-'}</td>
+                    <td className="whitespace-nowrap font-mono text-[11px]">{s.gstNumber || '-'}</td>
+                    <td>{s.materialsSupplied || '-'}</td>
+                    <td className="whitespace-nowrap">{s.paymentTerms || '-'}</td>
+                    <td><ErpStatusBadge status={s.status || 'ACTIVE'} /></td>
+                  </tr>
+                ))}
+
+                {items.length === 0 && (
+                  <EmptyRow colSpan={listColSpan}>
+                    {tab === 'history'
+                      ? 'No past purchases yet - converted PRs appear here after PO creation'
+                      : 'No records'}
+                  </EmptyRow>
+                )}
+              </tbody>
+            </ErpDataTable>
+          </div>
+        )}
+
+        {meta && (
+          <TablePager
+            page={page}
+            totalPages={meta.totalPages}
+            total={meta.total}
+            onPrev={() => setPage((p) => p - 1)}
+            onNext={() => setPage((p) => p + 1)}
+          />
+        )}
+      </TabShell>
 
       <ConfirmDialog open={!!confirmAction} title={confirmAction?.label ?? ''} message={confirmAction?.message ?? 'Continue?'} confirmLabel="Yes" loading={workflow.isPending} onCancel={() => setConfirmAction(null)} onConfirm={() => confirmAction?.fn()} />
       <CommentPrompt open={!!rejectPrId} title="Reject PR" message="Reason for rejection (min 3 characters)" required minLength={3} confirmLabel="Reject" loading={workflow.isPending} onCancel={() => setRejectPrId(null)} onConfirm={(comments) => { if (rejectPrId) workflow.mutate({ type: 'rejectPr', id: rejectPrId, comments }); }} />
@@ -978,32 +1119,35 @@ function RfqRow({ rfq, canUpdate, canApprove, onSend, onSelect }: {
   });
 
   return (
-    <>
-      <tr className="border-t border-[var(--erp-border)]">
-        <td className="px-3 py-2 font-mono">{rfq.rfqNumber}</td>
-        <td className="px-3 py-2 text-[10px]">PR {prNumber(rfq.prId)}</td>
-        <td className="px-3 py-2"><ErpStatusBadge status={rfq.status} label={statusLabel(rfq.status)} /></td>
-        <td className="px-3 py-2 text-right">
-          {canUpdate && rfq.status === 'DRAFT' && (
-            <ErpButton variant="secondary" className="!px-2 !py-1 text-[10px]" onClick={onSend}>Send</ErpButton>
-          )}
-        </td>
-      </tr>
-      {quotes.length > 0 && (
-        <tr className="bg-[var(--erp-surface-muted)]">
-          <td colSpan={4} className="px-3 py-2 text-[10px]">
+    <tr>
+      <td className="whitespace-nowrap font-mono font-medium">{rfq.rfqNumber}</td>
+      <td className="font-mono text-erp-text-muted">PR {prNumber(rfq.prId)}</td>
+      <td><ErpStatusBadge status={rfq.status} label={statusLabel(rfq.status)} /></td>
+      <td>
+        {quotes.length === 0 ? (
+          <span className="text-erp-text-muted">No quotes yet</span>
+        ) : (
+          <ul className="space-y-1.5">
             {quotes.map((q: Quotation) => (
-              <div key={q._id} className="flex items-center justify-between py-0.5">
-                <span>{supplierLabel(q.supplierId)} — {formatCurrency(q.totalAmount)}</span>
+              <li key={q._id} className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-[12px]">
+                  {supplierLabel(q.supplierId)}
+                  <span className="ml-1 font-medium">{formatCurrency(q.totalAmount)}</span>
+                  {q.status === 'SELECTED' && <span className="ml-1 text-emerald-700">Selected</span>}
+                </span>
                 {canApprove && q.status === 'SUBMITTED' && (
-                  <ErpButton className="!px-2 !py-0.5 text-[10px]" onClick={() => onSelect(q._id)}>Select → PO</ErpButton>
+                  <ErpButton className={btnSm} onClick={() => onSelect(q._id)}>Select -&gt; PO</ErpButton>
                 )}
-                {q.status === 'SELECTED' && <span className="text-emerald-600">Selected</span>}
-              </div>
+              </li>
             ))}
-          </td>
-        </tr>
-      )}
-    </>
+          </ul>
+        )}
+      </td>
+      <td className="text-right">
+        {canUpdate && rfq.status === 'DRAFT' && (
+          <ErpButton variant="secondary" className={btnSm} onClick={onSend}>Send</ErpButton>
+        )}
+      </td>
+    </tr>
   );
 }

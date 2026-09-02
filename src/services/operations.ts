@@ -272,8 +272,6 @@ export const qualityApi = {
   createIncoming: (grnId: string) => api.post<{ data: QualityInspection }>(`/goods-receipts/${grnId}/qc`).then(unwrap),
   incomingContext: (grnId: string) =>
     api.get<{ data: import('../types/api.extended').IncomingQcContext }>(`/goods-receipts/${grnId}/qc-context`).then(unwrap),
-  incomingContext: (grnId: string) =>
-    api.get<{ data: import('../types/api.extended').IncomingQcContext }>(`/goods-receipts/${grnId}/qc-context`).then(unwrap),
   createFinal: (batchId: string, body?: object) =>
     api.post<{ data: QualityInspection }>(`/batches/${batchId}/qc`, body || {}).then(unwrap),
   createInProcess: (batchId: string) =>
