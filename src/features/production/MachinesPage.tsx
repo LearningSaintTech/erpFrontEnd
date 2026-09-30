@@ -281,9 +281,9 @@ export function MachinesPage() {
               </ErpDataTable>
             </div>
             {meta && meta.totalPages > 0 && (
-              <div className="flex items-center justify-between border-t px-3 py-2 text-[10px] text-erp-text-muted">
+              <div className="flex items-center justify-between border-t px-3 py-2 text-[10px] text-erp-text-muted sm:pr-24">
                 <span>{meta.page}/{meta.totalPages} · {meta.total}</span>
-                <div className="flex gap-1">
+                <div className="flex items-center gap-1 sm:mr-16">
                   <ErpButton variant="secondary" className={btnSm} disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>Prev</ErpButton>
                   <ErpButton variant="secondary" className={btnSm} disabled={page >= meta.totalPages} onClick={() => setPage((p) => p + 1)}>Next</ErpButton>
                 </div>
@@ -343,9 +343,9 @@ export function MachinesPage() {
               </ErpDataTable>
             </div>
             {meta && meta.totalPages > 0 && (
-              <div className="flex items-center justify-between border-t px-3 py-2 text-[10px] text-erp-text-muted">
+              <div className="flex items-center justify-between border-t px-3 py-2 text-[10px] text-erp-text-muted sm:pr-24">
                 <span>{meta.page}/{meta.totalPages}</span>
-                <div className="flex gap-1">
+                <div className="flex items-center gap-1 sm:mr-16">
                   <ErpButton variant="secondary" className={btnSm} disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>Prev</ErpButton>
                   <ErpButton variant="secondary" className={btnSm} disabled={page >= meta.totalPages} onClick={() => setPage((p) => p + 1)}>Next</ErpButton>
                 </div>

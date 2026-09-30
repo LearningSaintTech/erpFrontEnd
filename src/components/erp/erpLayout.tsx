@@ -100,11 +100,11 @@ export function TablePager({
 }) {
   if (!totalPages) return null;
   return (
-    <div className="flex items-center justify-between border-t border-[var(--erp-border)] px-4 py-2.5">
+    <div className="flex items-center justify-between border-t border-[var(--erp-border)] px-4 py-2.5 sm:pr-24">
       <p className="text-[12px] text-erp-text-muted">
         Page {page} of {totalPages} · {total} total
       </p>
-      <div className="flex gap-1">
+      <div className="flex items-center gap-1.5 sm:mr-16">
         <ErpButton variant="secondary" className={btnSm} disabled={page <= 1} onClick={onPrev}>Prev</ErpButton>
         <ErpButton variant="secondary" className={btnSm} disabled={page >= totalPages} onClick={onNext}>Next</ErpButton>
       </div>

@@ -395,9 +395,9 @@ export function BomsPage() {
           </div>
         )}
         {meta && meta.totalPages > 0 && (
-          <div className="flex items-center justify-between border-t border-[var(--erp-border)] px-3 py-2">
+          <div className="flex items-center justify-between border-t border-[var(--erp-border)] px-3 py-2 sm:pr-24">
             <p className="text-[10px] text-erp-text-muted">{meta.page}/{meta.totalPages} · {meta.total} total</p>
-            <div className="flex gap-1">
+            <div className="flex items-center gap-1 sm:mr-16">
               <ErpButton variant="secondary" className="!px-2 !py-1 text-[10px]" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>Prev</ErpButton>
               <ErpButton variant="secondary" className="!px-2 !py-1 text-[10px]" disabled={page >= meta.totalPages} onClick={() => setPage((p) => p + 1)}>Next</ErpButton>
             </div>

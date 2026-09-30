@@ -1013,9 +1013,9 @@ export function SitesLayoutSection() {
                 </ErpDataTable>
               </div>
               {filteredBins.length > PAGE_SIZE && (
-                <div className="flex items-center justify-between border-t border-[var(--erp-border)] px-3 py-2 text-[10px] text-erp-text-muted">
+                <div className="flex items-center justify-between border-t border-[var(--erp-border)] px-3 py-2 text-[10px] text-erp-text-muted sm:pr-24">
                   <span>{binPage}/{totalPages} · {filteredBins.length}</span>
-                  <div className="flex gap-1">
+                  <div className="flex items-center gap-1 sm:mr-16">
                     <ErpButton className={btnSm} variant="secondary" disabled={binPage <= 1} onClick={() => setBinPage((p) => p - 1)}>Prev</ErpButton>
                     <ErpButton className={btnSm} variant="secondary" disabled={binPage >= totalPages} onClick={() => setBinPage((p) => p + 1)}>Next</ErpButton>
                   </div>
