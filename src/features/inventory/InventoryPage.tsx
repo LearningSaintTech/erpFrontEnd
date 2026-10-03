@@ -503,7 +503,7 @@ export function InventoryPage() {
       unitCost: String(m.unitCost ?? 0),
       reorderLevel: String(m.reorderLevel ?? 0),
     });
-    setEditImages(m.images || []);
+    setEditImages((m.images || []).flatMap((img) => (img.url ? [{ url: img.url, fileName: img.fileName }] : [])));
     setEditNewImages([]);
   };
 

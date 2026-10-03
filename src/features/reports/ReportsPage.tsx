@@ -9,6 +9,7 @@ import {
 } from 'recharts';
 import { PreviewableImage } from '../../components/ImagePreview';
 import { mediaUrl } from '../inventory/inventoryUtils';
+import { reportApi } from '../../services/reports';
 import { purchaseApi } from '../../services/operations';
 import type {
   ApprovalReport, EmployeeReport, FactoryReport, FinancialReport, InventoryReport,

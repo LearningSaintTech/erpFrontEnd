@@ -1220,7 +1220,6 @@ declare module './api' {
     supplierId?: string | import('./api').Supplier;
     prId?: string | import('./api').PurchaseRequisition;
     lines?: PurchaseLine[];
-    receipts?: { url?: string; fileName?: string }[];
   }
 
   export interface PurchaseRequisition {
@@ -1252,7 +1251,6 @@ declare module './api' {
   export interface GoodsReceipt {
     poId?: string | import('./api').PurchaseOrder;
     qcInspectionId?: string | { _id?: string; inspectionNumber?: string; status?: string };
-    receipts?: { url?: string; fileName?: string }[];
   }
 
   export interface Supplier {
