@@ -177,6 +177,7 @@ export function useDashboardData(preset: ReportDatePreset = 'mtd') {
     { id: 'overdue', label: 'Overdue orders', count: kpis.overdueOrders, link: '/production', severity: (kpis.overdueOrders > 0 ? 'danger' : 'info') as AlertItem['severity'] },
     { id: 'capa', label: 'Open CAPA', count: kpis.openCapa, link: '/quality/capa', severity: (kpis.openCapa > 0 ? 'warning' : 'info') as AlertItem['severity'] },
     { id: 'grn', label: 'GRNs pending QC', count: pendingWork?.pendingGrns?.length ?? purchaseReport?.grnPendingQc ?? 0, link: '/quality/inspections', severity: 'warning' as const },
+    { id: 'unpaid', label: 'Unpaid payments', count: purchaseReport?.poOpen ?? 0, link: '/purchase?tab=po', severity: 'warning' as const },
   ].filter((a) => a.count > 0);
 
   const productionChart = recordToChart(productionReport?.ordersByStatus ?? factory?.productionByStatus);
@@ -251,11 +252,11 @@ function buildActivityChart(
 function buildRecentOrders(pos: PurchaseOrder[], orders: ProductionOrder[]): RecentOrderRow[] {
   const poRows: RecentOrderRow[] = pos.map((p) => ({
     id: p.poNumber,
-    type: 'Purchase',
+    type: 'Payment',
     total: p.totalAmount != null ? `₹${Math.round(p.totalAmount).toLocaleString()}` : '—',
-    status: p.status,
+    status: p.paymentStatus === 'PAID' ? 'PAID' : p.status,
     date: p.createdAt ? new Date(p.createdAt).toLocaleDateString() : '—',
-    link: '/purchase',
+    link: '/purchase?tab=po',
   }));
   const prodRows: RecentOrderRow[] = orders.map((o) => ({
     id: o.orderNumber,

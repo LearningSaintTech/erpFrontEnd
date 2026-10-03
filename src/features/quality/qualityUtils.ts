@@ -64,10 +64,10 @@ export function isOverdue(dueDate?: string): boolean {
 }
 
 export const RM_INCOMING_QC_FLOW = [
-  { id: 'grn', label: 'GRN submitted', detail: 'Purchase submits GRN → PENDING_QC' },
+  { id: 'grn', label: 'GRN + invoice', detail: 'Purchase records GRN and uploads the supplier invoice' },
   { id: 'inspect', label: 'Incoming QC', detail: 'Inspect materials — inspection auto-created on submit' },
   { id: 'pass', label: 'Pass qty', detail: 'Accepted qty receipts to dock or optional RM bin' },
-  { id: 'stock', label: 'Stock', detail: 'View balances in Inventory; put away in Warehouse' },
+  { id: 'stock', label: 'Stock', detail: 'View balances in Inventory; Finance marks the payment paid' },
 ] as const;
 
 export function grnLineSummary(grn?: { lines?: GoodsReceiptRef['lines'] }) {

@@ -340,7 +340,7 @@ export function QualityPage() {
   };
 
   const tabMeta: Record<TabId, { title: string; hint: string }> = {
-    incoming: { title: 'Incoming QC', hint: 'Purchase GRNs waiting for inspection. Passed qty receipts to dock or an RM bin.' },
+    incoming: { title: 'Incoming QC', hint: 'GRNs from purchase payments waiting for inspection. Invoice should already be on the GRN. Passed qty receipts to dock or an RM bin.' },
     samples: { title: 'Sample QC', hint: 'After stitching, inspect the garment. Pass moves it to fit trial or buyer review.' },
     inprocess: { title: 'In-process QC', hint: 'Create or complete inspections on batches currently on the floor.' },
     final: { title: 'Final QC', hint: 'Inspect completed batches. Optionally mark dispatch-ready on pass.' },
@@ -503,7 +503,7 @@ export function QualityPage() {
                 <thead>
                   <tr>
                     <th>GRN</th>
-                    <th>PO</th>
+                    <th>Payment</th>
                     <th>Lines</th>
                     <th className="text-right">Qty</th>
                     <th>Inspection</th>

@@ -3,6 +3,16 @@ import { getApiErrorMessage } from '../utils/errors';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000/api/v1';
 
+export function getDeviceId(): string {
+  const key = 'erp-device-id';
+  let id = localStorage.getItem(key);
+  if (!id) {
+    id = crypto.randomUUID();
+    localStorage.setItem(key, id);
+  }
+  return id;
+}
+
 const apiClient = axios.create({
   baseURL: API_URL,
   withCredentials: true,
@@ -13,6 +23,7 @@ apiClient.interceptors.request.use((config) => {
   const factoryId = localStorage.getItem('factoryId');
   if (token) config.headers.Authorization = `Bearer ${token}`;
   if (factoryId) config.headers['X-Factory-Id'] = factoryId;
+  config.headers['x-device-id'] = getDeviceId();
   return config;
 });
 

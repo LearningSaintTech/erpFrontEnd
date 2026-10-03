@@ -133,7 +133,7 @@ export function VendorsPage() {
         title="Vendors"
         subtitle={(
           <>
-            Supplier master used on POs and RFQs.
+            Supplier master used when creating payments. Suppliers do not log in — you talk on call.
             <Link to="/purchase" className="ml-2 text-[var(--erp-accent)]">Purchase -&gt;</Link>
           </>
         )}
@@ -175,7 +175,7 @@ export function VendorsPage() {
 
       <TabShell>
         {canManage && showForm && (
-          <ComposeSection title="New vendor" hint="Saved to the supplier master used on POs and RFQs.">
+          <ComposeSection title="New vendor" hint="Saved to the supplier master used on payments.">
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <div>
                 <label className={fieldLabel}>Vendor ID</label>

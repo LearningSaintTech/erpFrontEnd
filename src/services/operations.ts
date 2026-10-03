@@ -1,4 +1,5 @@
 import api from './api';
+import { downloadAuthFile } from '../utils/downloadFile';
 import type {
   Supplier,
   PurchaseRequisition,
@@ -72,22 +73,43 @@ export const purchaseApi = {
   approvePR: (id: string) => api.post<{ data: PurchaseRequisition }>(`/purchase-requisitions/${id}/approve`).then(unwrap),
   rejectPR: (id: string, comments: string) =>
     api.post<{ data: PurchaseRequisition }>(`/purchase-requisitions/${id}/reject`, { comments }).then(unwrap),
-  listPOs: (params?: { status?: string; excludeStatus?: string; limit?: number }) =>
+  listPOs: (params?: { status?: string; excludeStatus?: string; limit?: number; paymentStatus?: string }) =>
     api.get<{ data: PurchaseOrder[]; meta?: ApiListMeta }>('/purchase-orders', { params: { limit: 200, ...params } }).then(unwrap),
-  listPOsPage: (params?: { page?: number; limit?: number; status?: string; excludeStatus?: string; search?: string }) =>
+  listPOsPage: (params?: { page?: number; limit?: number; status?: string; excludeStatus?: string; search?: string; paymentStatus?: string }) =>
     api.get<{ data: PurchaseOrder[]; meta: ApiListMeta }>('/purchase-orders', { params }).then(unwrapList),
   poReceiptPreview: (id: string) =>
     api.get<{ data: PoReceiptPreview }>(`/purchase-orders/${id}/receipt-preview`).then(unwrap),
-  createPO: (body: { supplierId: string; prId?: string; lines?: { materialId: string; orderedQty: number; unit?: string; unitPrice?: number }[] }) =>
+  createPO: (body: {
+    supplierId: string;
+    prId?: string;
+    lines?: { materialId: string; orderedQty: number; unit?: string; unitPrice?: number }[];
+    receipts?: { dataUrl?: string; fileName?: string; contentType?: string; url?: string }[];
+  }) =>
     api.post<{ data: PurchaseOrder }>('/purchase-orders', body).then(unwrap),
+  setPoReceipts: (id: string, receipts: { url?: string; fileName?: string; dataUrl?: string; contentType?: string }[]) =>
+    api.patch<{ data: PurchaseOrder }>(`/purchase-orders/${id}/receipts`, { receipts }).then(unwrap),
+  downloadReceipt: (kind: 'po' | 'grn', id: string, index: number, fileName?: string) =>
+    downloadAuthFile(
+      kind === 'grn'
+        ? `/goods-receipts/${id}/receipts/${index}/file`
+        : `/purchase-orders/${id}/receipts/${index}/file`,
+      fileName || 'invoice',
+    ),
   approvePO: (id: string) => api.post<{ data: PurchaseOrder }>(`/purchase-orders/${id}/approve`).then(unwrap),
   sendPO: (id: string) => api.post<{ data: PurchaseOrder }>(`/purchase-orders/${id}/send`).then(unwrap),
+  markPoPaid: (id: string) => api.post<{ data: PurchaseOrder }>(`/purchase-orders/${id}/mark-paid`).then(unwrap),
   listGRNs: (params?: { status?: string; excludeStatus?: string; limit?: number }) =>
     api.get<{ data: GoodsReceipt[]; meta?: ApiListMeta }>('/goods-receipts', { params: { limit: 200, ...params } }).then(unwrap),
   listGRNsPage: (params?: { page?: number; limit?: number; status?: string; excludeStatus?: string; search?: string }) =>
     api.get<{ data: GoodsReceipt[]; meta: ApiListMeta }>('/goods-receipts', { params }).then(unwrapList),
-  createGRN: (body: { poId: string; lines: { materialId: string; receivedQty: number; unit?: string }[] }) =>
+  createGRN: (body: {
+    poId: string;
+    lines: { materialId: string; receivedQty: number; unit?: string }[];
+    receipts?: { dataUrl?: string; fileName?: string; contentType?: string; url?: string }[];
+  }) =>
     api.post<{ data: GoodsReceipt }>('/goods-receipts', body).then(unwrap),
+  setGrnReceipts: (id: string, receipts: { url?: string; fileName?: string; dataUrl?: string; contentType?: string }[]) =>
+    api.patch<{ data: GoodsReceipt }>(`/goods-receipts/${id}/receipts`, { receipts }).then(unwrap),
   submitGrnQc: (id: string) => api.post<{ data: GoodsReceipt }>(`/goods-receipts/${id}/submit-qc`).then(unwrap),
   listRfqs: (params?: { status?: string; limit?: number }) =>
     api.get<{ data: Rfq[]; meta?: ApiListMeta }>('/rfqs', { params: { limit: 200, ...params } }).then(unwrap),

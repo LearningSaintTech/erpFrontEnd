@@ -308,6 +308,7 @@ export interface Material {
   unit: string;
   unitCost: number;
   category?: string;
+  images?: { url?: string; fileName?: string; dataUrl?: string; contentType?: string }[];
 }
 
 export interface InventoryBalance {
@@ -342,6 +343,10 @@ export interface PurchaseOrder {
   _id: string;
   poNumber: string;
   status: string;
+  paymentStatus?: string;
+  paidAt?: string;
+  paidBy?: string | { _id?: string; firstName?: string; lastName?: string };
+  receipts?: { url?: string; fileName?: string; dataUrl?: string; contentType?: string }[];
 }
 
 export interface GoodsReceipt {
@@ -349,6 +354,7 @@ export interface GoodsReceipt {
   grnNumber: string;
   status: string;
   lines?: { receivedQty: number }[];
+  receipts?: { url?: string; fileName?: string; dataUrl?: string; contentType?: string }[];
 }
 
 export interface ProductionOrder {

@@ -307,7 +307,7 @@ export function ProductionPage() {
         title="Production"
         subtitle={(
           <>
-            MRP creates PRs for shortages → purchase/GRN/QC → reserve → issue → batches → final QC → FG dispatch.
+            MRP creates PRs for shortages → Factory Admin approves → payment (on call) → GRN + invoice → QC → reserve → issue → batches.
             <Link to="/purchase" className="ml-2 text-[var(--erp-accent)]">Purchase →</Link>
             <Link to="/warehouse/operations/put-away" className="ml-2 text-[var(--erp-accent)]">Put away →</Link>
           </>
@@ -414,7 +414,7 @@ export function ProductionPage() {
             </ErpButton>
           </div>
           <p className="mt-2 text-[10px] text-erp-text-muted">
-            Flow: MRP (auto-creates purchase PRs for shortages) → receive via GRN/QC → reserve → approval → batches.
+            Flow: MRP (auto-creates purchase PRs for shortages) → Factory Admin approves → payment on call → GRN + invoice → QC → reserve → approval → batches.
           </p>
         </ErpCard>
       )}

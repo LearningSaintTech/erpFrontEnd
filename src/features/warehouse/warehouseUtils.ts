@@ -158,7 +158,7 @@ export function stockOpSuccessMessage(type: string, data: unknown): string {
 }
 
 export const RM_PUT_AWAY_FLOW = [
-  { id: 'dock', label: 'Unallocated dock', detail: 'Stock from GRN + incoming QC lands here first' },
+  { id: 'dock', label: 'Unallocated dock', detail: 'Stock from purchase GRN + incoming QC lands here first' },
   { id: 'putaway', label: 'Put away', detail: 'Select material → choose bin → confirm qty' },
   { id: 'bin', label: 'Bin stock', detail: 'Available for transfer, pick, or workflow reserve/issue' },
 ] as const;

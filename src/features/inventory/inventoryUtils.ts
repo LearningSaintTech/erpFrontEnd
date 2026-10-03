@@ -10,7 +10,7 @@ export type InventoryFlowStep = {
 /** RM inventory position in the end-to-end lifecycle (see raw-material-lifecycle.md). */
 export const RM_INVENTORY_FLOW: InventoryFlowStep[] = [
   { id: 'master', label: 'Material master', detail: 'Register RM codes — required before Purchase PR lines' },
-  { id: 'receipt', label: 'Receipt', detail: 'Normal path: Purchase GRN → incoming QC → unallocated dock' },
+  { id: 'receipt', label: 'Receipt', detail: 'Normal path: Purchase GRN + invoice → incoming QC → unallocated dock' },
   { id: 'dock', label: 'Dock / bins', detail: 'Balances per location — put-away & transfer in Warehouse' },
   { id: 'hold', label: 'Reserve', detail: 'Holds for SAMPLE or PRODUCTION_ORDER (workflow modules)' },
   { id: 'issue', label: 'Issue', detail: 'Sample issue, production batch issue, warehouse pick' },
@@ -97,12 +97,12 @@ export function suggestedPrQty(balance: Pick<InventoryBalance, 'available' | 're
 
 export function inventorySuccessMessage(action: string): string {
   switch (action) {
-    case 'createMaterial': return 'Material created — use in Purchase PR or BOM';
+    case 'createMaterial': return 'Material created — use on a Purchase PR or BOM';
     case 'updateMaterial': return 'Material updated';
     case 'manualReceipt': return 'Manual receipt posted to stock';
     case 'reserve': return 'Stock reserved';
     case 'release': return 'Reservations released';
-    case 'requestPurchase': return 'Purchase requisition created — submit it on Purchase for approval';
+    case 'requestPurchase': return 'PR created — submit it on Purchase. Factory Admin or Super Admin approves, then a payment is created after the supplier call.';
     default: return 'Updated';
   }
 }
@@ -110,7 +110,7 @@ export function inventorySuccessMessage(action: string): string {
 export function inventoryConfirmMessage(action: 'manualReceipt' | 'reserve' | 'release', detail?: string): string {
   switch (action) {
     case 'manualReceipt':
-      return `Post manual receipt${detail ? `: ${detail}` : ''}? Normal RM intake is Purchase GRN → incoming QC. Use manual receipt only for corrections or opening balances.`;
+      return `Post manual receipt${detail ? `: ${detail}` : ''}? Normal RM intake is Purchase GRN (upload invoice) → incoming QC. Use manual receipt only for corrections or opening balances.`;
     case 'reserve':
       return `Reserve stock${detail ? ` (${detail})` : ''}? Available qty will decrease until issue or release.`;
     case 'release':
@@ -160,6 +160,28 @@ export function materialParts(materialId: { materialCode?: string; name?: string
 export function materialDisplayName(materialId: { materialCode?: string; name?: string } | string | undefined) {
   const { code, name } = materialParts(materialId);
   return name ? `${code} — ${name}` : code;
+}
+
+export function mediaUrl(path?: string) {
+  if (!path) return '';
+  if (/^https?:\/\//i.test(path)) return path;
+  const api = import.meta.env.VITE_API_URL || 'http://localhost:3000/api/v1';
+  const origin = String(api).replace(/\/api\/v1\/?$/, '');
+  return `${origin}${path.startsWith('/') ? path : `/${path}`}`;
+}
+
+export async function filesToImagePayloads(files: File[]) {
+  const out: { dataUrl: string; fileName: string; contentType: string }[] = [];
+  for (const file of files) {
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ''));
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(file);
+    });
+    out.push({ dataUrl, fileName: file.name, contentType: file.type || 'image/jpeg' });
+  }
+  return out;
 }
 
 export function balanceLocationLabel(balance: {

@@ -649,7 +649,7 @@ export function SampleWorkspace({
                 {reserveShortfall && (
                   <p className="mb-2 text-[10px] text-amber-800">
                     Insufficient available stock for one or more lines — receive via{' '}
-                    <Link to="/purchase" className="text-[var(--erp-accent)]">Purchase → GRN → QC</Link>
+                    <Link to="/purchase" className="text-[var(--erp-accent)]">Purchase → Payment → GRN → QC</Link>
                     {' '}or check <Link to="/inventory" className="text-[var(--erp-accent)]">Inventory</Link>.
                   </p>
                 )}

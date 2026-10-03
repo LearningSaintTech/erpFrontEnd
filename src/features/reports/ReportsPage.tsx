@@ -1,17 +1,19 @@
 import { useEffect, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useParams, useNavigate, Link } from 'react-router-dom';
 import {
-  BarChart3, Download, Factory, IndianRupee, Package, RefreshCw, ShieldCheck, TrendingUp, Users,
+  BarChart3, Download, Factory, FileText, IndianRupee, Package, RefreshCw, ShieldCheck, TrendingUp, Users,
 } from 'lucide-react';
 import {
   Bar, BarChart, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts';
-import { reportApi } from '../../services/reports';
+import { PreviewableImage } from '../../components/ImagePreview';
+import { mediaUrl } from '../inventory/inventoryUtils';
+import { purchaseApi } from '../../services/operations';
 import type {
   ApprovalReport, EmployeeReport, FactoryReport, FinancialReport, InventoryReport,
   MachineReport, ProductionReport, PurchaseReport, QualityReport, ReportDatePreset,
-  ReportPeriod, ReportTabId, WasteReport,
+  ReportPeriod, ReportTabId, WasteReport, PurchaseOrder, GoodsReceipt,
 } from '../../types/api';
 import {
   ErpPageHeader, ErpTabs, ErpButton, ErpCard, ErpDataTable, ErpSelect, ErpStatusBadge,
@@ -128,7 +130,7 @@ function FactoryTab({ data }: { data: FactoryReport }) {
         <KpiCard label="Batches in progress" value={formatNumber(s.batchesInProgress)} icon={TrendingUp} />
         <KpiCard label="Fulfillment" value={formatPct(s.fulfillmentPct)} icon={BarChart3} />
         <KpiCard label="First-pass yield" value={formatPct(s.firstPassYield)} icon={ShieldCheck} />
-        <KpiCard label="Open PO value" value={formatCurrency(s.openPoValue)} icon={IndianRupee} />
+        <KpiCard label="Unpaid payments" value={formatCurrency(s.openPoValue)} icon={IndianRupee} />
         <KpiCard label="Low stock alerts" value={formatNumber(s.lowStockAlerts)} icon={Package} />
       </div>
       <div className="grid gap-4 lg:grid-cols-3">
@@ -216,15 +218,14 @@ function PurchaseTab({ data }: { data: PurchaseReport }) {
     <div className="space-y-4">
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <KpiCard label="Period spend" value={formatCurrency(data.spendMtd)} icon={IndianRupee} />
-        <KpiCard label="Open POs" value={formatNumber(data.poOpen)} />
-        <KpiCard label="Open PO value" value={formatCurrency(data.openPoValue)} />
+        <KpiCard label="Unpaid payments" value={formatNumber(data.poOpen)} />
+        <KpiCard label="Open payment value" value={formatCurrency(data.openPoValue)} />
         <KpiCard label="GRNs pending QC" value={formatNumber(data.grnPendingQc)} />
         <KpiCard label="Suppliers" value={formatNumber(data.suppliers)} />
-        <KpiCard label="Open RFQs" value={formatNumber(data.rfqOpen)} />
       </div>
       <div className="grid gap-4 lg:grid-cols-2">
         <BreakdownTable title="PR by status" data={recordToChartData(data.prByStatus)} />
-        <BreakdownTable title="PO by status" data={recordToChartData(data.poByStatus)} />
+        <BreakdownTable title="Payment by status" data={recordToChartData(data.poByStatus)} />
       </div>
     </div>
   );
@@ -321,7 +322,59 @@ function EmployeeTab({ data }: { data: EmployeeReport }) {
   );
 }
 
+function paymentInvoiceFiles(po: PurchaseOrder, grns: GoodsReceipt[]) {
+  const fromPo = (po.receipts || [])
+    .map((r, index) => ({ ...r, kind: 'po' as const, docId: po._id, index }))
+    .filter((r) => r.url);
+  const fromGrn = grns.flatMap((g) => {
+    const id = typeof g.poId === 'string' ? g.poId : g.poId?._id;
+    if (id !== po._id) return [];
+    return (g.receipts || [])
+      .map((r, index) => ({ ...r, kind: 'grn' as const, docId: g._id, index }))
+      .filter((r) => r.url);
+  });
+  return [...fromPo, ...fromGrn];
+}
+
 function FinancialTab({ data }: { data: FinancialReport }) {
+  const qc = useQueryClient();
+  const { permissions } = useAuth();
+  const canMarkPaid = permissions.includes('*') || permissions.includes('purchase.pay');
+  const [payError, setPayError] = useState('');
+  const [paySuccess, setPaySuccess] = useState('');
+
+  const { data: payments = [] } = useQuery({
+    queryKey: ['finance-payments'],
+    queryFn: () => purchaseApi.listPOs({ limit: 50, excludeStatus: 'CANCELLED' }),
+  });
+  const { data: grns = [] } = useQuery({
+    queryKey: ['finance-grns'],
+    queryFn: () => purchaseApi.listGRNs({ limit: 200 }),
+  });
+
+  const markPaid = useMutation({
+    mutationFn: (id: string) => purchaseApi.markPoPaid(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['finance-payments'] });
+      qc.invalidateQueries({ queryKey: ['purchase-stats'] });
+      qc.invalidateQueries({ queryKey: ['reports'] });
+      qc.invalidateQueries({ queryKey: ['purchase-list'] });
+      setPaySuccess('Marked paid');
+      setPayError('');
+    },
+    onError: (e: Error) => setPayError(e.message),
+  });
+
+  const downloadInvoice = (kind: 'po' | 'grn', id: string, index: number, fileName?: string) => {
+    purchaseApi.downloadReceipt(kind, id, index, fileName).catch((e: Error) => setPayError(e.message));
+  };
+
+  const supplierName = (po: PurchaseOrder) => {
+    const s = po.supplierId;
+    if (!s || typeof s === 'string') return s || '—';
+    return `${s.supplierCode} — ${s.name}`;
+  };
+
   return (
     <div className="space-y-4">
       <p className="text-xs text-erp-text-muted">{formatPeriod(data.period.from, data.period.to)}</p>
@@ -331,6 +384,106 @@ function FinancialTab({ data }: { data: FinancialReport }) {
         <KpiCard label="Stock value" value={formatCurrency(data.stockValue)} icon={Package} />
         <KpiCard label="Net exposure" value={formatCurrency(data.netExposure)} />
       </div>
+
+      <ErpCard className="p-4">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <p className="text-sm font-medium">Payments</p>
+            <p className="text-xs text-erp-text-muted">
+              Open the invoice, download it, then mark paid. No supplier login — agreed on call.
+            </p>
+          </div>
+          <Link to="/purchase?tab=po" className="text-xs text-[var(--erp-accent)]">Open purchase payments -&gt;</Link>
+        </div>
+        {payError && <p className="mb-2 text-xs text-red-600">{payError}</p>}
+        {paySuccess && <p className="mb-2 text-xs text-emerald-700">{paySuccess}</p>}
+        {payments.length === 0 ? (
+          <p className="text-xs text-erp-text-muted">No payments yet.</p>
+        ) : (
+          <ErpDataTable>
+            <thead>
+              <tr>
+                <th>Payment</th>
+                <th>Supplier</th>
+                <th className="text-right">Amount</th>
+                <th>Invoice</th>
+                <th>Paid</th>
+                <th className="text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {payments.map((po) => {
+                const paid = po.paymentStatus === 'PAID';
+                const invoices = paymentInvoiceFiles(po, grns as GoodsReceipt[]);
+                return (
+                  <tr key={po._id}>
+                    <td className="font-mono text-[12px]">{po.poNumber}</td>
+                    <td>{supplierName(po)}</td>
+                    <td className="text-right">{formatCurrency(po.totalAmount)}</td>
+                    <td>
+                      {invoices.length === 0 ? (
+                        <span className="text-xs text-erp-text-muted">None</span>
+                      ) : (
+                        <div className="flex flex-col gap-1">
+                          {invoices.map((inv) => {
+                            const href = mediaUrl(inv.url);
+                            const isPdf = /\.pdf($|\?)/i.test(inv.fileName || inv.url || '');
+                            return (
+                              <div key={`${inv.kind}-${inv.docId}-${inv.index}`} className="flex items-center gap-1.5">
+                                {isPdf ? (
+                                  <a
+                                    href={href}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="inline-flex items-center gap-1 text-[11px] text-erp-text-muted hover:text-[var(--erp-accent)]"
+                                    title={inv.fileName || 'Invoice PDF'}
+                                  >
+                                    <FileText size={12} />
+                                    {inv.fileName || 'PDF'}
+                                  </a>
+                                ) : (
+                                  <PreviewableImage
+                                    src={href}
+                                    alt={inv.fileName || 'Invoice'}
+                                    className="h-8 w-8 object-cover"
+                                    onDownload={() => downloadInvoice(inv.kind, inv.docId, inv.index, inv.fileName)}
+                                  />
+                                )}
+                                <ErpButton
+                                  variant="secondary"
+                                  className={btnSm}
+                                  onClick={() => downloadInvoice(inv.kind, inv.docId, inv.index, inv.fileName)}
+                                >
+                                  <Download size={11} className="mr-1 inline" />
+                                  Download
+                                </ErpButton>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </td>
+                    <td>
+                      <ErpStatusBadge status={paid ? 'COMPLETED' : 'PENDING'} label={paid ? 'Paid' : 'Unpaid'} />
+                    </td>
+                    <td className="text-right">
+                      {canMarkPaid && !paid && (
+                        <ErpButton
+                          className={btnSm}
+                          disabled={markPaid.isPending}
+                          onClick={() => markPaid.mutate(po._id)}
+                        >
+                          Mark paid
+                        </ErpButton>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </ErpDataTable>
+        )}
+      </ErpCard>
     </div>
   );
 }
@@ -508,7 +661,7 @@ export function ReportsPage() {
         <div className="mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
           <KpiCard label="Fulfillment" value={formatPct(stats.production?.fulfillmentPct)} icon={TrendingUp} />
           <KpiCard label="Stock value" value={formatCurrency(stats.inventory?.stockValue)} icon={Package} />
-          <KpiCard label="Open PO value" value={formatCurrency(stats.purchase?.openPoValue)} icon={IndianRupee} />
+          <KpiCard label="Unpaid payments" value={formatCurrency(stats.purchase?.openPoValue)} icon={IndianRupee} />
           <KpiCard label="QC yield" value={formatPct(stats.quality?.firstPassYield)} icon={ShieldCheck} />
           <KpiCard label="Waste cost" value={formatCurrency(stats.waste?.totalCost)} />
           <KpiCard label="Dispatch ready" value={formatNumber(stats.warehouse?.dispatchReady)} />

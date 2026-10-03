@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Search } from 'lucide-react';
 import { ErpInput } from '../../components/erp';
-import { groupPermissions } from './userUtils';
+import { groupPermissions, permissionActionLabel } from './userUtils';
 
 interface PermissionMatrixProps {
   catalog: string[];
@@ -112,7 +112,7 @@ export function PermissionMatrix({
                           : 'bg-[var(--erp-surface-muted)] text-erp-text-muted hover:text-erp-text-secondary'
                       } disabled:cursor-default`}
                     >
-                      {action}
+                      {permissionActionLabel(mod, action)}
                     </button>
                   );
                 })}

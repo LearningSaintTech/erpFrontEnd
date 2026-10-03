@@ -12,6 +12,12 @@ export function formatLastLogin(ts?: string) {
   return d.toLocaleString();
 }
 
+export function permissionActionLabel(module: string, action: string) {
+  if (module === 'purchase' && action === 'authorize') return 'approve PR';
+  if (module === 'purchase' && action === 'pay') return 'mark paid';
+  return action;
+}
+
 export function groupPermissions(permissions: string[] = []) {
   const groups: Record<string, string[]> = {};
   for (const code of permissions) {

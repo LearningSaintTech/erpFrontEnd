@@ -1,8 +1,8 @@
 import { useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
-  ArrowRight, ClipboardList, Download, FileText, RefreshCw, Search, ShoppingCart, Truck, X,
+  ArrowRight, ClipboardList, Download, FileText, ImagePlus, RefreshCw, Search, ShoppingCart, Truck, X,
 } from 'lucide-react';
 import { purchaseApi } from '../../services/operations';
 import { inventoryApi } from '../../services/manufacturing';
@@ -29,10 +29,136 @@ import {
   materialLabel, poNumber, prNumber, prSourceLabel, purchaseSuccessMessage,
   RM_PURCHASE_FLOW, statusLabel, supplierLabel, workflowHint,
 } from './purchaseUtils';
-import { unitLabel } from '../inventory/inventoryUtils';
+import { unitLabel, mediaUrl, filesToImagePayloads } from '../inventory/inventoryUtils';
+import { PreviewableImage } from '../../components/ImagePreview';
 import { downloadCsv } from '../../utils/csvExport';
 
 const PAGE_SIZE = 15;
+const RECEIPT_ACCEPT = 'image/jpeg,image/png,image/webp,image/gif,application/pdf';
+
+type ReceiptFile = {
+  url?: string;
+  fileName?: string;
+  kind?: 'po' | 'grn';
+  docId?: string;
+  index?: number;
+};
+
+function isPdfReceipt(item: { url?: string; fileName?: string }) {
+  return /\.pdf($|\?)/i.test(item.fileName || item.url || '');
+}
+
+function ReceiptThumbs({
+  items,
+  pending,
+  canAdd,
+  onAdd,
+  onDownload,
+}: {
+  items?: ReceiptFile[];
+  pending?: File[];
+  canAdd?: boolean;
+  onAdd?: (files: File[]) => void;
+  onDownload?: (item: ReceiptFile) => void;
+}) {
+  const saved = items?.filter((r) => r.url) || [];
+  const imageGallery = [
+    ...saved.filter((r) => !isPdfReceipt(r)).map((r) => ({ src: mediaUrl(r.url), alt: r.fileName || 'Invoice' })),
+    ...(pending || []).filter((f) => f.type !== 'application/pdf').map((f) => ({ src: URL.createObjectURL(f), alt: f.name })),
+  ];
+  if (!saved.length && !pending?.length && !canAdd) {
+    return <span className="text-[11px] text-erp-text-muted">—</span>;
+  }
+  let imageIndex = 0;
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      {saved.map((r, i) => {
+        const href = mediaUrl(r.url);
+        const file = { ...r, index: r.index ?? i };
+        const downloadBtn = onDownload ? (
+          <button
+            type="button"
+            className="inline-flex h-10 items-center rounded border border-[var(--erp-border)] px-1.5 text-erp-text-muted hover:bg-[var(--erp-surface-muted)] hover:text-[var(--erp-accent)]"
+            title={`Download ${r.fileName || 'invoice'}`}
+            onClick={() => onDownload(file)}
+          >
+            <Download size={12} />
+          </button>
+        ) : null;
+        if (isPdfReceipt(r)) {
+          return (
+            <span key={r.url} className="inline-flex items-center gap-0.5">
+              <a
+                href={href}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex h-10 items-center gap-1 rounded border border-[var(--erp-border)] px-1.5 text-[10px] text-erp-text-muted hover:bg-[var(--erp-surface-muted)]"
+                title={r.fileName || 'Invoice PDF'}
+              >
+                <FileText size={12} />
+                PDF
+              </a>
+              {downloadBtn}
+            </span>
+          );
+        }
+        const idx = imageIndex;
+        imageIndex += 1;
+        return (
+          <span key={r.url} className="inline-flex items-center gap-0.5">
+            <PreviewableImage
+              src={href}
+              alt={r.fileName || 'Invoice'}
+              className="h-10 w-10 object-cover"
+              gallery={imageGallery}
+              galleryIndex={idx}
+              onDownload={onDownload ? () => onDownload(file) : undefined}
+            />
+            {downloadBtn}
+          </span>
+        );
+      })}
+      {pending?.map((file, i) => {
+        if (file.type === 'application/pdf') {
+          return (
+            <span key={`${file.name}-${i}`} className="inline-flex h-10 items-center rounded border border-dashed border-[var(--erp-border)] px-1.5 text-[10px] text-erp-text-muted">
+              {file.name}
+            </span>
+          );
+        }
+        const idx = imageIndex;
+        imageIndex += 1;
+        return (
+          <PreviewableImage
+            key={`${file.name}-${i}`}
+            src={URL.createObjectURL(file)}
+            alt={file.name}
+            className="h-10 w-10 object-cover"
+            gallery={imageGallery}
+            galleryIndex={idx}
+          />
+        );
+      })}
+      {canAdd && onAdd && (
+        <label className="inline-flex h-10 cursor-pointer items-center justify-center rounded-md border border-dashed border-[var(--erp-border)] px-2 text-[10px] text-erp-text-muted hover:bg-[var(--erp-surface-muted)]">
+          <ImagePlus size={12} className="mr-1" />
+          Add
+          <input
+            type="file"
+            accept={RECEIPT_ACCEPT}
+            multiple
+            className="hidden"
+            onChange={(e) => {
+              const files = [...(e.target.files || [])];
+              e.target.value = '';
+              if (files.length) onAdd(files);
+            }}
+          />
+        </label>
+      )}
+    </div>
+  );
+}
 
 type TabId = 'pr' | 'po' | 'grn' | 'rfq' | 'suppliers' | 'history';
 
@@ -61,12 +187,20 @@ export function PurchasePage() {
   const canCreate = permissions.includes('*') || permissions.includes('purchase.create');
   const canUpdate = permissions.includes('*') || permissions.includes('purchase.update');
   const canApprove = permissions.includes('*') || permissions.includes('purchase.approve');
+  const canApprovePr = permissions.includes('*') || permissions.includes('purchase.authorize');
+  const canMarkPaid = permissions.includes('*') || permissions.includes('purchase.pay');
   const canExport = permissions.includes('*') || permissions.includes('purchase.export');
   const canReadApprovals = permissions.includes('*') || permissions.includes('approval.read');
   const canExecute = canCreate && canApprove;
   const canReceive = canCreate;
 
-  const [tab, setTab] = useState<TabId>('pr');
+  const [searchParams] = useSearchParams();
+  const [tab, setTab] = useState<TabId>(() => {
+    const q = searchParams.get('tab');
+    if (q === 'po' || q === 'grn' || q === 'history' || q === 'suppliers' || q === 'pr') return q;
+    if (q === 'rfq') return 'po';
+    return 'pr';
+  });
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
   const [searchInput, setSearchInput] = useState('');
@@ -81,6 +215,8 @@ export function PurchasePage() {
   const [poSupplierId, setPoSupplierId] = useState('');
   const [grnPoId, setGrnPoId] = useState('');
   const [grnQtys, setGrnQtys] = useState<Record<string, number>>({});
+  const [poReceiptFiles, setPoReceiptFiles] = useState<File[]>([]);
+  const [grnReceiptFiles, setGrnReceiptFiles] = useState<File[]>([]);
   const [rfqPrId, setRfqPrId] = useState('');
   const [rfqSupplierIds, setRfqSupplierIds] = useState<string[]>([]);
   const [quoteRfqId, setQuoteRfqId] = useState('');
@@ -114,7 +250,7 @@ export function PurchasePage() {
         case 'po':
           return purchaseApi.listPOsPage({
             ...params,
-            ...(search ? {} : { status: 'DRAFT,APPROVED,SENT,PARTIAL' }),
+            ...(search ? {} : { status: 'DRAFT,APPROVED,SENT,PARTIAL,RECEIVED' }),
           });
         case 'grn':
           return purchaseApi.listGRNsPage({
@@ -169,7 +305,7 @@ export function PurchasePage() {
   const { data: historyGrns = [] } = useQuery({
     queryKey: ['grns-history-link'],
     queryFn: () => purchaseApi.listGRNs({ limit: 500 }),
-    enabled: tab === 'history',
+    enabled: tab === 'history' || tab === 'po',
   });
 
   const { data: pendingPrApprovals = [] } = useQuery({
@@ -213,8 +349,8 @@ export function PurchasePage() {
     qc.invalidateQueries({ queryKey: ['warehouse-stats'] });
     qc.invalidateQueries({ queryKey: ['qc-queue'] });
     qc.invalidateQueries({ queryKey: ['quality-stats'] });
-    qc.invalidateQueries({ queryKey: ['quality-pending'] });
-    qc.invalidateQueries({ queryKey: ['rfq-quotes'] });
+    qc.invalidateQueries({ queryKey: ['dashboard-financial'] });
+    qc.invalidateQueries({ queryKey: ['reports'] });
   };
 
   const promptConfirm = (label: string, message: string, fn: () => void) => {
@@ -222,7 +358,7 @@ export function PurchasePage() {
   };
 
   const goTab = (id: TabId) => {
-    setTab(id);
+    setTab(id === 'rfq' ? 'po' : id);
     setPage(1);
     setSearch('');
     setSearchInput('');
@@ -294,10 +430,11 @@ export function PurchasePage() {
         case 'submitPr': return purchaseApi.submitPR(action.id!);
         case 'approvePr': return purchaseApi.approvePR(action.id!);
         case 'rejectPr': return purchaseApi.rejectPR(action.id!, action.comments!);
-        case 'createPo': return purchaseApi.createPO(action.body as { supplierId: string; prId: string });
+        case 'createPo': return purchaseApi.createPO(action.body as { supplierId: string; prId: string; receipts?: { dataUrl?: string; fileName?: string; contentType?: string }[] });
         case 'approvePo': return purchaseApi.approvePO(action.id!);
         case 'sendPo': return purchaseApi.sendPO(action.id!);
-        case 'createGrn': return purchaseApi.createGRN(action.body as { poId: string; lines: { materialId: string; receivedQty: number; unit?: string }[] });
+        case 'markPaid': return purchaseApi.markPoPaid(action.id!);
+        case 'createGrn': return purchaseApi.createGRN(action.body as { poId: string; lines: { materialId: string; receivedQty: number; unit?: string }[]; receipts?: { dataUrl?: string; fileName?: string; contentType?: string }[] });
         case 'submitGrn': return purchaseApi.submitGrnQc(action.id!);
         case 'rfq': return purchaseApi.createRfqFromPr(action.id!, action.supplierIds);
         case 'sendRfq': return purchaseApi.sendRfq(action.id!);
@@ -312,10 +449,14 @@ export function PurchasePage() {
       invalidate();
       if (vars.type === 'selectQuote' && result && 'purchaseOrder' in result) {
         showSuccess(`PO ${result.purchaseOrder.poNumber} created from quotation`);
+      } else if (vars.type === 'createPo') {
+        showSuccess(purchaseSuccessMessage('createPo'));
+        setPoReceiptFiles([]);
       } else if (vars.type === 'createGrn') {
         showSuccess(purchaseSuccessMessage('createGrn'));
         setGrnPoId('');
         setGrnQtys({});
+        setGrnReceiptFiles([]);
         setTab('grn');
       } else if (vars.type === 'approvePr' && result && typeof result === 'object' && 'status' in result) {
         showSuccess(purchaseSuccessMessage('approvePr', (result as PurchaseRequisition).status));
@@ -328,7 +469,7 @@ export function PurchasePage() {
 
   const materialKey = (id: string | Material) => (typeof id === 'string' ? id : id._id);
 
-  const submitGrn = () => {
+  const submitGrn = async () => {
     if (!grnPoId || !grnPreview?.lines.length) return;
     const lines = grnPreview.lines.map((l) => ({
       materialId: materialKey(l.materialId),
@@ -339,11 +480,32 @@ export function PurchasePage() {
       setError('Enter receive quantities');
       return;
     }
-    workflow.mutate({ type: 'createGrn', body: { poId: grnPoId, lines } });
+    const receipts = await filesToImagePayloads(grnReceiptFiles);
+    workflow.mutate({ type: 'createGrn', body: { poId: grnPoId, lines, receipts } });
   };
 
+  const attachReceipts = useMutation({
+    mutationFn: async ({ kind, id, current, files }: {
+      kind: 'po' | 'grn';
+      id: string;
+      current: ReceiptFile[];
+      files: File[];
+    }) => {
+      const uploaded = await filesToImagePayloads(files);
+      const receipts = [...current, ...uploaded].slice(0, 12);
+      return kind === 'po'
+        ? purchaseApi.setPoReceipts(id, receipts)
+        : purchaseApi.setGrnReceipts(id, receipts);
+    },
+    onSuccess: () => {
+      invalidate();
+      showSuccess('Invoice uploaded');
+    },
+    onError: (e: Error) => setError(e.message),
+  });
+
   const activeFlowStep = tab === 'pr' ? 'pr'
-    : tab === 'po' || tab === 'rfq' ? 'po'
+    : tab === 'po' || tab === 'rfq' ? 'pay'
       : tab === 'grn' ? 'grn'
         : 'pr';
 
@@ -383,21 +545,21 @@ export function PurchasePage() {
 
   const tabTitle =
     tab === 'pr' ? 'Requisitions'
-      : tab === 'po' ? 'Purchase orders'
+      : tab === 'po' ? 'Payments'
         : tab === 'grn' ? 'Goods receipts'
           : tab === 'rfq' ? 'RFQs'
             : tab === 'suppliers' ? 'Suppliers'
               : 'Purchase history';
 
   const tabHint =
-    tab === 'pr' ? 'Create, submit, and approve requisitions before PO or RFQ.'
-      : tab === 'po' ? 'Create from an approved PR, then approve, send, and receive.'
-        : tab === 'grn' ? 'Receive against an open PO. Stock updates after incoming QC.'
-          : tab === 'rfq' ? 'Send RFQs from approved PRs, record quotes, then select a winner.'
-            : tab === 'suppliers' ? 'Vendor master used on POs and RFQs.'
-              : 'Converted PRs with linked PO and GRN.';
+    tab === 'pr' ? 'Create and submit requisitions. Super Admin or Factory Admin approves.'
+      : tab === 'po' ? 'After a call with the supplier, create a payment from an approved PR. Finance marks paid after the invoice is on GRN.'
+        : tab === 'grn' ? 'Receive against an open payment. Upload the supplier invoice. Stock updates after incoming QC.'
+          : tab === 'rfq' ? 'Supplier quotes are handled on the phone — use Payments instead.'
+            : tab === 'suppliers' ? 'Vendor master used on payments (no supplier login).'
+              : 'Converted PRs with linked payment and GRN.';
 
-  const listColSpan = tab === 'suppliers' ? 9 : tab === 'po' ? 6 : tab === 'history' ? 6 : tab === 'rfq' ? 5 : 5;
+  const listColSpan = tab === 'suppliers' ? 9 : tab === 'po' ? 8 : tab === 'history' ? 6 : tab === 'rfq' ? 5 : tab === 'grn' ? 6 : 5;
 
   return (
     <div className="purchase-page space-y-3">
@@ -408,7 +570,7 @@ export function PurchasePage() {
         title="Purchase"
         subtitle={(
           <>
-            Store Keeper PR -&gt; dual approval -&gt; PO/RFQ -&gt; GRN -&gt; QC -&gt; stock.
+            Store Keeper PR -&gt; Factory Admin approve -&gt; Payment (on call) -&gt; GRN + invoice -&gt; Finance marks paid.
             <Link to="/approvals" className="ml-2 text-[var(--erp-accent)]">Approvals -&gt;</Link>
             <Link to="/quality" className="ml-2 text-[var(--erp-accent)]">Quality -&gt;</Link>
             <Link to="/inventory" className="ml-2 text-[var(--erp-accent)]">Inventory -&gt;</Link>
@@ -419,7 +581,7 @@ export function PurchasePage() {
             {canExport && items.length > 0 && (
               <ErpButton variant="secondary" className={btnSm} onClick={() => {
                 if (tab === 'po') {
-                  downloadCsv('purchase-orders.csv', ['PO', 'Status', 'Total'], (items as PurchaseOrder[]).map((p) => [p.poNumber, p.status, (p as PurchaseOrder & { totalAmount?: number }).totalAmount ?? '']));
+                  downloadCsv('purchase-payments.csv', ['Payment', 'Status', 'Paid', 'Total'], (items as PurchaseOrder[]).map((p) => [p.poNumber, p.status, p.paymentStatus || 'UNPAID', (p as PurchaseOrder & { totalAmount?: number }).totalAmount ?? '']));
                 } else if (tab === 'pr') {
                   downloadCsv('purchase-requisitions.csv', ['PR', 'Status'], (items as PurchaseRequisition[]).map((p) => [p.prNumber, p.status]));
                 } else if (tab === 'grn') {
@@ -464,8 +626,10 @@ export function PurchasePage() {
         />
         <StatTile
           icon={ShoppingCart}
-          label="Open POs"
-          value={stats?.poOpen ?? '-'}
+          label="Unpaid"
+          value={stats?.poUnpaid ?? stats?.poOpen ?? '-'}
+          hint="Payments waiting for Finance"
+          highlight={(stats?.poUnpaid ?? 0) > 0 ? 'warn' : undefined}
           onClick={() => goTab('po')}
         />
         <StatTile
@@ -477,7 +641,7 @@ export function PurchasePage() {
         />
         <StatTile
           icon={FileText}
-          label="Open PO value"
+          label="Unpaid value"
           value={stats ? formatCurrency(stats.openPoValue) : '-'}
           onClick={() => goTab('po')}
         />
@@ -507,10 +671,9 @@ export function PurchasePage() {
           <ErpTabs
             tabs={[
               { id: 'pr', label: `Requisitions (${(stats?.prDraft ?? 0) + (stats?.prSubmitted ?? 0) + (stats?.prApproved ?? 0)})` },
-              { id: 'po', label: `Orders (${stats?.poOpen ?? 0} open)` },
+              { id: 'po', label: `Payments (${stats?.poUnpaid ?? stats?.poOpen ?? 0} unpaid)` },
               { id: 'grn', label: `Receipts (${(stats?.grnDraft ?? 0) + (stats?.grnPendingQc ?? 0)})` },
               ...(canExecute ? [
-                { id: 'rfq' as const, label: `RFQ (${stats?.rfqOpen ?? 0})` },
                 { id: 'suppliers' as const, label: `Suppliers (${stats?.suppliers ?? 0})` },
               ] : []),
               { id: 'history', label: 'History' },
@@ -524,8 +687,8 @@ export function PurchasePage() {
           <ComposeSection
             title="New purchase requisition"
             hint={canExecute
-              ? 'Add lines, create the PR, then submit. Approval is L1 Purchase Manager then L2 Factory Admin.'
-              : 'Add lines, create and submit. Purchase Manager and Factory Admin must approve before PO/RFQ.'}
+              ? 'Add lines, create the PR, then submit. Super Admin or Factory Admin approves. No supplier login — you agree on call, then create a payment.'
+              : 'Add lines, create and submit. Factory Admin or Super Admin must approve before a payment can be created.'}
           >
             {materialsError && (
               <p className="mb-2 text-[12px] text-red-600">Could not load materials. Check factory access and purchase permissions.</p>
@@ -601,8 +764,8 @@ export function PurchasePage() {
 
         {tab === 'po' && canExecute && approvedPrs.length > 0 && (
           <ComposeSection
-            title="Create PO from approved PR"
-            hint="Only PRs still in APPROVED status appear here. Converted PRs are on History and Orders."
+            title="Create payment from approved PR"
+            hint="Agree price and supplier on the phone, then record the payment here. There is no supplier portal."
           >
             <div className="flex flex-wrap items-end gap-2">
               <div className="min-w-[180px]">
@@ -623,9 +786,25 @@ export function PurchasePage() {
                   ))}
                 </ErpSelect>
               </div>
-              <ErpButton className={btnSm} disabled={!poPrId || !poSupplierId || workflow.isPending} onClick={() => workflow.mutate({ type: 'createPo', body: { prId: poPrId, supplierId: poSupplierId } })}>
-                Create PO
+              <ErpButton
+                className={btnSm}
+                disabled={!poPrId || !poSupplierId || workflow.isPending}
+                onClick={async () => {
+                  const receipts = await filesToImagePayloads(poReceiptFiles);
+                  workflow.mutate({ type: 'createPo', body: { prId: poPrId, supplierId: poSupplierId, receipts } });
+                }}
+              >
+                Create payment
               </ErpButton>
+            </div>
+            <div className="mt-3">
+              <label className={fieldLabel}>Supporting doc (optional)</label>
+              <ReceiptThumbs
+                pending={poReceiptFiles}
+                canAdd
+                onAdd={(files) => setPoReceiptFiles((prev) => [...prev, ...files].slice(0, 12))}
+              />
+              <p className="mt-1 text-[11px] text-erp-text-muted">Optional. The supplier invoice is uploaded on GRN when goods arrive.</p>
             </div>
           </ComposeSection>
         )}
@@ -633,12 +812,12 @@ export function PurchasePage() {
         {tab === 'grn' && canReceive && (
           <ComposeSection
             title="Receive goods (GRN)"
-            hint="Record quantities against an open PO, then submit incoming QC. Stock is not updated until QC passes."
+            hint="Record quantities against an open payment, upload the supplier invoice, then submit incoming QC."
           >
             <div className="flex flex-wrap items-end gap-2">
               <div className="min-w-[240px] flex-1">
-                <label className={fieldLabel}>Open PO</label>
-                <ErpSelect className="w-full !py-1.5 text-[12px]" value={grnPoId} onChange={(e) => { setGrnPoId(e.target.value); setGrnQtys({}); }}>
+                <label className={fieldLabel}>Open payment</label>
+                <ErpSelect className="w-full !py-1.5 text-[12px]" value={grnPoId} onChange={(e) => { setGrnPoId(e.target.value); setGrnQtys({}); setGrnReceiptFiles([]); }}>
                   <option value="">Select PO...</option>
                   {openPos.map((po: PurchaseOrder) => (
                     <option key={po._id} value={po._id}>{po.poNumber} - {supplierLabel(po.supplierId)} ({statusLabel(po.status)})</option>
@@ -696,6 +875,17 @@ export function PurchasePage() {
                     })}
                   </tbody>
                 </ErpDataTable>
+              </div>
+            )}
+            {grnPreview && grnPreview.lines.length > 0 && (
+              <div className="mt-3">
+                <label className={fieldLabel}>Supplier invoice</label>
+                <ReceiptThumbs
+                  pending={grnReceiptFiles}
+                  canAdd
+                  onAdd={(files) => setGrnReceiptFiles((prev) => [...prev, ...files].slice(0, 12))}
+                />
+                <p className="mt-1 text-[11px] text-erp-text-muted">Photo or PDF of the supplier invoice. Finance uses this to mark paid.</p>
               </div>
             )}
           </ComposeSection>
@@ -766,7 +956,7 @@ export function PurchasePage() {
         )}
 
         {tab === 'suppliers' && canExecute && (
-          <ComposeSection title="Add supplier" hint="Used when creating POs and RFQs.">
+          <ComposeSection title="Add supplier" hint="Vendor you talk to on call. They do not get a login.">
             <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
               <div>
                 <label className={fieldLabel}>Code</label>
@@ -828,17 +1018,19 @@ export function PurchasePage() {
                     </>
                   ) : tab === 'po' ? (
                     <>
-                      <th>PO</th>
+                      <th>Payment</th>
                       <th>Supplier</th>
                       <th className="text-right">Amount</th>
                       <th>Lines</th>
+                      <th>Invoice</th>
                       <th>Status</th>
+                      <th>Paid</th>
                       <th className="text-right">Actions</th>
                     </>
                   ) : tab === 'history' ? (
                     <>
                       <th>PR</th>
-                      <th>PO / supplier</th>
+                      <th>Payment / supplier</th>
                       <th>GRN</th>
                       <th>Lines</th>
                       <th>Status</th>
@@ -855,8 +1047,9 @@ export function PurchasePage() {
                   ) : tab === 'grn' ? (
                     <>
                       <th>GRN</th>
-                      <th>PO</th>
+                      <th>Payment</th>
                       <th>Lines</th>
+                      <th>Invoice</th>
                       <th>Status</th>
                       <th className="text-right">Actions</th>
                     </>
@@ -876,7 +1069,7 @@ export function PurchasePage() {
                   const approval = prApprovalByDocId.get(pr._id);
                   const canActLevel = approval
                     ? canActOnApproval(approval, permissions, userId)
-                    : canApprove;
+                    : canApprovePr;
                   const levelHint = approval
                     ? `${workflowLevelLabel(approval)} · needs ${requiredApproverLabel(approval)}`
                     : null;
@@ -897,21 +1090,21 @@ export function PurchasePage() {
                             ? levelHint
                             : workflowHint('pr', pr.status)}
                         </p>
-                        {pr.status === 'SUBMITTED' && approval && (approval.currentLevel ?? 1) > 1 && (
-                          <p className="mt-1 text-[11px] text-emerald-700">L1 done - waiting on Factory Admin</p>
+                        {pr.status === 'SUBMITTED' && approval && (
+                          <p className="mt-1 text-[11px] text-erp-text-muted">Waiting on Factory Admin / Super Admin</p>
                         )}
                       </td>
                       <td className="text-right">
                         <ActionStack>
                           {canUpdate && (pr.status === 'DRAFT' || pr.status === 'REJECTED') && (
-                            <ErpButton className={btnSm} onClick={() => promptConfirm('Submit PR for approval?', 'Starts dual approval: Purchase Manager (L1) then Factory Admin (L2).', () => workflow.mutate({ type: 'submitPr', id: pr._id }))}>
+                            <ErpButton className={btnSm} onClick={() => promptConfirm('Submit PR for approval?', 'Factory Admin or Super Admin will approve. Purchase Manager cannot approve.', () => workflow.mutate({ type: 'submitPr', id: pr._id }))}>
                               {pr.status === 'REJECTED' ? 'Resubmit' : 'Submit'}
                             </ErpButton>
                           )}
                           {pr.status === 'SUBMITTED' && !canActLevel && (
                             <ApprovalsHint label={
-                              approval && (approval.currentLevel ?? 1) > 1
-                                ? 'Awaiting Factory Admin (L2)'
+                              approval
+                                ? 'Awaiting Factory Admin or Super Admin'
                                 : 'Awaiting approver'
                             }
                             />
@@ -922,13 +1115,13 @@ export function PurchasePage() {
                                 className={btnSm}
                                 onClick={() => workflow.mutate({ type: 'approvePr', id: pr._id })}
                               >
-                                {(approval?.currentLevel ?? 1) > 1 ? 'Approve L2' : 'Approve L1'}
+                                Approve
                               </ErpButton>
                               <ErpButton variant="secondary" className={btnSm} onClick={() => setRejectPrId(pr._id)}>Reject</ErpButton>
                             </div>
                           )}
                           {canExecute && pr.status === 'APPROVED' && (
-                            <ErpButton className={btnSm} onClick={() => { goTab('po'); setPoPrId(pr._id); }}>Create PO</ErpButton>
+                            <ErpButton className={btnSm} onClick={() => { goTab('po'); setPoPrId(pr._id); }}>Create payment</ErpButton>
                           )}
                         </ActionStack>
                       </td>
@@ -950,7 +1143,7 @@ export function PurchasePage() {
                             <p className="text-[12px] text-erp-text-muted">{supplierLabel(linkedPo.supplierId)} · {formatCurrency(linkedPo.totalAmount)}</p>
                           </>
                         ) : (
-                          <span className="text-erp-text-muted">PO not found</span>
+                          <span className="text-erp-text-muted">Payment not found</span>
                         )}
                       </td>
                       <td>
@@ -974,7 +1167,7 @@ export function PurchasePage() {
                       <td className="text-right">
                         <ActionStack>
                           {linkedPo && (
-                            <ErpButton className={btnSm} onClick={() => goToPo(linkedPo)}>View PO</ErpButton>
+                            <ErpButton className={btnSm} onClick={() => goToPo(linkedPo)}>View payment</ErpButton>
                           )}
                           {latestGrn?.status === 'COMPLETED' && (
                             <>
@@ -991,7 +1184,14 @@ export function PurchasePage() {
                   );
                 })}
 
-                {tab === 'po' && (items as PurchaseOrder[]).map((po) => (
+                {tab === 'po' && (items as PurchaseOrder[]).map((po) => {
+                  const linkedGrns = findGrnsForPo(historyGrns, po._id);
+                  const invoiceItems: ReceiptFile[] = [
+                    ...(po.receipts || []).map((r, index) => ({ ...r, kind: 'po' as const, docId: po._id, index })),
+                    ...linkedGrns.flatMap((g) => (g.receipts || []).map((r, index) => ({ ...r, kind: 'grn' as const, docId: g._id, index }))),
+                  ];
+                  const paid = po.paymentStatus === 'PAID';
+                  return (
                   <tr key={po._id}>
                     <td className="whitespace-nowrap">
                       <p className="font-mono font-medium">{po.poNumber}</p>
@@ -1001,32 +1201,72 @@ export function PurchasePage() {
                     <td className="whitespace-nowrap text-right font-medium">{formatCurrency(po.totalAmount)}</td>
                     <td><LinesList lines={po.lines} /></td>
                     <td>
+                      <ReceiptThumbs
+                        items={invoiceItems}
+                        canAdd={canReceive && (po.receipts?.length || 0) < 12}
+                        onAdd={(files) => attachReceipts.mutate({ kind: 'po', id: po._id, current: po.receipts || [], files })}
+                        onDownload={(item) => {
+                          if (!item.kind || !item.docId || item.index == null) return;
+                          purchaseApi.downloadReceipt(item.kind, item.docId, item.index, item.fileName).catch((e: Error) => setError(e.message));
+                        }}
+                      />
+                    </td>
+                    <td>
                       <ErpStatusBadge status={po.status} label={statusLabel(po.status)} />
                       <p className="mt-1 max-w-[200px] text-[11px] leading-snug text-erp-text-muted">{workflowHint('po', po.status)}</p>
+                    </td>
+                    <td>
+                      <ErpStatusBadge status={paid ? 'COMPLETED' : 'PENDING'} label={paid ? 'Paid' : 'Unpaid'} />
+                      {paid && po.paidAt && (
+                        <p className="mt-1 text-[11px] text-erp-text-muted">{new Date(po.paidAt).toLocaleDateString('en-IN')}</p>
+                      )}
                     </td>
                     <td className="text-right">
                       <ActionStack>
                         {canApprove && po.status === 'DRAFT' && (
                           <ErpButton className={btnSm} onClick={() => workflow.mutate({ type: 'approvePo', id: po._id })}>Approve</ErpButton>
                         )}
-                        {canExecute && po.status === 'APPROVED' && (
-                          <ErpButton variant="secondary" className={btnSm} onClick={() => workflow.mutate({ type: 'sendPo', id: po._id })}>Send</ErpButton>
-                        )}
                         {canReceive && ['APPROVED', 'SENT', 'PARTIAL'].includes(po.status) && (
                           <ErpButton variant="secondary" className={btnSm} onClick={() => openGrnForPo(po._id)}>Receive GRN</ErpButton>
+                        )}
+                        {canMarkPaid && !paid && (
+                          <ErpButton
+                            className={btnSm}
+                            onClick={() => promptConfirm(
+                              'Mark paid?',
+                              invoiceItems.length
+                                ? 'Finance will mark this payment as paid against the uploaded invoice.'
+                                : 'Upload the supplier invoice on GRN first, then mark paid.',
+                              () => workflow.mutate({ type: 'markPaid', id: po._id }),
+                            )}
+                          >
+                            Mark paid
+                          </ErpButton>
                         )}
                       </ActionStack>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
 
                 {tab === 'grn' && (items as GoodsReceipt[]).map((grn) => {
                   const next = grnNextStep(grn.status);
                   return (
                     <tr key={grn._id}>
                       <td className="whitespace-nowrap font-mono font-medium">{grn.grnNumber}</td>
-                      <td className="font-mono text-erp-text-muted">PO {poNumber(grn.poId)}</td>
+                      <td className="font-mono text-erp-text-muted">{poNumber(grn.poId)}</td>
                       <td className="text-[12px] text-erp-text-muted">{grnLineSummary(grn)}</td>
+                      <td>
+                        <ReceiptThumbs
+                          items={(grn.receipts || []).map((r, index) => ({ ...r, kind: 'grn' as const, docId: grn._id, index }))}
+                          canAdd={canReceive && (grn.receipts?.length || 0) < 12}
+                          onAdd={(files) => attachReceipts.mutate({ kind: 'grn', id: grn._id, current: grn.receipts || [], files })}
+                          onDownload={(item) => {
+                            if (!item.kind || !item.docId || item.index == null) return;
+                            purchaseApi.downloadReceipt(item.kind, item.docId, item.index, item.fileName).catch((e: Error) => setError(e.message));
+                          }}
+                        />
+                      </td>
                       <td>
                         <ErpStatusBadge status={grn.status} label={statusLabel(grn.status)} />
                         <p className="mt-1 max-w-[220px] text-[11px] leading-snug text-erp-text-muted">{workflowHint('grn', grn.status)}</p>

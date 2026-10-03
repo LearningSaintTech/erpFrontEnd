@@ -4,12 +4,12 @@ export const REPORT_TABS: { id: ReportTabId; label: string; subtitle: string }[]
   { id: 'factory', label: 'Factory', subtitle: 'Cross-module executive summary' },
   { id: 'production', label: 'Production', subtitle: 'Orders, batches, capacity, and fulfillment' },
   { id: 'inventory', label: 'Inventory', subtitle: 'Stock levels, value, and low-stock alerts' },
-  { id: 'purchase', label: 'Purchase', subtitle: 'PR/PO pipeline and spend' },
+  { id: 'purchase', label: 'Purchase', subtitle: 'PR, payments, and spend' },
   { id: 'quality', label: 'Quality', subtitle: 'Inspection yield, CAPA, and defects' },
   { id: 'waste', label: 'Waste', subtitle: 'Scrap cost and recovery' },
   { id: 'machine', label: 'Machine', subtitle: 'Asset utilization and capacity' },
   { id: 'employee', label: 'Employee', subtitle: 'Workforce assignments' },
-  { id: 'financial', label: 'Financial', subtitle: 'Spend, waste cost, and stock value' },
+  { id: 'financial', label: 'Financial', subtitle: 'Payments, invoices, spend, and stock value' },
   { id: 'approval', label: 'Approval', subtitle: 'Workflow throughput and backlog' },
 ];
 

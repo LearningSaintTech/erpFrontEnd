@@ -109,7 +109,7 @@ export function NotificationsPage() {
 
       <ErpPageHeader
         title="Notifications"
-        subtitle="Design, production, purchase, and approval updates"
+        subtitle="Design, production, purchase payments, and approval updates"
         actions={(
           <div className="flex gap-2">
             <ErpButton variant="secondary" onClick={() => refetch()} disabled={isFetching}>

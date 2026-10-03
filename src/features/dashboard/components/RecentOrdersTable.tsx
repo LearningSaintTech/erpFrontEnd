@@ -9,7 +9,7 @@ export function RecentOrdersTable({ orders }: { orders: RecentOrderRow[] }) {
         <p className="text-sm font-semibold">Recent activity</p>
         <div className="flex gap-3">
           <Link to="/production" className="text-[10px] text-[var(--erp-accent)] hover:underline">Production</Link>
-          <Link to="/purchase" className="text-[10px] text-[var(--erp-accent)] hover:underline">Purchase</Link>
+          <Link to="/purchase?tab=po" className="text-[10px] text-[var(--erp-accent)] hover:underline">Payments</Link>
         </div>
       </div>
       <div className="overflow-x-auto">

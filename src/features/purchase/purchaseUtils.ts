@@ -6,11 +6,14 @@ export type PurchaseFlowStep = {
   detail: string;
 };
 
+export const PURCHASE_FLOW_SUMMARY =
+  'PR → Factory Admin / Super Admin approve → Payment (agreed on call) → GRN + invoice → Finance marks paid';
+
 export const RM_PURCHASE_FLOW: PurchaseFlowStep[] = [
   { id: 'pr', label: 'PR', detail: 'Store Keeper (or purchaser) creates requisition' },
-  { id: 'approve', label: 'Approve', detail: 'L1 Purchase Manager → L2 Factory Admin' },
-  { id: 'po', label: 'PO / RFQ', detail: 'Purchase Manager creates PO or RFQ → PO' },
-  { id: 'grn', label: 'GRN', detail: 'Goods receipt against open PO' },
+  { id: 'approve', label: 'Approve', detail: 'Super Admin or Factory Admin' },
+  { id: 'pay', label: 'Payment', detail: 'Agreed with supplier on call — create payment. Finance marks paid after invoice.' },
+  { id: 'grn', label: 'GRN', detail: 'Goods receipt against the payment, upload supplier invoice' },
   { id: 'qc', label: 'Incoming QC', detail: 'Quality inspect — passed qty receipts to dock' },
   { id: 'stock', label: 'Stock', detail: 'Unallocated RM balance (optional put-away to bin)' },
   { id: 'prod', label: 'Production', detail: 'Reserve → issue for batches; MRP may auto-unblock' },
@@ -82,15 +85,16 @@ export function findGrnsForPo<T extends { _id: string; poId?: string | { _id?: s
 }
 
 export function historyPurchaseLabel(linkedPo?: PurchaseOrder, grns?: Array<{ status?: string }>) {
-  if (!linkedPo) return 'Converted — PO not found';
+  if (!linkedPo) return 'Converted — payment not found';
   const completed = grns?.some((g) => g.status === 'COMPLETED');
   const pendingQc = grns?.some((g) => g.status === 'PENDING_QC');
-  if (completed) return 'Complete — QC passed, stock received';
-  if (pendingQc) return 'PO open — GRN awaiting QC';
-  if (grns?.length) return 'PO open — GRN in progress';
-  if (['RECEIVED'].includes(linkedPo.status)) return 'PO fully received';
-  if (['SENT', 'PARTIAL', 'APPROVED'].includes(linkedPo.status)) return 'PO active — receive GRN when shipment arrives';
-  return `PO ${linkedPo.status.replace(/_/g, ' ')}`;
+  if (linkedPo.paymentStatus === 'PAID') return 'Paid — invoice recorded';
+  if (completed) return 'Received — Finance can mark paid once invoice is on GRN';
+  if (pendingQc) return 'GRN awaiting incoming QC';
+  if (grns?.length) return 'GRN in progress — upload invoice';
+  if (['RECEIVED'].includes(linkedPo.status)) return 'Fully received — attach invoice if missing';
+  if (['SENT', 'PARTIAL', 'APPROVED'].includes(linkedPo.status)) return 'Open payment — receive GRN and upload invoice';
+  return `Payment ${linkedPo.status.replace(/_/g, ' ')}`;
 }
 
 export function prSourceLabel(pr?: PurchaseRequisition & { sourceType?: string }) {
@@ -118,38 +122,39 @@ export function grnNextStep(status: string): { label: string; path: string } | n
 
 export function workflowHint(entity: 'pr' | 'po' | 'grn', status: string) {
   if (entity === 'pr') {
-    if (status === 'DRAFT') return 'Submit for approval (Purchase Manager → Admin)';
-    if (status === 'SUBMITTED') return 'Pending dual approval — Purchase Manager then Factory Admin';
-    if (status === 'APPROVED') return 'Fully approved — Purchase Manager can create PO or RFQ';
-    if (status === 'CONVERTED') return 'Converted to PO';
+    if (status === 'DRAFT') return 'Submit for Factory Admin / Super Admin approval';
+    if (status === 'SUBMITTED') return 'Pending Factory Admin or Super Admin approval';
+    if (status === 'APPROVED') return 'Approved — create a payment after agreeing with the supplier on call';
+    if (status === 'CONVERTED') return 'Converted to payment';
     if (status === 'REJECTED') return 'Rejected — revise lines if needed, then resubmit';
   }
   if (entity === 'po') {
-    if (status === 'DRAFT') return 'Approve then send to supplier';
-    if (status === 'APPROVED') return 'Send to supplier, then receive GRN';
-    if (status === 'SENT' || status === 'PARTIAL') return 'Receive goods (GRN) → incoming QC';
+    if (status === 'DRAFT') return 'Approve this payment so GRN can be recorded';
+    if (status === 'APPROVED') return 'Record GRN and upload the supplier invoice, then Finance marks paid';
+    if (status === 'SENT' || status === 'PARTIAL') return 'Receive goods (GRN) and upload invoice';
     if (status === 'RECEIVED') return 'Fully received — complete any open GRN QC';
   }
   if (entity === 'grn') {
-    if (status === 'DRAFT') return 'Submit for incoming QC (stock not updated yet)';
+    if (status === 'DRAFT') return 'Upload invoice, then submit for incoming QC';
     if (status === 'PENDING_QC') return 'Quality: inspect → passed qty → unallocated dock stock';
-    if (status === 'COMPLETED') return 'Stock received — put away to bin or reserve for production';
+    if (status === 'COMPLETED') return 'Stock received — Finance can mark paid once the invoice is attached';
   }
   return '';
 }
 
 export function purchaseSuccessMessage(type: string, status?: string): string {
   switch (type) {
-    case 'submitPr': return 'PR submitted — awaiting Purchase Manager, then Factory Admin';
+    case 'submitPr': return 'PR submitted — awaiting Factory Admin or Super Admin';
     case 'approvePr':
       return status === 'APPROVED'
-        ? 'PR fully approved — create PO or RFQ'
-        : 'Level approved — awaiting next approver (Factory Admin)';
+        ? 'PR approved — create a payment after agreeing with the supplier on call'
+        : 'Approved';
     case 'rejectPr': return 'PR rejected';
-    case 'createPo': return 'PO created — approve and send to supplier';
-    case 'approvePo': return 'PO approved — send to supplier';
-    case 'sendPo': return 'PO sent — receive goods when shipment arrives';
-    case 'createGrn': return 'GRN created — submit for incoming QC next';
+    case 'createPo': return 'Payment created — record GRN and upload the supplier invoice';
+    case 'approvePo': return 'Payment approved — record GRN when goods arrive';
+    case 'sendPo': return 'Payment noted — receive goods when shipment arrives';
+    case 'markPaid': return 'Marked paid';
+    case 'createGrn': return 'GRN created — attach invoice if not already, then submit QC';
     case 'submitGrn': return 'GRN submitted — complete incoming QC in Quality to receipt stock';
     case 'rfq': return 'RFQ created';
     case 'sendRfq': return 'RFQ sent to suppliers';

@@ -20,7 +20,7 @@ export const UOM_OPTIONS = ['PIECES', 'METERS', 'KILOGRAMS', 'SETS', 'ROLLS'];
 export const NUMBERING_PREFIX_FIELDS = [
   { key: 'design', label: 'Design' },
   { key: 'sku', label: 'SKU' },
-  { key: 'purchaseOrder', label: 'Purchase order' },
+  { key: 'purchaseOrder', label: 'Payment (PO number)' },
   { key: 'productionOrder', label: 'Production order' },
   { key: 'batch', label: 'Batch' },
   { key: 'sample', label: 'Sample' },

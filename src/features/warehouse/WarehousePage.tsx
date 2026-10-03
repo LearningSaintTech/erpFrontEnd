@@ -34,7 +34,7 @@ const BIN_OPS: WarehouseSection[] = ['put-away', 'picking', 'transfer'];
 const sectionMeta: Record<WarehouseSection, { title: string; subtitle: string }> = {
   warehouses: { title: 'Sites & layout', subtitle: '' },
   'stock-locator': { title: 'Find stock', subtitle: 'Locate raw materials and finished goods across dock, zones, racks, shelves, and bins' },
-  'put-away': { title: 'Put away', subtitle: 'Move received stock from dock/QC into storage bins' },
+  'put-away': { title: 'Put away', subtitle: 'Move stock received from purchase GRN + incoming QC into storage bins' },
   picking: { title: 'Picking', subtitle: 'Issue stock from bins for production, sampling, or outbound' },
   transfer: { title: 'Bin transfer', subtitle: 'Move stock between bins or from dock' },
   dispatch: { title: 'Dispatch', subtitle: 'Stage, mark ready to ship, and outbound dispatch' },

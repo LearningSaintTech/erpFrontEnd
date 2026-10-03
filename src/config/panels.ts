@@ -75,7 +75,7 @@ export const panelGroups: PanelGroup[] = [
     id: 'purchase',
     label: 'Purchase',
     items: [
-      { to: '/purchase', label: 'PR · RFQ · PO · GRN', perm: 'purchase.read' },
+      { to: '/purchase', label: 'PR · Payment · GRN', perm: 'purchase.read' },
       { to: '/vendors', label: 'Vendors', perm: 'purchase.read' },
     ],
   },

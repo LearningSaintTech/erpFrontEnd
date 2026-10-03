@@ -6,7 +6,7 @@ export const DOCUMENT_TYPE_LABELS: Record<string, string> = {
   SAMPLE_MATERIAL: 'Sample material',
   PRODUCTION_ORDER: 'Production order',
   PURCHASE_REQUISITION: 'Purchase requisition',
-  PURCHASE_ORDER: 'Purchase order',
+  PURCHASE_ORDER: 'Payment',
   BOM: 'Bill of materials',
 };
 
@@ -19,7 +19,7 @@ export const DOCUMENT_TYPE_APPROVE_PERMISSION: Record<string, string> = {
   SAMPLE: 'sampling.approve',
   SAMPLE_MATERIAL: 'sampling.approve',
   PRODUCTION_ORDER: 'production.approve',
-  PURCHASE_REQUISITION: 'purchase.approve',
+  PURCHASE_REQUISITION: 'purchase.authorize',
   PURCHASE_ORDER: 'purchase.approve',
   BOM: 'bom.approve',
 };
@@ -54,7 +54,7 @@ export function canActOnApproval(
   }
   const required = requiredApproverPermissions(instance);
   if (required.some((p) => permissions.includes(p))) return true;
-  // Factory admin / general approver escape hatch (same as backend)
+  if (instance.documentType === 'PURCHASE_REQUISITION') return false;
   return permissions.includes('approval.approve');
 }
 
@@ -64,7 +64,9 @@ export function requiredApproverLabel(instance: ApprovalInstance): string {
     'design.approve': 'Design manager / merchandiser',
     'sampling.approve': 'Factory admin / design manager',
     'production.approve': 'Production manager',
-    'purchase.approve': 'Purchase Manager',
+    'purchase.approve': 'Purchase staff',
+    'purchase.authorize': 'Factory Admin / Super Admin',
+    'purchase.pay': 'Finance',
     'bom.approve': 'BOM approver',
     'approval.approve': 'Factory Admin',
   };

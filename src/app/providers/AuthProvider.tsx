@@ -7,6 +7,7 @@ interface User {
   email: string;
   firstName: string;
   lastName: string;
+  phone?: string;
   isSuperAdmin?: boolean;
   organizationId?: string;
 }
@@ -17,6 +18,13 @@ interface Factory {
   code: string;
 }
 
+interface AuthSessionPayload {
+  accessToken: string;
+  user: User;
+  factories?: Factory[];
+  permissions?: string[];
+}
+
 interface AuthContextType {
   user: User | null;
   factories: Factory[];
@@ -24,6 +32,14 @@ interface AuthContextType {
   factoryId: string | null;
   setFactoryId: (id: string) => void;
   login: (email: string, password: string) => Promise<void>;
+  requestOtp: (params: {
+    phoneNumber: string;
+    countryCode?: string;
+    name?: string;
+    mode: 'login' | 'register';
+  }) => Promise<{ userId: string }>;
+  resendOtp: (userId: string) => Promise<void>;
+  verifyOtp: (userId: string, otp: string) => Promise<void>;
   logout: () => Promise<void>;
   loading: boolean;
 }
@@ -47,6 +63,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setPermissions(res.data.data.permissions || []);
     return res.data.data;
   }, []);
+
+  const applySession = useCallback(async (payload: AuthSessionPayload) => {
+    localStorage.setItem('accessToken', payload.accessToken);
+    setUser(payload.user);
+    setFactories(payload.factories || []);
+    setPermissions(payload.permissions || []);
+    if (payload.factories?.length) {
+      const fid = payload.factories[0]._id;
+      localStorage.setItem('factoryId', fid);
+      setFactoryIdState(fid);
+      queryClient.clear();
+      await loadSession(fid);
+    }
+  }, [loadSession, queryClient]);
 
   const setFactoryId = (id: string) => {
     localStorage.setItem('factoryId', id);
@@ -76,18 +106,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = async (email: string, password: string) => {
     const res = await api.post('/auth/login', { email, password });
-    const { accessToken, user, factories, permissions } = res.data.data;
-    localStorage.setItem('accessToken', accessToken);
-    setUser(user);
-    setFactories(factories || []);
-    setPermissions(permissions || []);
-    if (factories?.length) {
-      const fid = factories[0]._id;
-      localStorage.setItem('factoryId', fid);
-      setFactoryIdState(fid);
-      queryClient.clear();
-      await loadSession(fid);
-    }
+    await applySession(res.data.data);
+  };
+
+  const requestOtp = async ({
+    phoneNumber,
+    countryCode = '+91',
+    name,
+    mode,
+  }: {
+    phoneNumber: string;
+    countryCode?: string;
+    name?: string;
+    mode: 'login' | 'register';
+  }) => {
+    const path = mode === 'register' ? '/auth/otp/register' : '/auth/otp/login';
+    const res = await api.post(path, { phoneNumber, countryCode, name });
+    return { userId: res.data.data.userId as string };
+  };
+
+  const resendOtp = async (userId: string) => {
+    await api.post('/auth/otp/resend', { userId });
+  };
+
+  const verifyOtp = async (userId: string, otp: string) => {
+    const res = await api.post('/auth/otp/verify', { userId, otp });
+    await applySession(res.data.data);
   };
 
   const logout = async () => {
@@ -101,7 +145,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, factories, permissions, factoryId, setFactoryId, login, logout, loading }}>
+    <AuthContext.Provider
+      value={{
+        user,
+        factories,
+        permissions,
+        factoryId,
+        setFactoryId,
+        login,
+        requestOtp,
+        resendOtp,
+        verifyOtp,
+        logout,
+        loading,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );

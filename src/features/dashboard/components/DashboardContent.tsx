@@ -115,7 +115,7 @@ export function DashboardContent({ tab, onTabChange, data }: DashboardContentPro
         <>
           <div className="grid gap-4 lg:grid-cols-3">
             <LowStockCard items={lowStock} alertCount={kpis.lowStock || lowStock.length} />
-            <BarStatusChart title="PO pipeline" data={data.purchaseChart} link="/purchase" horizontal />
+            <BarStatusChart title="Payments" data={data.purchaseChart} link="/purchase?tab=po" horizontal />
             <BarStatusChart title="Spend breakdown (₹ thousands)" data={data.spendChart} link="/reports/financial" />
           </div>
           <div className="grid gap-4 lg:grid-cols-2">
@@ -125,7 +125,7 @@ export function DashboardContent({ tab, onTabChange, data }: DashboardContentPro
                 { name: 'Stock value (₹K)', value: Math.round(kpis.stockValue / 1000) },
                 { name: 'Dispatch ready', value: kpis.dispatchReady },
                 { name: 'Low stock', value: kpis.lowStock },
-                { name: 'Open PO (₹K)', value: Math.round(kpis.openPoValue / 1000) },
+                { name: 'Unpaid (₹K)', value: Math.round(kpis.openPoValue / 1000) },
               ].filter((d) => d.value > 0)}
               link="/inventory"
             />
@@ -135,7 +135,7 @@ export function DashboardContent({ tab, onTabChange, data }: DashboardContentPro
               link="/waste"
             />
           </div>
-          <RecentOrdersTable orders={recentOrders.filter((o) => o.type === 'Purchase')} />
+          <RecentOrdersTable orders={recentOrders.filter((o) => o.type === 'Payment')} />
         </>
       )}
 

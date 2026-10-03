@@ -5,7 +5,7 @@ export type DashboardTab = 'overview' | 'production' | 'supply' | 'quality';
 export const DASHBOARD_TABS: { id: DashboardTab; label: string; subtitle: string }[] = [
   { id: 'overview', label: 'Overview', subtitle: 'Executive snapshot across all modules' },
   { id: 'production', label: 'Production', subtitle: 'Orders, batches, capacity, and fulfillment' },
-  { id: 'supply', label: 'Supply chain', subtitle: 'Inventory, purchase, and warehouse' },
+  { id: 'supply', label: 'Supply chain', subtitle: 'Inventory, payments, and warehouse' },
   { id: 'quality', label: 'Quality', subtitle: 'Inspections, CAPA, and compliance' },
 ];
 
@@ -23,7 +23,7 @@ export const MODULE_LINKS = [
   { name: 'SKUs', path: '/skus', perm: 'sku.read', desc: 'Product catalog' },
   { name: 'BOMs', path: '/boms', perm: 'bom.read', desc: 'Bill of materials' },
   { name: 'Inventory', path: '/inventory', perm: 'inventory.read', desc: 'RM & FG stock' },
-  { name: 'Purchase', path: '/purchase', perm: 'purchase.read', desc: 'PR, PO, GRN' },
+  { name: 'Purchase', path: '/purchase', perm: 'purchase.read', desc: 'PR, payment, GRN' },
   { name: 'Production', path: '/production', perm: 'production.read', desc: 'Orders & batches' },
   { name: 'Quality', path: '/quality/inspections', perm: 'quality.read', desc: 'QC & CAPA' },
   { name: 'Warehouse', path: '/warehouse/warehouses', perm: 'warehouse.read', desc: 'Bins & dispatch' },

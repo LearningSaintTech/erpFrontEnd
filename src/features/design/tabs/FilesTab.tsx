@@ -1,5 +1,6 @@
 import { useDesignForm } from '../DesignFormContext';
 import { FILE_SLOTS } from '../designFormUtils';
+import { PreviewableImage } from '../../../components/ImagePreview';
 
 export function FilesTab() {
   const { assets, pendingUploads, setPendingUploads, editable, onDeleteAsset } = useDesignForm();
@@ -35,7 +36,7 @@ export function FilesTab() {
             {url ? (
               <div className="relative mb-2">
                 {isImage ? (
-                  <img src={url} alt={slot.label} className="h-32 w-full rounded object-cover" />
+                  <PreviewableImage src={url} alt={slot.label} className="h-32 w-full object-cover" />
                 ) : (
                   <div className="flex h-32 items-center justify-center rounded bg-transparent text-xs text-erp-text-muted">
                     {pending?.file.name || existing?.fileName}

@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  AlertTriangle, ArrowDownToLine, ArrowRight, Check, ClipboardList, Download, History, MapPin, Package, Pencil, RefreshCw, Search, ShoppingCart, Truck, Upload, Warehouse, X,
+  AlertTriangle, ArrowDownToLine, ArrowRight, Check, ClipboardList, Download, History, ImagePlus, MapPin, Package, Pencil, RefreshCw, Search, ShoppingCart, Truck, Upload, Warehouse, X,
 } from 'lucide-react';
 import { inventoryApi, skuApi } from '../../services/manufacturing';
 import { purchaseApi } from '../../services/operations';
@@ -13,14 +13,15 @@ import {
   ErpStatusBadge, ErpTabs,
 } from '../../components/erp';
 import { AlertBanner } from '../../components/AlertBanner';
+import { PreviewableImage } from '../../components/ImagePreview';
 import { SuccessBanner } from '../users/SuccessBanner';
 import { ConfirmDialog } from '../users/ConfirmDialog';
 import { useAuth } from '../../app/providers/AuthProvider';
 import {
   MATERIAL_CATEGORIES, MATERIAL_UNITS, RESERVATION_REFERENCE_TYPES, RM_POST_QC_FLOW,
   TRANSACTION_TYPES, balanceLocationLabel, categoryLabel, formatCurrency, formatDateTime,
-  inventoryConfirmMessage, inventorySuccessMessage, materialDisplayName, materialIdFromBalance,
-  performerName, putAwayPath, stockLocatorPath, stockWorkflowHint, suggestedPrQty,
+  inventoryConfirmMessage, inventorySuccessMessage, materialDisplayName, materialIdFromBalance, mediaUrl,
+  filesToImagePayloads, performerName, putAwayPath, stockLocatorPath, stockWorkflowHint, suggestedPrQty,
   transactionReferenceLabel, unitLabel,
 } from './inventoryUtils';
 import {
@@ -132,6 +133,9 @@ export function InventoryPage() {
   const [success, setSuccess] = useState('');
   const [showAddMaterial, setShowAddMaterial] = useState(false);
   const [showImport, setShowImport] = useState(false);
+  const [addImages, setAddImages] = useState<File[]>([]);
+  const [editImages, setEditImages] = useState<{ url: string; fileName?: string }[]>([]);
+  const [editNewImages, setEditNewImages] = useState<File[]>([]);
   const [importRows, setImportRows] = useState<ImportMaterialRow[]>([]);
   const [importFileName, setImportFileName] = useState('');
   const [postOpeningStock, setPostOpeningStock] = useState(true);
@@ -324,9 +328,13 @@ export function InventoryPage() {
   };
 
   const createMaterial = useMutation({
-    mutationFn: () => inventoryApi.createMaterial(form),
+    mutationFn: async () => {
+      const images = await filesToImagePayloads(addImages);
+      return inventoryApi.createMaterial({ ...form, images });
+    },
     onSuccess: () => {
       setForm(defaultForm);
+      setAddImages([]);
       setShowAddMaterial(false);
       invalidate();
       showSuccess(inventorySuccessMessage('createMaterial'));
@@ -337,6 +345,7 @@ export function InventoryPage() {
   const closeAddMaterial = () => {
     setShowAddMaterial(false);
     setForm(defaultForm);
+    setAddImages([]);
   };
 
   const onPickImportFile = async (file: File | null) => {
@@ -396,10 +405,14 @@ export function InventoryPage() {
   };
 
   const updateMaterial = useMutation({
-    mutationFn: (id: string) => inventoryApi.updateMaterial(id, {
-      unitCost: editForm.unitCost ? Number(editForm.unitCost) : undefined,
-      reorderLevel: editForm.reorderLevel ? Number(editForm.reorderLevel) : 0,
-    }),
+    mutationFn: async (id: string) => {
+      const uploaded = await filesToImagePayloads(editNewImages);
+      return inventoryApi.updateMaterial(id, {
+        unitCost: editForm.unitCost ? Number(editForm.unitCost) : undefined,
+        reorderLevel: editForm.reorderLevel ? Number(editForm.reorderLevel) : 0,
+        images: [...editImages, ...uploaded],
+      });
+    },
     onSuccess: () => {
       setEditId(null);
       invalidate();
@@ -490,6 +503,8 @@ export function InventoryPage() {
       unitCost: String(m.unitCost ?? 0),
       reorderLevel: String(m.reorderLevel ?? 0),
     });
+    setEditImages(m.images || []);
+    setEditNewImages([]);
   };
 
   const stockStatus = (b: InventoryBalance) => {
@@ -505,7 +520,7 @@ export function InventoryPage() {
     const name = materialDisplayName(b.materialId);
     promptConfirm(
       'Request purchase?',
-      `Create and submit a purchase requisition for ${name}: ${qty} ${unitLabel(b.unit)}. Purchase Manager then Factory Admin must approve before PO/RFQ.`,
+      `Create and submit a purchase requisition for ${name}: ${qty} ${unitLabel(b.unit)}. Factory Admin or Super Admin must approve, then a payment is created after agreeing with the supplier on call.`,
       () => requestPurchase.mutate(b),
     );
   };
@@ -842,14 +857,14 @@ export function InventoryPage() {
                 Material master create needs <code>inventory.create</code>
                 {' '}(Factory Admin, Inventory Sub Admin, Inventory Manager, or Store Keeper).
                 {canUpdate
-                  ? ' You can post stock with Manual on existing materials, or use Purchase GRN -&gt; incoming QC.'
+                  ? ' You can post stock with Manual on existing materials, or use Purchase GRN (invoice) -&gt; incoming QC.'
                   : ' This role is read-only on inventory.'}
               </InfoBanner>
             )}
 
             <TabToolbar
               title="Material master"
-              hint="Codes used on purchase requisitions, BOMs, and stock receipts."
+              hint="Codes used on purchase requisitions, BOMs, and stock receipts. Buying is PR → payment → GRN."
             >
               <div className="min-w-[180px]">
                 <label className={fieldLabel}>Search</label>
@@ -882,6 +897,7 @@ export function InventoryPage() {
                   <thead>
                     <tr>
                       <th>Material</th>
+                      <th>Image</th>
                       <th>Category</th>
                       <th>Unit</th>
                       <th className="text-right">Cost</th>
@@ -896,6 +912,22 @@ export function InventoryPage() {
                         <td>
                           <p className="font-mono text-[12px] font-medium text-erp-text-primary">{m.materialCode}</p>
                           <p className="text-[12px] text-erp-text-muted">{m.name}</p>
+                        </td>
+                        <td>
+                          {m.images?.[0]?.url ? (
+                            <PreviewableImage
+                              src={mediaUrl(m.images[0].url)}
+                              alt={m.name}
+                              className="h-10 w-10 object-cover"
+                              gallery={(m.images || []).filter((img) => img.url).map((img) => ({
+                                src: mediaUrl(img.url),
+                                alt: img.fileName || m.name,
+                              }))}
+                              galleryIndex={0}
+                            />
+                          ) : (
+                            <span className="text-[11px] text-erp-text-muted">—</span>
+                          )}
                         </td>
                         <td className="text-erp-text-muted">{categoryLabel(m.category)}</td>
                         <td>{unitLabel(m.unit)}</td>
@@ -939,7 +971,7 @@ export function InventoryPage() {
                       </tr>
                     ))}
                     {materials.length === 0 && (
-                      <EmptyRow colSpan={canUpdate ? 7 : 5}>
+                      <EmptyRow colSpan={canUpdate ? 8 : 6}>
                         {canCreate
                           ? 'No materials yet - use Add material, then Manual receipt to post opening stock.'
                           : 'No materials yet. Ask Factory Admin / Inventory Sub Admin / Inventory Manager / Store Keeper to create the material master first.'}
@@ -991,7 +1023,7 @@ export function InventoryPage() {
 
             {tab === 'stock' && !materialsLoading && (stats?.materialCount ?? 0) === 0 && (
               <InfoBanner>
-                No materials or stock yet. Create a material master first, then post stock with Manual receipt (or Purchase -&gt; GRN -&gt; QC).
+                No materials or stock yet. Create a material master first, then post stock with Manual receipt (or Purchase -&gt; Payment -&gt; GRN -&gt; QC).
                 {canCreate && (
                   <button type="button" className="font-medium text-[var(--erp-accent)] hover:underline" onClick={() => selectTab('materials')}>
                     Go to Materials -&gt;
@@ -1146,7 +1178,7 @@ export function InventoryPage() {
                         {tab === 'alerts' ? (
                           <>No stock alerts - all materials above reorder level</>
                         ) : (
-                          <>No balances yet - receive via <Link to="/purchase" className="text-[var(--erp-accent)]">Purchase GRN</Link> + incoming QC</>
+                          <>No balances yet - receive via <Link to="/purchase?tab=grn" className="text-[var(--erp-accent)]">Purchase GRN</Link> (upload invoice) + incoming QC</>
                         )}
                       </EmptyRow>
                     )}
@@ -1358,7 +1390,7 @@ export function InventoryPage() {
       />
 
       {editId && (
-        <ModalShell onClose={() => setEditId(null)} maxWidth="max-w-md">
+        <ModalShell onClose={() => setEditId(null)} maxWidth="max-w-lg">
           <div className="rounded-lg border border-[var(--erp-border)] bg-[var(--erp-surface,var(--erp-header-bg,#fff))] shadow-2xl">
             <div className="flex items-center justify-between border-b border-[var(--erp-border)] px-4 py-3">
               <div>
@@ -1386,6 +1418,61 @@ export function InventoryPage() {
               <div>
                 <label className={fieldLabel}>Reorder level</label>
                 <ErpInput className="!py-1.5 text-[12px]" type="number" min={0} value={editForm.reorderLevel} onChange={(e) => setEditForm((f) => ({ ...f, reorderLevel: e.target.value }))} />
+              </div>
+              <div className="sm:col-span-2">
+                <label className={fieldLabel}>Images (optional)</label>
+                <div className="mt-1 flex flex-wrap items-center gap-2">
+                  {editImages.map((img, i) => (
+                    <div key={img.url} className="relative">
+                      <PreviewableImage
+                        src={mediaUrl(img.url)}
+                        alt={img.fileName || 'Material image'}
+                        className="h-14 w-14 object-cover"
+                        gallery={[
+                          ...editImages.map((x) => ({ src: mediaUrl(x.url), alt: x.fileName || 'Material image' })),
+                          ...editNewImages.map((file) => ({ src: URL.createObjectURL(file), alt: file.name })),
+                        ]}
+                        galleryIndex={i}
+                      />
+                      <button
+                        type="button"
+                        className="absolute -right-1 -top-1 rounded-full bg-white p-0.5 text-erp-text-muted ring-1 ring-[var(--erp-border)]"
+                        onClick={() => setEditImages((list) => list.filter((x) => x.url !== img.url))}
+                        aria-label="Remove image"
+                      >
+                        <X size={10} />
+                      </button>
+                    </div>
+                  ))}
+                  {editNewImages.map((file, i) => (
+                    <PreviewableImage
+                      key={`${file.name}-${i}`}
+                      src={URL.createObjectURL(file)}
+                      alt={file.name}
+                      className="h-14 w-14 object-cover"
+                      gallery={[
+                        ...editImages.map((x) => ({ src: mediaUrl(x.url), alt: x.fileName || 'Material image' })),
+                        ...editNewImages.map((f) => ({ src: URL.createObjectURL(f), alt: f.name })),
+                      ]}
+                      galleryIndex={editImages.length + i}
+                    />
+                  ))}
+                  <label className="inline-flex h-14 cursor-pointer items-center justify-center rounded-md border border-dashed border-[var(--erp-border)] px-2 text-[11px] text-erp-text-muted hover:bg-[var(--erp-surface-muted)]">
+                    <ImagePlus size={14} className="mr-1" />
+                    Add
+                    <input
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp,image/gif"
+                      multiple
+                      className="hidden"
+                      onChange={(e) => {
+                        const files = [...(e.target.files || [])];
+                        e.target.value = '';
+                        setEditNewImages((prev) => [...prev, ...files].slice(0, 12));
+                      }}
+                    />
+                  </label>
+                </div>
               </div>
             </div>
             <div className="flex justify-end gap-2 border-t border-[var(--erp-border)] px-4 py-3">
@@ -1470,6 +1557,36 @@ export function InventoryPage() {
                 <div>
                   <label className={fieldLabel}>Reorder at</label>
                   <ErpInput type="number" min={0} className="w-full !py-1.5 text-[12px]" value={form.reorderLevel} onChange={(e) => setForm({ ...form, reorderLevel: Number(e.target.value) })} />
+                </div>
+              </div>
+              <div>
+                <label className={fieldLabel}>Images (optional)</label>
+                <div className="mt-1 flex flex-wrap items-center gap-2">
+                  {addImages.map((file, i) => (
+                    <PreviewableImage
+                      key={`${file.name}-${i}`}
+                      src={URL.createObjectURL(file)}
+                      alt={file.name}
+                      className="h-14 w-14 object-cover"
+                      gallery={addImages.map((f) => ({ src: URL.createObjectURL(f), alt: f.name }))}
+                      galleryIndex={i}
+                    />
+                  ))}
+                  <label className="inline-flex h-14 cursor-pointer items-center justify-center rounded-md border border-dashed border-[var(--erp-border)] px-2 text-[11px] text-erp-text-muted hover:bg-[var(--erp-surface-muted)]">
+                    <ImagePlus size={14} className="mr-1" />
+                    Add photos
+                    <input
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp,image/gif"
+                      multiple
+                      className="hidden"
+                      onChange={(e) => {
+                        const files = [...(e.target.files || [])];
+                        e.target.value = '';
+                        setAddImages((prev) => [...prev, ...files].slice(0, 12));
+                      }}
+                    />
+                  </label>
                 </div>
               </div>
               <div className="flex justify-end gap-2 border-t border-[var(--erp-border)] pt-3">

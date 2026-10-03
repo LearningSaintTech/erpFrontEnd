@@ -15,7 +15,7 @@ const KPI_CONFIG: {
 }[] = [
   { key: 'fulfillmentPct', label: 'Fulfillment', format: formatPct, link: '/production', icon: TrendingUp },
   { key: 'stockValue', label: 'Stock value', format: formatCurrency, link: '/inventory', icon: Package },
-  { key: 'openPoValue', label: 'Open PO value', format: formatCurrency, link: '/purchase', icon: IndianRupee },
+  { key: 'openPoValue', label: 'Unpaid payments', format: formatCurrency, link: '/purchase?tab=po', icon: IndianRupee },
   { key: 'firstPassYield', label: 'QC yield', format: formatPct, link: '/quality/inspections', icon: ShieldCheck },
   { key: 'batchesInProgress', label: 'Active batches', format: formatNumber, link: '/production', icon: Factory },
   { key: 'dispatchReady', label: 'Dispatch ready', format: formatNumber, link: '/warehouse/dispatch', icon: Boxes },

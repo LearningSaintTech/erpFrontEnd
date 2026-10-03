@@ -60,7 +60,7 @@ export function ApprovalsPage() {
         title="Approvals"
         subtitle={(
           <>
-            Central inbox for design, production, purchase, and sample sign-offs.
+            Central inbox. Purchase requisitions are approved by Factory Admin or Super Admin only.
             <Link to="/users" className="ml-2 inline-flex items-center gap-0.5 text-[var(--erp-accent)]">
               <Link2 size={10} /> Delegations in Users
             </Link>
