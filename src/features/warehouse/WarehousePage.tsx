@@ -1,29 +1,27 @@
-import { useState, useEffect, useMemo } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { useState, useEffect, useMemo, type ReactNode } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
-  ArrowRightLeft, ArrowRight, Boxes, ClipboardCheck, Package, RefreshCw, Truck, Warehouse as WhIcon,
+  ArrowRightLeft, Boxes, ClipboardCheck, ClipboardList, Package, PackageOpen, Plus, RefreshCw, Truck,
 } from 'lucide-react';
 import { warehouseApi } from '../../services/operations';
 import { inventoryApi, skuApi } from '../../services/manufacturing';
 import type {
-  CycleCount, CycleCountLine, DispatchReadyBalance, InventoryBalance, Material, StorageBin,
+  CycleCount, CycleCountLine, DispatchReadyBalance, InventoryBalance, StorageBin,
 } from '../../types/api';
 import {
-  ErpPageHeader, ErpButton, ErpCard, ErpDataTable, ErpInput, ErpSelect, ErpStatusBadge,
+  Badge, Button, Drawer, EmptyRow, ErpDataTable, ErpInput, ErpSearchSelect, ErpSelect, Field, IconButton, InfoBanner, KpiGrid,
+  PageHeader, Section, StatTile, StatusBadge, StepFlow, TableSkeleton, toast, useConfirm,
 } from '../../components/erp';
-import { AlertBanner } from '../../components/AlertBanner';
-import { SuccessBanner } from '../users/SuccessBanner';
-import { ConfirmDialog } from '../users/ConfirmDialog';
 import { useAuth } from '../../app/providers/AuthProvider';
 import {
   binBalanceRow, binLabel, cycleLineMaterial, dispatchBinId as getDispatchBinId, dispatchRowQty,
-  dispatchRowSku, FG_PUT_AWAY_FLOW, indexBalancesByBin, RM_PUT_AWAY_FLOW,
-  statusLabel, stockOpSuccessMessage, transferableQty, unallocatedBalance, varianceClass,
+  dispatchRowSku, indexBalancesByBin, materialLabel, materialRowId, statusLabel, stockOpSuccessMessage, transferableQty, unallocatedBalance,
   warehouseLabel, warehouseTypeLabel,
 } from './warehouseUtils';
 import { StockLocatorSection } from './StockLocatorSection';
 import { SitesLayoutSection } from './SitesLayoutSection';
+import { QueryErrorRow } from '../production/QueryErrorRow';
 
 type WarehouseSection = 'warehouses' | 'stock-locator' | 'put-away' | 'picking' | 'transfer' | 'dispatch' | 'cycle-counts';
 type OpsInvType = 'RAW_MATERIAL' | 'FINISHED_GOODS';
@@ -31,34 +29,72 @@ type OpsInvType = 'RAW_MATERIAL' | 'FINISHED_GOODS';
 const OPS_SECTIONS: WarehouseSection[] = ['put-away', 'picking', 'transfer', 'dispatch', 'cycle-counts'];
 const BIN_OPS: WarehouseSection[] = ['put-away', 'picking', 'transfer'];
 
-const sectionMeta: Record<WarehouseSection, { title: string; subtitle: string }> = {
-  warehouses: { title: 'Sites & layout', subtitle: '' },
-  'stock-locator': { title: 'Find stock', subtitle: 'Locate raw materials and finished goods across dock, zones, racks, shelves, and bins' },
-  'put-away': { title: 'Put away', subtitle: 'Move stock received from purchase GRN + incoming QC into storage bins' },
-  picking: { title: 'Picking', subtitle: 'Issue stock from bins for production, sampling, or outbound' },
-  transfer: { title: 'Bin transfer', subtitle: 'Move stock between bins or from dock' },
-  dispatch: { title: 'Dispatch', subtitle: 'Stage, mark ready to ship, and outbound dispatch' },
-  'cycle-counts': { title: 'Cycle counts', subtitle: 'Physical counts and variance adjustment' },
+const sectionMeta: Record<WarehouseSection, { title: string; description: string }> = {
+  warehouses: { title: 'Sites & layout', description: '' },
+  'stock-locator': { title: 'Find stock', description: 'See every location holding a material or SKU — dock, zone, rack, shelf and bin.' },
+  'put-away': { title: 'Put away', description: 'Move received stock from the dock into storage bins.' },
+  picking: { title: 'Picking', description: 'Take stock out of bins for production, sampling or outbound.' },
+  transfer: { title: 'Bin transfer', description: 'Move stock between bins, or from the dock into a bin.' },
+  dispatch: { title: 'Dispatch', description: 'Stage finished goods, mark them ready and ship.' },
+  'cycle-counts': { title: 'Cycle counts', description: 'Count bins physically and post the differences.' },
 };
 
-const PAGE_SIZE = 15;
-const fieldLabel = 'mb-0.5 block text-[10px] font-medium text-erp-text-muted';
-const btnSm = '!px-2 !py-1 text-[10px]';
+function varianceTone(v: number) {
+  if (v > 0) return 'text-[var(--erp-success-text)]';
+  if (v < 0) return 'text-[var(--erp-danger-text)]';
+  return 'text-erp-text-muted';
+}
+
+/** Two-option segmented control (large enough for touch). */
+function TypeToggle({ value, onChange }: { value: OpsInvType; onChange: (v: OpsInvType) => void }) {
+  const opts: { id: OpsInvType; label: string }[] = [
+    { id: 'RAW_MATERIAL', label: 'Raw materials' },
+    { id: 'FINISHED_GOODS', label: 'Finished goods' },
+  ];
+  return (
+    <div role="radiogroup" aria-label="Inventory type" className="inline-flex rounded-md border border-[var(--erp-border)] bg-[var(--erp-surface-muted)] p-0.5">
+      {opts.map((o) => (
+        <button
+          key={o.id}
+          type="button"
+          role="radio"
+          aria-checked={value === o.id}
+          onClick={() => onChange(o.id)}
+          className={`min-h-9 rounded px-3 text-sm font-medium transition-colors ${value === o.id ? 'bg-[var(--erp-surface)] text-erp-text-primary shadow-erp-xs' : 'text-erp-text-muted hover:text-erp-text-primary'}`}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function Metric({ label, value, tone }: { label: string; value: ReactNode; tone?: 'warn' }) {
+  return (
+    <div className="min-w-[120px]">
+      <p className="text-xs text-erp-text-muted">{label}</p>
+      <p className={`erp-tabular text-lg font-semibold ${tone === 'warn' ? 'text-[var(--erp-warning-text)]' : ''}`}>{value}</p>
+    </div>
+  );
+}
 
 export function WarehousePage({ section = 'warehouses' }: { section?: WarehouseSection }) {
+  if (section === 'warehouses') return <SitesLayoutSection />;
+  // Keyed so each operation starts with its own defaults (e.g. dispatch → finished goods).
+  return <WarehouseOps key={section} section={section} />;
+}
+
+function WarehouseOps({ section }: { section: Exclude<WarehouseSection, 'warehouses'> }) {
   const qc = useQueryClient();
+  const navigate = useNavigate();
+  const confirm = useConfirm();
   const [searchParams] = useSearchParams();
   const { permissions } = useAuth();
   const canCreate = permissions.includes('*') || permissions.includes('warehouse.create');
   const canUpdate = permissions.includes('*') || permissions.includes('warehouse.update');
-  const canConfigure = permissions.includes('*') || permissions.includes('warehouse.configure');
 
   const meta = sectionMeta[section];
-  const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
-  const [binPage, setBinPage] = useState(1);
   const [selectedWh, setSelectedWh] = useState('');
-  const [confirmAction, setConfirmAction] = useState<{ label: string; message: string; fn: () => void } | null>(null);
 
   const [opMaterialId, setOpMaterialId] = useState('');
   const [opSkuId, setOpSkuId] = useState('');
@@ -87,77 +123,49 @@ export function WarehousePage({ section = 'warehouses' }: { section?: WarehouseS
   const isFgOps = opsInvType === 'FINISHED_GOODS';
   const isRmOps = opsInvType === 'RAW_MATERIAL';
 
-  const showSuccess = (msg: string) => {
-    setSuccess(msg);
-    setError('');
-    setTimeout(() => setSuccess(''), 4000);
-  };
-
   const invalidate = () => {
-    qc.invalidateQueries({ queryKey: ['warehouse-stats'] });
-    qc.invalidateQueries({ queryKey: ['warehouses'] });
-    qc.invalidateQueries({ queryKey: ['warehouses-all'] });
-    qc.invalidateQueries({ queryKey: ['bins'] });
-    qc.invalidateQueries({ queryKey: ['bins-ops'] });
-    qc.invalidateQueries({ queryKey: ['bin-contents'] });
-    qc.invalidateQueries({ queryKey: ['dispatch-ready'] });
-    qc.invalidateQueries({ queryKey: ['cycle-counts'] });
-    qc.invalidateQueries({ queryKey: ['warehouse-layout'] });
-    qc.invalidateQueries({ queryKey: ['zones'] });
-    qc.invalidateQueries({ queryKey: ['racks'] });
-    qc.invalidateQueries({ queryKey: ['shelves'] });
-    qc.invalidateQueries({ queryKey: ['inventory-availability'] });
-    qc.invalidateQueries({ queryKey: ['inventory-balances'] });
-    qc.invalidateQueries({ queryKey: ['inventory-balances-mat'] });
-    qc.invalidateQueries({ queryKey: ['inventory-balances-page'] });
-    qc.invalidateQueries({ queryKey: ['inventory-stats'] });
-    qc.invalidateQueries({ queryKey: ['fg-balances-dispatch'] });
-    qc.invalidateQueries({ queryKey: ['fg-balances-ops'] });
+    [
+      'warehouse-stats', 'warehouses', 'warehouses-all', 'bins', 'bins-ops', 'bin-contents', 'dispatch-ready', 'cycle-counts',
+      'cycle-count', 'warehouse-layout', 'zones', 'racks', 'shelves', 'inventory-availability', 'inventory-balances',
+      'inventory-balances-mat', 'inventory-balances-page', 'inventory-stats', 'fg-balances-dispatch', 'fg-balances-ops', 'stock-locator',
+    ].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
   };
 
-  const promptConfirm = (label: string, message: string, fn: () => void) => {
-    setConfirmAction({ label, message, fn });
-  };
-
-  const { data: stats } = useQuery({ queryKey: ['warehouse-stats'], queryFn: () => warehouseApi.stats() });
+  const statsQ = useQuery({ queryKey: ['warehouse-stats'], queryFn: () => warehouseApi.stats() });
+  const stats = statsQ.data;
 
   const { data: allWarehouses = [], isFetching, refetch } = useQuery({
     queryKey: ['warehouses-all'],
     queryFn: () => warehouseApi.list({ limit: 100 }),
   });
 
-  const warehouses = allWarehouses;
-
   const rmWarehouse = useMemo(
-    () => allWarehouses.find((w) => w.type === 'RAW_MATERIAL' && w.isDefault)
-      || allWarehouses.find((w) => w.type === 'RAW_MATERIAL'),
+    () => allWarehouses.find((w) => w.type === 'RAW_MATERIAL' && w.isDefault) || allWarehouses.find((w) => w.type === 'RAW_MATERIAL'),
     [allWarehouses],
   );
   const fgWarehouse = useMemo(
-    () => allWarehouses.find((w) => w.type === 'FINISHED_GOODS' && w.isDefault)
-      || allWarehouses.find((w) => w.type === 'FINISHED_GOODS'),
+    () => allWarehouses.find((w) => w.type === 'FINISHED_GOODS' && w.isDefault) || allWarehouses.find((w) => w.type === 'FINISHED_GOODS'),
     [allWarehouses],
   );
   const typeDefaultWh = isFgOps ? fgWarehouse : rmWarehouse;
 
-  const whId = isOpsSection
-    ? (selectedWh || typeDefaultWh?._id || '')
-    : (selectedWh || allWarehouses[0]?._id || '');
-  const pickerWarehouses = isOpsSection
-    ? allWarehouses.filter((w) => w.type === opsInvType)
-    : allWarehouses;
-  const selectedWarehouse = allWarehouses.find((w) => w._id === whId)
-    || warehouses.find((w) => w._id === whId);
+  const whId = isOpsSection ? (selectedWh || typeDefaultWh?._id || '') : (selectedWh || allWarehouses[0]?._id || '');
+  const pickerWarehouses = isOpsSection ? allWarehouses.filter((w) => w.type === opsInvType) : allWarehouses;
 
   const { data: opsBins = [], isLoading: opsBinsLoading } = useQuery({
     queryKey: ['bins-ops', whId],
     queryFn: () => warehouseApi.listBins(whId, { limit: 200 }),
     enabled: !!whId && (isBinOps || section === 'dispatch' || section === 'cycle-counts'),
   });
-
   const bins = opsBins;
-  const binsLoadingEffective = opsBinsLoading;
   const fgBins = isFgOps ? bins : [];
+
+  const { data: dockQueue = [] } = useQuery({
+    queryKey: ['wh-dock-queue'],
+    queryFn: () => inventoryApi.listBalancesPage({ inventoryType: 'RAW_MATERIAL', limit: 200 })
+      .then((r) => r.items.filter((b) => !b.storageBinId && transferableQty(b) > 0)),
+    enabled: isRmOps && section === 'put-away',
+  });
 
   const { data: materials = [] } = useQuery({
     queryKey: ['materials-wh'],
@@ -175,8 +183,7 @@ export function WarehousePage({ section = 'warehouses' }: { section?: WarehouseS
     }
     if (paramCode && materials.length) {
       const match = materials.find(
-        (m) => m.materialCode?.toLowerCase() === paramCode.toLowerCase()
-          || m.name?.toLowerCase() === paramCode.toLowerCase(),
+        (m) => m.materialCode?.toLowerCase() === paramCode.toLowerCase() || m.name?.toLowerCase() === paramCode.toLowerCase(),
       );
       if (match) setOpMaterialId(match._id);
     }
@@ -194,25 +201,30 @@ export function WarehousePage({ section = 'warehouses' }: { section?: WarehouseS
   const matId = opMaterialId;
   const skuId = opSkuId || dispatchSkuId;
 
-  const { data: skus = [] } = useQuery({
+  // Warehouse managers have no sku.read — only ask for the SKU master when allowed; the SKUs that
+  // actually have finished-goods stock come from the FG balances below either way.
+  const canReadSkus = permissions.includes('*') || permissions.includes('sku.read');
+  const { data: skuMaster = [] } = useQuery({
     queryKey: ['skus-wh'],
     queryFn: () => skuApi.listPage({ limit: 200 }).then((r) => r.items),
-    enabled: isFgOps && isOpsSection,
+    enabled: isFgOps && isOpsSection && canReadSkus,
   });
 
-  const { data: dispatchReady = [] } = useQuery({
+  const dispatchReadyQ = useQuery({
     queryKey: ['dispatch-ready'],
     queryFn: () => warehouseApi.listDispatchReady(),
     enabled: section === 'dispatch' && isFgOps,
   });
+  const dispatchReady = dispatchReadyQ.data ?? [];
 
-  const { data: cycleCounts = [] } = useQuery({
+  const cycleCountsQ = useQuery({
     queryKey: ['cycle-counts'],
     queryFn: () => warehouseApi.listCycleCounts(),
     enabled: section === 'cycle-counts',
   });
+  const cycleCounts = cycleCountsQ.data ?? [];
 
-  const { data: activeCount } = useQuery({
+  const { data: activeCount, isLoading: activeCountLoading } = useQuery({
     queryKey: ['cycle-count', activeCountId],
     queryFn: () => warehouseApi.getCycleCount(activeCountId!),
     enabled: !!activeCountId,
@@ -228,10 +240,7 @@ export function WarehousePage({ section = 'warehouses' }: { section?: WarehouseS
     queryKey: ['inventory-balances-mat', matId],
     queryFn: async () => {
       const mat = materials.find((m) => m._id === matId);
-      const { items } = await inventoryApi.listBalancesPage({
-        search: mat?.materialCode,
-        limit: 50,
-      });
+      const { items } = await inventoryApi.listBalancesPage({ search: mat?.materialCode, limit: 50 });
       return items.filter((b) => {
         const mid = typeof b.materialId === 'object' ? b.materialId._id : b.materialId;
         return mid === matId;
@@ -246,17 +255,26 @@ export function WarehousePage({ section = 'warehouses' }: { section?: WarehouseS
     enabled: isFgOps && isOpsSection,
   });
 
-  type FgBalanceRow = InventoryBalance & { skuId?: string | { _id?: string }; dispatchStatus?: string };
+  type FgBalanceRow = InventoryBalance & { skuId?: string | { _id?: string; skuCode?: string; name?: string }; dispatchStatus?: string };
+  const skus = useMemo(() => {
+    const byId = new Map<string, { _id: string; skuCode: string; name?: string }>();
+    for (const s of skuMaster) byId.set(s._id, { _id: s._id, skuCode: s.skuCode, name: s.name });
+    for (const b of fgBalances as FgBalanceRow[]) {
+      const ref = b.skuId;
+      if (ref && typeof ref === 'object' && ref._id && !byId.has(ref._id)) {
+        byId.set(ref._id, { _id: ref._id, skuCode: ref.skuCode || ref._id.slice(-6), name: ref.name });
+      }
+    }
+    return [...byId.values()];
+  }, [skuMaster, fgBalances]);
   const selectedFgBalance = (fgBalances as FgBalanceRow[]).find((b) => {
     const sid = typeof b.skuId === 'object' ? b.skuId?._id : b.skuId;
     return sid === skuId;
   });
   const fgOnHand = selectedFgBalance?.onHand ?? 0;
-  const fgStatus = selectedFgBalance?.dispatchStatus || '—';
+  const fgStatus = selectedFgBalance?.dispatchStatus || '';
   const fgBinId = selectedFgBalance?.storageBinId
-    ? (typeof selectedFgBalance.storageBinId === 'string'
-      ? selectedFgBalance.storageBinId
-      : selectedFgBalance.storageBinId._id)
+    ? (typeof selectedFgBalance.storageBinId === 'string' ? selectedFgBalance.storageBinId : selectedFgBalance.storageBinId._id)
     : '';
 
   const unallocRow = isRmOps ? unallocatedBalance(matBalanceRows) : undefined;
@@ -280,23 +298,17 @@ export function WarehousePage({ section = 'warehouses' }: { section?: WarehouseS
             return warehouseApi.fgPutAway({
               skuId: activeSku,
               binId: payload.binId as string,
-              quantity: payload.quantity != null
-                ? Number(payload.quantity)
-                : (putAwayQty ? Number(putAwayQty) : Math.max(1, fgOnHand)),
+              quantity: payload.quantity != null ? Number(payload.quantity) : (putAwayQty ? Number(putAwayQty) : Math.max(1, fgOnHand)),
             });
           }
           return warehouseApi.putAway({
             materialId: (payload.materialId as string) || matId,
             binId: payload.binId as string,
-            quantity: payload.quantity != null
-              ? (Number(payload.quantity) || undefined)
-              : (putAwayQty ? Number(putAwayQty) : undefined),
+            quantity: payload.quantity != null ? (Number(payload.quantity) || undefined) : (putAwayQty ? Number(putAwayQty) : undefined),
           });
         case 'pick':
           return warehouseApi.pick({
-            ...(isFgOps
-              ? { skuId: activeSku }
-              : { materialId: (payload.materialId as string) || matId }),
+            ...(isFgOps ? { skuId: activeSku } : { materialId: (payload.materialId as string) || matId }),
             binId: payload.binId as string,
             quantity: payload.quantity != null ? Number(payload.quantity) : (Number(opQty) || 1),
           });
@@ -331,19 +343,28 @@ export function WarehousePage({ section = 'warehouses' }: { section?: WarehouseS
       }
     },
     onSuccess: (data, vars) => {
-      setError('');
       if (vars.type === 'completeCount') {
         setActiveCountId(null);
         setCountLines([]);
-        showSuccess('Cycle count completed — inventory adjusted');
+        toast.success('Cycle count completed', { description: applyAdjustments ? 'Differences were posted to inventory.' : undefined });
       } else if (['putAway', 'pick', 'transfer', 'fgPutAway', 'markReady', 'dispatch'].includes(vars.type)) {
-        showSuccess(stockOpSuccessMessage(vars.type, data));
+        const bin = vars.type === 'putAway' ? bins.find((b) => b._id === (vars.payload as { binId?: string } | undefined)?.binId) : undefined;
+        const mat = vars.type === 'putAway' ? materials.find((m) => m._id === opMaterialId) : undefined;
+        toast.success(
+          stockOpSuccessMessage(vars.type, data),
+          bin ? { description: `${mat ? `${mat.materialCode} → ` : ''}${binLabel(bin)}` } : undefined,
+        );
+        if (vars.type === 'putAway') qc.invalidateQueries({ queryKey: ['wh-dock-queue'] });
+        if (vars.type === 'transfer') { setTransferQty(''); setTransferBinId(''); }
+        // Shipped: start the staging form fresh for the next item instead of the old SKU / bin.
+        if (vars.type === 'dispatch') { setDispatchSkuId(''); setDispatchBinId(''); }
+      } else if (vars.type === 'createCount') {
+        toast.success('Cycle count created', { description: 'Start it, then enter the counted quantities.' });
       } else {
-        showSuccess('Saved');
+        toast.success('Count started');
       }
       invalidate();
     },
-    onError: (e: Error) => setError(e.message),
   });
 
   const openCount = (c: CycleCount) => {
@@ -354,11 +375,8 @@ export function WarehousePage({ section = 'warehouses' }: { section?: WarehouseS
   useEffect(() => {
     if (!isOpsSection || !typeDefaultWh) return;
     const current = allWarehouses.find((w) => w._id === selectedWh);
-    if (!selectedWh || current?.type !== opsInvType) {
-      setSelectedWh(typeDefaultWh._id);
-      setBinPage(1);
-    }
-  }, [section, opsInvType, typeDefaultWh?._id, allWarehouses.length]);
+    if (!selectedWh || current?.type !== opsInvType) setSelectedWh(typeDefaultWh._id);
+  }, [section, opsInvType, typeDefaultWh?._id, allWarehouses.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     setOpMaterialId('');
@@ -379,681 +397,565 @@ export function WarehousePage({ section = 'warehouses' }: { section?: WarehouseS
   }, [activeCount]);
 
   const updateCountLine = (idx: number, countedQty: number) => {
-    setCountLines((lines) => lines.map((l, i) => {
-      if (i !== idx) return l;
-      return { ...l, countedQty, variance: countedQty - (l.systemQty ?? 0) };
-    }));
+    setCountLines((lines) => lines.map((l, i) => (i !== idx ? l : { ...l, countedQty, variance: countedQty - (l.systemQty ?? 0) })));
   };
 
-  const KpiStrip = stats ? (
-    <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-      <ErpCard className="p-3">
-        <div className="flex items-center gap-2 text-erp-text-muted"><WhIcon className="h-4 w-4" /><span className="text-[10px] uppercase">Warehouses</span></div>
-        <p className="mt-1 text-xl font-semibold">{stats.warehousesTotal}</p>
-      </ErpCard>
-      <ErpCard className="p-3">
-        <div className="flex items-center gap-2 text-erp-text-muted"><Boxes className="h-4 w-4" /><span className="text-[10px] uppercase">Bins active</span></div>
-        <p className="mt-1 text-xl font-semibold">{stats.binsActive}</p>
-      </ErpCard>
-      <ErpCard className="p-3">
-        <div className="flex items-center gap-2 text-erp-text-muted"><Package className="h-4 w-4" /><span className="text-[10px] uppercase">In bins</span></div>
-        <p className="mt-1 text-xl font-semibold">{stats.rmInBins}</p>
-      </ErpCard>
-      <ErpCard className="p-3">
-        <div className="flex items-center gap-2 text-erp-text-muted"><Truck className="h-4 w-4" /><span className="text-[10px] uppercase">Ready to ship</span></div>
-        <p className="mt-1 text-xl font-semibold">{stats.dispatchReady}</p>
-      </ErpCard>
-      <ErpCard className="p-3">
-        <div className="flex items-center gap-2 text-erp-text-muted"><ClipboardCheck className="h-4 w-4" /><span className="text-[10px] uppercase">Open counts</span></div>
-        <p className="mt-1 text-xl font-semibold">{stats.openCycleCounts}</p>
-      </ErpCard>
-    </div>
-  ) : null;
-
-  const WarehousePicker = (
-    <div className="min-w-[180px]">
-      <label className={fieldLabel}>Warehouse</label>
-      <ErpSelect value={whId} onChange={(e) => { setSelectedWh(e.target.value); setBinPage(1); }} disabled={pickerWarehouses.length === 0}>
-        {pickerWarehouses.length === 0 && <option value="">No warehouse of this type</option>}
-        {pickerWarehouses.map((w) => (
-          <option key={w._id} value={w._id}>{w.warehouseCode} · {warehouseTypeLabel(w.type)}</option>
-        ))}
-      </ErpSelect>
-    </div>
-  );
-
-  const InventoryTypeToggle = isOpsSection ? (
-    <div className="min-w-[160px]">
-      <label className={fieldLabel}>Inventory type</label>
-      <ErpSelect
-        value={opsInvType}
-        onChange={(e) => setOpsInvType(e.target.value as OpsInvType)}
-      >
-        <option value="RAW_MATERIAL">Raw materials</option>
-        <option value="FINISHED_GOODS">Finished goods</option>
-      </ErpSelect>
-    </div>
-  ) : null;
+  const ask = async (title: string, message: string, confirmLabel: string, fn: () => void, danger = false) => {
+    if (await confirm({ title, message, confirmLabel, tone: danger ? 'danger' : 'primary' })) fn();
+  };
 
   const pickQtyNum = Math.max(1, Number(opQty) || 1);
   const putAwayQtyNum = putAwayQty ? Math.max(1, Number(putAwayQty) || 0) : unallocTransferable;
   const transferQtyNum = transferQty ? Math.max(1, Number(transferQty) || 0) : 0;
-  const transferSourceRow = isFgOps
-    ? selectedFgBalance
-    : (transferFromBinId ? binBalanceRow(matBalanceRows, transferFromBinId) : unallocRow);
+  const transferSourceRow = isFgOps ? selectedFgBalance : (transferFromBinId ? binBalanceRow(matBalanceRows, transferFromBinId) : unallocRow);
   const transferSourceAvail = transferableQty(transferSourceRow);
   const transferBlocked = !transferBinId || !itemSelected || transferFromBinId === transferBinId
     || (isFgOps && fgBinId && transferBinId === fgBinId)
     || transferSourceAvail <= 0
     || (transferQtyNum > 0 && transferQtyNum > transferSourceAvail);
+  const transferQtyError = transferQtyNum > 0 && transferQtyNum > transferSourceAvail ? `Only ${transferSourceAvail} available at the source.` : '';
 
-  const BinsTable = ({ action }: { action?: 'put-away' | 'pick' }) => (
-    <ErpCard className="overflow-hidden p-0">
-      <div className="overflow-x-auto">
-        <ErpDataTable className="w-full text-[11px]">
+  /* ── shared controls ── */
+  const warehousePicker = (
+    <Field label="Warehouse" className="min-w-[200px]">
+      <ErpSelect value={whId} onChange={(e) => setSelectedWh(e.target.value)} disabled={pickerWarehouses.length === 0}>
+        {pickerWarehouses.length === 0 && <option value="">No warehouse of this type</option>}
+        {pickerWarehouses.map((w) => <option key={w._id} value={w._id}>{w.warehouseCode} · {warehouseTypeLabel(w.type)}</option>)}
+      </ErpSelect>
+    </Field>
+  );
+
+  const itemPicker = isFgOps ? (
+    <Field label="SKU" className="min-w-[240px] flex-1">
+      <ErpSearchSelect
+        value={opSkuId || dispatchSkuId}
+        onChange={(v) => { setOpSkuId(v); setDispatchSkuId(v); }}
+        placeholder="Search SKU…"
+        allowClear
+        options={skus.map((s) => ({ value: s._id, label: `${s.skuCode}${s.name ? ` — ${s.name}` : ''}` }))}
+      />
+    </Field>
+  ) : (
+    <Field label="Material" className="min-w-[240px] flex-1">
+      <ErpSearchSelect
+        value={opMaterialId}
+        onChange={(v) => setOpMaterialId(v)}
+        placeholder="Search material…"
+        allowClear
+        options={materials.map((m) => ({ value: m._id, label: `${m.materialCode} — ${m.name}` }))}
+      />
+    </Field>
+  );
+
+  const stockSummary = itemSelected ? (
+    <div className="flex flex-wrap gap-6 border-t border-[var(--erp-border)] pt-3">
+      {isFgOps ? (
+        <>
+          <Metric label="On hand" value={fgOnHand.toLocaleString()} tone={fgOnHand <= 0 ? 'warn' : undefined} />
+          <Metric label="Current bin" value={fgBinId ? binLabel(bins.find((b) => b._id === fgBinId)) : 'Not in a bin'} />
+          <div className="min-w-[120px]">
+            <p className="text-xs text-erp-text-muted">Status</p>
+            <div className="mt-1">{fgStatus ? <StatusBadge status={fgStatus} label={statusLabel(fgStatus)} /> : <span className="text-erp-text-muted">—</span>}</div>
+          </div>
+        </>
+      ) : (
+        <>
+          <Metric label="On the dock (free)" value={unallocTransferable.toLocaleString()} tone={section === 'put-away' && unallocTransferable <= 0 ? 'warn' : undefined} />
+          {(unallocRow?.reserved ?? 0) > 0 && <Metric label="Reserved on dock" value={unallocRow?.reserved} />}
+          {matAvailability && <Metric label="Available in factory" value={(matAvailability.available ?? 0).toLocaleString()} />}
+          {matAvailability && <Metric label="Bin locations" value={matAvailability.locations?.length ?? 0} />}
+        </>
+      )}
+    </div>
+  ) : null;
+
+  const renderBinsTable = (action?: 'put-away' | 'pick') => {
+    // Put-away qty is the same for every bin (shown above), so only picking shows a per-bin column.
+    const showQty = itemSelected && action === 'pick';
+    const cols = showQty ? 5 : 4;
+    return (
+      <Section
+        title={action === 'put-away' ? 'Choose a bin' : action === 'pick' ? 'Pick from a bin' : 'Bins'}
+        description={action === 'put-away'
+          ? (isFgOps ? 'Stages the finished goods into the bin you choose.' : 'Moves dock stock into the bin. Reserved stock cannot be put away.')
+          : action === 'pick' ? 'Takes unreserved stock out of the bin.' : undefined}
+        flush
+      >
+        <ErpDataTable className="min-w-[560px]">
           <thead>
             <tr>
-              <th className="px-3 py-2 text-left">Bin</th>
-              <th className="px-3 py-2 text-left">Barcode</th>
-              {itemSelected && action && (
-                <th className="px-3 py-2 text-right">
-                  {action === 'put-away'
-                    ? (isFgOps ? 'On hand' : 'Dock qty')
-                    : 'Bin avail'}
-                </th>
-              )}
-              <th className="px-3 py-2 text-left">Status</th>
-              <th className="px-3 py-2 text-right">Action</th>
+              <th>Bin</th>
+              <th>Barcode</th>
+              {showQty && <th className="erp-num">In bin</th>}
+              <th>Status</th>
+              <th className="erp-cell-actions"><span className="sr-only">Actions</span></th>
             </tr>
           </thead>
           <tbody>
-            {binsLoadingEffective && <tr><td colSpan={itemSelected && action ? 5 : 4} className="px-3 py-6 text-center">Loading…</td></tr>}
-            {!binsLoadingEffective && bins.map((b: StorageBin) => {
+            {opsBinsLoading ? <TableSkeleton asRows rows={5} columns={cols} /> : bins.length === 0 ? (
+              <EmptyRow colSpan={cols} title="No bins in this warehouse" icon={Boxes}>
+                Create zones and bins under <Link to="/warehouse/warehouses" className="font-medium text-[var(--erp-accent)]">Sites & layout</Link>.
+              </EmptyRow>
+            ) : bins.map((b: StorageBin) => {
               const binRow = binBalanceMap.get(b._id);
               const binAvail = transferableQty(binRow);
-              const putQty = isFgOps
-                ? (putAwayQty ? putAwayQtyNum : Math.max(1, fgOnHand))
-                : (putAwayQty ? putAwayQtyNum : unallocTransferable);
+              const putQty = isFgOps ? (putAwayQty ? putAwayQtyNum : Math.max(1, fgOnHand)) : (putAwayQty ? putAwayQtyNum : unallocTransferable);
               const binActive = b.status === 'ACTIVE';
               const canPutAway = isFgOps
                 ? (binActive && fgOnHand > 0 && putQty > 0 && putQty <= fgOnHand)
                 : (binActive && unallocTransferable > 0 && putQty > 0 && putQty <= unallocTransferable);
-              const canPick = isFgOps
-                ? (binActive && fgBinId === b._id && binAvail >= pickQtyNum)
-                : (binActive && binAvail >= pickQtyNum);
+              const canPick = isFgOps ? (binActive && fgBinId === b._id && binAvail >= pickQtyNum) : (binActive && binAvail >= pickQtyNum);
               return (
-                <tr key={b._id} className="border-t border-[var(--erp-border)]">
-                  <td className="px-3 py-2 font-mono">{binLabel(b)}</td>
-                  <td className="px-3 py-2 text-[10px] text-erp-text-muted">{b.barcode || '—'}</td>
-                  {itemSelected && action && (
-                    <td className="px-3 py-2 text-right font-mono">
-                      {action === 'put-away'
-                        ? (isFgOps
-                          ? (fgOnHand > 0 ? fgOnHand : '—')
-                          : (unallocTransferable > 0 ? `dock ${unallocTransferable}` : '—'))
-                        : (binAvail > 0 ? binAvail : '—')}
+                <tr key={b._id}>
+                  <td className="erp-cell-primary font-mono">{binLabel(b)}</td>
+                  <td className="text-erp-text-muted">{b.barcode || '—'}</td>
+                  {showQty && (
+                    <td className="erp-num">
+                      {binAvail > 0 ? binAvail : '—'}
                     </td>
                   )}
-                  <td className="px-3 py-2"><ErpStatusBadge status={b.status} label={statusLabel(b.status)} /></td>
-                  <td className="px-3 py-2 text-right">
-                    {action === 'put-away' && canUpdate && itemSelected && (
-                      <ErpButton
-                        className={btnSm}
-                        variant="secondary"
-                        disabled={!canPutAway || mut.isPending}
-                        title={!binActive ? 'Bin is not active' : undefined}
-                        onClick={() => promptConfirm(
-                          'Put away stock',
-                          isFgOps
-                            ? `Stage ${putQty} into bin ${binLabel(b)}?`
-                            : `Move ${putQty} from unallocated dock → bin ${binLabel(b)}? Dock stock will decrease; bin stock will increase.`,
-                          () => mut.mutate({ type: 'putAway', payload: { binId: b._id, quantity: putQty } }),
-                        )}
-                      >
-                        Put away
-                      </ErpButton>
-                    )}
-                    {action === 'pick' && canUpdate && itemSelected && (
-                      <ErpButton
-                        className={btnSm}
-                        disabled={!canPick || mut.isPending}
-                        title={!binActive ? 'Bin is not active' : undefined}
-                        onClick={() => promptConfirm(
-                          section === 'dispatch' ? 'Dispatch stock' : 'Pick stock',
-                          section === 'dispatch'
-                            ? `Dispatch ${pickQtyNum} from bin ${binLabel(b)}? Stock will decrease.`
-                            : `Pick ${pickQtyNum} from bin ${binLabel(b)}? Unreserved bin stock will decrease.`,
-                          () => mut.mutate({ type: 'pick', payload: { binId: b._id } }),
-                        )}
-                      >
-                        {section === 'dispatch' ? 'Dispatch' : 'Pick'}
-                      </ErpButton>
-                    )}
+                  <td><StatusBadge status={b.status} /></td>
+                  <td className="erp-cell-actions">
+                    <div className="flex justify-end">
+                      {action === 'put-away' && canUpdate && itemSelected && (
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          disabled={!canPutAway || mut.isPending}
+                          title={!binActive ? 'Bin is not active' : undefined}
+                          loading={mut.isPending && mut.variables?.type === 'putAway' && (mut.variables.payload as { binId?: string } | undefined)?.binId === b._id}
+                          onClick={() => mut.mutate({ type: 'putAway', payload: { binId: b._id, quantity: putQty } })}
+                        >
+                          Put away {putQty > 0 ? putQty : ''}
+                        </Button>
+                      )}
+                      {action === 'pick' && canUpdate && itemSelected && (
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          disabled={!canPick || mut.isPending}
+                          title={!binActive ? 'Bin is not active' : undefined}
+                          onClick={() => ask(
+                            section === 'dispatch' ? `Dispatch ${pickQtyNum} from ${binLabel(b)}?` : `Pick ${pickQtyNum} from ${binLabel(b)}?`,
+                            section === 'dispatch' ? 'Stock leaves the warehouse and on-hand goes down.' : 'Unreserved stock in this bin goes down.',
+                            section === 'dispatch' ? 'Dispatch' : 'Pick',
+                            () => mut.mutate({ type: 'pick', payload: { binId: b._id } }),
+                          )}
+                        >
+                          {section === 'dispatch' ? 'Dispatch' : 'Pick'} {pickQtyNum}
+                        </Button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               );
             })}
-            {!binsLoadingEffective && bins.length === 0 && (
-              <tr>
-                <td colSpan={itemSelected && action ? 5 : 4} className="px-3 py-8 text-center text-erp-text-muted">
-                  No bins yet — create Zone → Rack → Shelf → Bin under{' '}
-                  <Link to="/warehouse/warehouses" className="text-[var(--erp-accent)]">Sites & layout</Link>
-                </td>
-              </tr>
-            )}
           </tbody>
         </ErpDataTable>
-      </div>
-    </ErpCard>
-  );
+      </Section>
+    );
+  };
 
-  const ItemPicker = isFgOps ? (
-    <div className="min-w-[200px]">
-      <label className={fieldLabel}>SKU</label>
-      <ErpSelect
-        value={opSkuId || dispatchSkuId}
-        onChange={(e) => {
-          setOpSkuId(e.target.value);
-          setDispatchSkuId(e.target.value);
-        }}
-      >
-        <option value="">Select…</option>
-        {skus.map((s) => (
-          <option key={s._id} value={s._id}>{s.skuCode}{s.name ? ` — ${s.name}` : ''}</option>
-        ))}
-      </ErpSelect>
-    </div>
-  ) : (
-    <div className="min-w-[200px]">
-      <label className={fieldLabel}>Material</label>
-      <ErpSelect value={opMaterialId} onChange={(e) => setOpMaterialId(e.target.value)}>
-        <option value="">Select…</option>
-        {materials.map((m: Material) => (
-          <option key={m._id} value={m._id}>{m.materialCode} — {m.name}</option>
-        ))}
-      </ErpSelect>
-    </div>
-  );
+  const stageBinId = dispatchBinId || fgBinId;
+  const stageBinLabel = binLabel(fgBins.find((b) => b._id === stageBinId));
 
   return (
-    <div>
-      <AlertBanner message={error} onDismiss={() => setError('')} />
-      {success && <SuccessBanner message={success} onDismiss={() => setSuccess('')} />}
-      <ConfirmDialog
-        open={!!confirmAction}
-        title={confirmAction?.label ?? 'Confirm'}
-        message={confirmAction?.message ?? 'Continue?'}
-        loading={mut.isPending}
-        onConfirm={() => { confirmAction?.fn(); setConfirmAction(null); }}
-        onCancel={() => setConfirmAction(null)}
-      />
-
-      <ErpPageHeader
+    <>
+      <PageHeader
         title={meta.title}
-        subtitle={section === 'put-away' ? (
+        description={meta.description}
+        secondaryActions={(
           <>
-            Move QC-received stock into bins ({isFgOps ? 'finished goods' : 'raw materials'}).
-            <Link to="/inventory" className="ml-2 text-[var(--erp-accent)]">Inventory →</Link>
-            <Link to="/samples" className="ml-2 text-[var(--erp-accent)]">Samples →</Link>
-            <Link to="/production/orders" className="ml-2 text-[var(--erp-accent)]">Production →</Link>
+            <IconButton aria-label="Refresh" loading={isFetching} onClick={() => { refetch(); invalidate(); }}><RefreshCw size={16} /></IconButton>
+            <Button variant="secondary" icon={<Package size={16} />} onClick={() => navigate('/inventory')}>Inventory</Button>
           </>
-        ) : meta.subtitle}
-        actions={(
-          <div className="flex gap-2">
-            {section !== 'warehouses' && (
-              <>
-                <Link to="/inventory"><ErpButton variant="secondary" className={btnSm}>Inventory →</ErpButton></Link>
-                <ErpButton variant="secondary" className={btnSm} onClick={() => { refetch(); invalidate(); }} disabled={isFetching}>
-                  <RefreshCw className={`mr-1 inline h-3 w-3 ${isFetching ? 'animate-spin' : ''}`} />Refresh
-                </ErpButton>
-              </>
-            )}
-          </div>
         )}
+        primaryAction={section === 'cycle-counts' && canCreate && whId ? (
+          <Button icon={<Plus size={16} />} loading={mut.isPending && mut.variables?.type === 'createCount'} onClick={() => mut.mutate({ type: 'createCount' })}>New count</Button>
+        ) : undefined}
       />
 
-      {section !== 'warehouses' && KpiStrip}
-
-      {section === 'warehouses' && (
-        <SitesLayoutSection />
+      {!['stock-locator', 'put-away', 'picking', 'transfer'].includes(section) && (
+        <KpiGrid cols={4} className="mb-4">
+          <StatTile icon={Boxes} label="Active bins" value={stats?.binsActive ?? '—'} hint={`${stats?.warehousesTotal ?? 0} warehouses`} onClick={() => navigate('/warehouse/warehouses')} />
+          <StatTile icon={PackageOpen} label="Stock rows in bins" value={stats?.rmInBins ?? '—'} onClick={() => navigate('/warehouse/stock-locator')} />
+          <StatTile
+            icon={Truck} label="Ready to ship" value={stats?.dispatchReady ?? '—'}
+            onClick={() => navigate('/warehouse/operations/dispatch')} active={section === 'dispatch'}
+          />
+          <StatTile
+            icon={ClipboardCheck} label="Open counts" value={stats?.openCycleCounts ?? '—'}
+            onClick={() => navigate('/warehouse/cycle-counts')} active={section === 'cycle-counts'}
+          />
+        </KpiGrid>
       )}
 
+      {section === 'stock-locator' && <StockLocatorSection />}
+
       {(section === 'put-away' || section === 'picking') && (
-        <>
-          {section === 'put-away' && (
-            <ErpCard className="mb-4 !p-3">
-              <p className="mb-2 text-[10px] font-medium uppercase tracking-wide text-erp-text-muted">
-                {isFgOps ? 'After final QC' : 'After incoming QC'}
-              </p>
-              <div className="flex flex-wrap items-center gap-1 text-[10px]">
-                {(isFgOps ? FG_PUT_AWAY_FLOW : RM_PUT_AWAY_FLOW).map((step, i) => (
-                  <span key={step.id} className="flex items-center gap-1">
-                    {i > 0 && <ArrowRight size={10} className="text-erp-text-muted" />}
-                    <span
-                      className={`rounded px-1.5 py-0.5 ${step.id === 'putaway' ? 'bg-[var(--erp-accent-muted)] font-medium' : 'text-erp-text-muted'}`}
-                      title={step.detail}
-                    >
-                      {step.label}
-                    </span>
-                  </span>
-                ))}
-              </div>
-              <p className="mt-2 text-[10px] text-erp-text-muted">
-                {isFgOps
-                  ? 'Select a SKU, then click Put away on a bin row to stage finished goods.'
-                  : 'Select the material, confirm dock qty, then click Put away on a bin row. Optional — stock can stay on dock for reserve/issue.'}
-              </p>
-            </ErpCard>
-          )}
-          <ErpCard className="mb-4 flex flex-wrap items-end gap-3 p-4">
-            {InventoryTypeToggle}
-            {WarehousePicker}
-            {ItemPicker}
+        <div className="space-y-4">
+          <Section>
             {section === 'put-away' && (
-              <div>
-                <label className={fieldLabel}>
-                  {isFgOps ? 'Put-away qty' : 'Put-away qty (blank = all unallocated)'}
-                </label>
-                <ErpInput
-                  type="number"
-                  min={1}
-                  max={(isFgOps ? fgOnHand : unallocTransferable) || undefined}
-                  value={putAwayQty}
-                  onChange={(e) => setPutAwayQty(e.target.value)}
-                  className="w-24"
-                  placeholder={
-                    isFgOps
-                      ? (fgOnHand > 0 ? String(fgOnHand) : 'Qty')
-                      : (unallocTransferable > 0 ? String(unallocTransferable) : 'All')
-                  }
-                />
-              </div>
+              <StepFlow
+                size="sm"
+                className="mb-4"
+                current="putaway"
+                steps={isFgOps
+                  ? [{ id: 'qc', label: 'Final QC' }, { id: 'putaway', label: 'Put away' }, { id: 'bin', label: 'In bin' }]
+                  : [{ id: 'dock', label: 'On dock', description: 'After incoming QC' }, { id: 'putaway', label: 'Put away' }, { id: 'bin', label: 'In bin', description: 'Ready to pick or issue' }]}
+              />
             )}
-            {section === 'picking' && (
-              <div>
-                <label className={fieldLabel}>Pick qty</label>
-                <ErpInput type="number" min={1} value={opQty} onChange={(e) => setOpQty(e.target.value)} className="w-20" />
-              </div>
-            )}
-            {itemSelected && (
-              <div className="text-[10px] text-erp-text-muted">
-                {isFgOps ? (
-                  <>
-                    <p>On hand: <strong>{fgOnHand}</strong> · status: {statusLabel(fgStatus)}
-                      {fgBinId && ` · bin ${binLabel(bins.find((b) => b._id === fgBinId))}`}
-                    </p>
-                  </>
-                ) : (
-                  <>
-                    <p>Unallocated dock: <strong>{unallocTransferable}</strong> transferable
-                      {(unallocRow?.reserved ?? 0) > 0 && ` (${unallocRow?.reserved} reserved)`}
-                    </p>
-                    {matAvailability && (
-                      <p>Factory total: {matAvailability.available ?? 0} avail / {matAvailability.onHand ?? 0} on hand
-                        {(matAvailability.locations?.length ?? 0) > 0 && ` · ${matAvailability.locations!.length} bin location(s)`}
-                      </p>
-                    )}
-                  </>
-                )}
-              </div>
-            )}
-            <p className="text-[10px] text-erp-text-muted">
-              {section === 'put-away'
-                ? (isFgOps
-                  ? 'Stages finished goods into the selected bin for storage / dispatch.'
-                  : 'Increases bin stock; decreases unallocated dock stock. Reserved qty cannot be put away.')
-                : 'Decreases unreserved stock in the selected bin only.'}
-            </p>
-          </ErpCard>
-          {section === 'put-away' && itemSelected && (isFgOps ? fgOnHand <= 0 : unallocTransferable <= 0) && (
-            <AlertBanner message={
-              isFgOps
-                ? 'No finished-goods stock for this SKU. Complete final QC in Quality first.'
-                : 'No unallocated stock for this material. Complete incoming QC in Quality, or select another material.'
+            <div className="flex flex-wrap items-end gap-4">
+              <Field label="Stock type"><TypeToggle value={opsInvType} onChange={setOpsInvType} /></Field>
+              {warehousePicker}
+              {itemPicker}
+              {section === 'put-away' ? (
+                <Field label={isFgOps ? 'Quantity' : 'Quantity (blank = all)'} className="w-44">
+                  <ErpInput
+                    type="number" inputMode="decimal" min={1}
+                    max={(isFgOps ? fgOnHand : unallocTransferable) || undefined}
+                    value={putAwayQty}
+                    onChange={(e) => setPutAwayQty(e.target.value)}
+                    placeholder={isFgOps ? (fgOnHand > 0 ? String(fgOnHand) : 'Qty') : (unallocTransferable > 0 ? String(unallocTransferable) : 'All')}
+                  />
+                </Field>
+              ) : (
+                <Field label="Pick quantity" className="w-36">
+                  <ErpInput type="number" inputMode="decimal" min={1} value={opQty} onChange={(e) => setOpQty(e.target.value)} />
+                </Field>
+              )}
+            </div>
+            {stockSummary && <div className="mt-4">{stockSummary}</div>}
+          </Section>
+
+          {!itemSelected && (
+            <InfoBanner inset={false} tone="info">
+              {isFgOps
+                ? 'Choose a SKU to see its stock and the bins you can use.'
+                : section === 'put-away'
+                  ? 'Choose a material, or use "Put away" on a dock row in Inventory.'
+                  : 'Choose a material, or use "Pick" from Find stock.'}
+            </InfoBanner>
+          )}
+          {section === 'put-away' && itemSelected && (isFgOps ? fgOnHand <= 0 : unallocTransferable <= 0) && (() => {
+            if (isFgOps) {
+              return <InfoBanner inset={false} tone="warn">No finished-goods stock for this SKU yet. Complete final QC in Quality first.</InfoBanner>;
             }
-            />
-          )}
-          {section === 'put-away' && !itemSelected && (
-            <AlertBanner message={isFgOps ? 'Select a SKU above.' : 'Select a material above (or open from Inventory → Put away on a dock row).'} />
-          )}
-          {section === 'picking' && !itemSelected && (
-            <AlertBanner message={isFgOps ? 'Select a SKU above.' : 'Select a material above (or open from Find stock → Pick).'} />
-          )}
+            const next = dockQueue.filter((r) => materialRowId(r.materialId) !== opMaterialId).slice(0, 6);
+            if (!next.length) {
+              return (
+                <InfoBanner inset={false} tone="success" title="The dock is clear">
+                  Nothing else is waiting to be put away.
+                </InfoBanner>
+              );
+            }
+            return (
+              <InfoBanner inset={false} tone="info" title="Nothing left on the dock for this material — next up:">
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {next.map((r) => (
+                    <Button key={r._id} size="sm" variant="secondary" onClick={() => { setOpMaterialId(materialRowId(r.materialId)); setPutAwayQty(''); }}>
+                      {materialLabel(r.materialId)} · {transferableQty(r).toLocaleString()}
+                    </Button>
+                  ))}
+                </div>
+              </InfoBanner>
+            );
+          })()}
           {section === 'picking' && itemSelected && isRmOps && (matAvailability?.available ?? 0) <= 0 && (
-            <AlertBanner message="No available stock for this material in bins. Put away from dock first, or reserve/release holds." />
+            <InfoBanner inset={false} tone="warn">No available stock in bins for this material. Put away from the dock first, or release reservations.</InfoBanner>
           )}
           {section === 'picking' && itemSelected && isFgOps && (!fgBinId || fgOnHand <= 0) && (
-            <AlertBanner message="No finished goods in a bin for this SKU. Put away first, then pick." />
+            <InfoBanner inset={false} tone="warn">No finished goods in a bin for this SKU. Put them away first.</InfoBanner>
           )}
-          <BinsTable action={section === 'put-away' ? 'put-away' : 'pick'} />
-        </>
+          {renderBinsTable(section === 'put-away' ? 'put-away' : 'pick')}
+        </div>
       )}
 
       {section === 'transfer' && (
-        <>
-          {!itemSelected && (
-            <AlertBanner message={isFgOps ? 'Select a SKU to transfer between bins.' : 'Select a material to transfer between dock and bins.'} />
-          )}
-          <ErpCard className="mb-4 flex flex-wrap items-end gap-3 p-4">
-            {InventoryTypeToggle}
-            {WarehousePicker}
-            {ItemPicker}
-            <div className="min-w-[160px]">
-              <label className={fieldLabel}>{isFgOps ? 'From bin' : 'From bin (blank = unallocated)'}</label>
-              <ErpSelect
-                value={transferFromBinId || (isFgOps ? fgBinId : '')}
-                onChange={(e) => setTransferFromBinId(e.target.value)}
+        <div className="space-y-4">
+          <Section title="Move stock" description={isFgOps ? 'Finished goods move their full on-hand quantity to the new bin.' : 'Only unreserved stock can be moved.'}>
+            <div className="flex flex-wrap items-end gap-4">
+              <Field label="Stock type"><TypeToggle value={opsInvType} onChange={setOpsInvType} /></Field>
+              {warehousePicker}
+              {itemPicker}
+            </div>
+            <div className="mt-4 grid gap-4 sm:grid-cols-[1fr_auto_1fr_140px] sm:items-end">
+              <Field label="From">
+                <ErpSelect value={transferFromBinId || (isFgOps ? fgBinId : '')} onChange={(e) => setTransferFromBinId(e.target.value)} disabled={!itemSelected}>
+                  {!isFgOps && <option value="">Unallocated dock ({unallocTransferable} free)</option>}
+                  {isFgOps && !fgBinId && <option value="">Not in a bin</option>}
+                  {bins.filter((b) => b.status === 'ACTIVE').map((b) => {
+                    const avail = isFgOps ? (fgBinId === b._id ? transferableQty(selectedFgBalance) : 0) : transferableQty(binBalanceMap.get(b._id));
+                    return <option key={b._id} value={b._id} disabled={avail <= 0}>{binLabel(b)} ({avail} free)</option>;
+                  })}
+                </ErpSelect>
+              </Field>
+              <ArrowRightLeft className="mb-2.5 hidden h-4 w-4 text-erp-text-muted sm:block" aria-hidden="true" />
+              <Field label="To bin" error={transferFromBinId && transferFromBinId === transferBinId ? 'Choose a different bin from the source.' : undefined}>
+                <ErpSelect value={transferBinId} onChange={(e) => setTransferBinId(e.target.value)} disabled={!itemSelected}>
+                  <option value="">Select bin…</option>
+                  {bins.filter((b) => b._id !== (transferFromBinId || fgBinId) && b.status === 'ACTIVE').map((b) => (
+                    <option key={b._id} value={b._id}>{binLabel(b)}</option>
+                  ))}
+                </ErpSelect>
+              </Field>
+              <Field label="Quantity" error={transferQtyError} hint={!transferQtyError && transferSourceAvail > 0 ? `Blank = all ${transferSourceAvail}` : undefined}>
+                <ErpInput type="number" inputMode="decimal" min={1} max={transferSourceAvail || undefined} value={transferQty} onChange={(e) => setTransferQty(e.target.value)} placeholder={transferSourceAvail > 0 ? String(transferSourceAvail) : 'Max'} disabled={!itemSelected} />
+              </Field>
+            </div>
+            <div className="mt-4 flex justify-end">
+              <Button
+                icon={<ArrowRightLeft size={16} />}
+                disabled={!!transferBlocked || !canUpdate}
+                loading={mut.isPending && mut.variables?.type === 'transfer'}
+                onClick={() => {
+                  const qtyLabel = transferQty || String(transferSourceAvail);
+                  const fromId = transferFromBinId || (isFgOps ? fgBinId : '');
+                  const fromLabel = fromId ? binLabel(bins.find((b) => b._id === fromId)) : 'the unallocated dock';
+                  const toLabel = binLabel(bins.find((b) => b._id === transferBinId));
+                  ask(`Move ${qtyLabel} to ${toLabel}?`, `Stock moves from ${fromLabel} to ${toLabel}.`, 'Transfer', () => mut.mutate({ type: 'transfer' }));
+                }}
               >
-                {!isFgOps && (
-                  <option value="">Unallocated dock ({unallocTransferable} avail)</option>
-                )}
-                {isFgOps && !fgBinId && <option value="">No current bin</option>}
-                {bins.filter((b) => b.status === 'ACTIVE').map((b) => {
-                  const avail = isFgOps
-                    ? (fgBinId === b._id ? transferableQty(selectedFgBalance) : 0)
-                    : transferableQty(binBalanceMap.get(b._id));
-                  return (
-                    <option key={b._id} value={b._id} disabled={avail <= 0}>
-                      {binLabel(b)} ({avail} avail)
-                    </option>
-                  );
-                })}
-              </ErpSelect>
+                Transfer
+              </Button>
             </div>
-            <div className="min-w-[160px]">
-              <label className={fieldLabel}>Destination bin</label>
-              <ErpSelect value={transferBinId} onChange={(e) => setTransferBinId(e.target.value)}>
-                <option value="">Select…</option>
-                {bins.filter((b) => b._id !== (transferFromBinId || fgBinId) && b.status === 'ACTIVE').map((b) => (
-                  <option key={b._id} value={b._id}>{binLabel(b)}</option>
-                ))}
-              </ErpSelect>
-            </div>
-            <div>
-              <label className={fieldLabel}>Qty (blank = max {transferSourceAvail})</label>
-              <ErpInput type="number" min={1} max={transferSourceAvail || undefined} value={transferQty} onChange={(e) => setTransferQty(e.target.value)} className="w-20" placeholder={transferSourceAvail > 0 ? String(transferSourceAvail) : 'Max'} />
-            </div>
-            {transferFromBinId === transferBinId && transferBinId && (
-              <p className="text-[10px] text-red-600">Source and destination must differ.</p>
-            )}
-            <ErpButton
-              disabled={transferBlocked || !canUpdate || mut.isPending}
-              onClick={() => {
-                const qtyLabel = transferQty || String(transferSourceAvail);
-                const fromId = transferFromBinId || (isFgOps ? fgBinId : '');
-                const fromLabel = fromId
-                  ? binLabel(bins.find((b) => b._id === fromId))
-                  : 'unallocated dock';
-                const toLabel = binLabel(bins.find((b) => b._id === transferBinId));
-                promptConfirm(
-                  'Transfer stock',
-                  `Move ${qtyLabel} from ${fromLabel} → ${toLabel}? Source decreases; destination increases.`,
-                  () => mut.mutate({ type: 'transfer' }),
-                );
-              }}
-            >
-              <ArrowRightLeft className="mr-1 inline h-3 w-3" />Transfer
-            </ErpButton>
-            <p className="w-full text-[10px] text-erp-text-muted">
-              Transfers unreserved stock only. Source available: {transferSourceAvail}.
-              {isFgOps && ' Finished goods transfer moves the full on-hand qty to the destination bin.'}
-            </p>
-          </ErpCard>
-          <BinsTable />
-        </>
+          </Section>
+          {!itemSelected && <InfoBanner inset={false} tone="info">{isFgOps ? 'Choose a SKU to move between bins.' : 'Choose a material to move between the dock and bins.'}</InfoBanner>}
+          {renderBinsTable()}
+        </div>
       )}
 
       {section === 'dispatch' && (
-        <div className="space-y-6">
-          <ErpCard className="flex flex-wrap items-end gap-3 p-4">
-            {InventoryTypeToggle}
-            {WarehousePicker}
-          </ErpCard>
+        <div className="space-y-4">
+          <Section>
+            <div className="flex flex-wrap items-end gap-4">
+              <Field label="Stock type"><TypeToggle value={opsInvType} onChange={setOpsInvType} /></Field>
+              {warehousePicker}
+            </div>
+          </Section>
 
           {isFgOps ? (
             <>
               {!fgWarehouse && (
-                <AlertBanner message="No finished-goods warehouse yet. Create one under Sites & layout (type Finished goods), then add bins." />
+                <InfoBanner inset={false} tone="warn">No finished-goods warehouse yet. Create one under Sites & layout, then add bins.</InfoBanner>
               )}
-              <ErpCard className="p-4">
-                <h3 className="mb-3 text-sm font-medium">Stage → ready to ship</h3>
-                <p className="mb-3 text-[10px] text-erp-text-muted">
-                  Finished goods must be received from production QC first. Stage assigns a bin; mark ready enables outbound dispatch.
-                </p>
-                <div className="mb-3 flex flex-wrap items-end gap-3">
-                  {ItemPicker}
-                  <div className="min-w-[140px]">
-                    <label className={fieldLabel}>Bin</label>
-                    <ErpSelect value={dispatchBinId || fgBinId} onChange={(e) => setDispatchBinId(e.target.value)}>
-                      <option value="">Select…</option>
-                      {fgBins.map((b) => <option key={b._id} value={b._id}>{binLabel(b)}</option>)}
-                    </ErpSelect>
-                  </div>
-                  <div>
-                    <label className={fieldLabel}>Qty</label>
-                    <ErpInput type="number" min={1} max={fgOnHand || undefined} value={dispatchQty} onChange={(e) => setDispatchQty(e.target.value)} className="w-20" />
-                  </div>
-                  {skuId && (
-                    <p className="text-[10px] text-erp-text-muted">
-                      On hand: <strong>{fgOnHand}</strong> · status: {statusLabel(fgStatus)}
-                    </p>
-                  )}
-                </div>
-                {skuId && (dispatchBinId || fgBinId) && canUpdate && (
-                  <div className="flex gap-2">
-                    <ErpButton
-                      variant="secondary"
-                      className={btnSm}
-                      disabled={fgOnHand < (Number(dispatchQty) || 1) || mut.isPending}
-                      onClick={() => {
-                        if (!dispatchBinId && fgBinId) setDispatchBinId(fgBinId);
-                        promptConfirm(
-                          'Stage in bin',
-                          `Assign ${dispatchQty || 1} units to bin ${binLabel(fgBins.find((b) => b._id === (dispatchBinId || fgBinId)))}?`,
-                          () => mut.mutate({ type: 'fgPutAway' }),
-                        );
-                      }}
-                    >
-                      Stage in bin
-                    </ErpButton>
-                    <ErpButton
-                      className={btnSm}
-                      disabled={fgOnHand <= 0 || mut.isPending}
-                      onClick={() => promptConfirm(
-                        'Mark ready to ship',
-                        `Mark SKU ready for dispatch from bin ${binLabel(fgBins.find((b) => b._id === (dispatchBinId || fgBinId)))}?`,
-                        () => mut.mutate({ type: 'markReady' }),
-                      )}
-                    >
-                      Mark ready to ship
-                    </ErpButton>
-                  </div>
-                )}
-                {skuId && fgOnHand <= 0 && (
-                  <p className="mt-2 text-[10px] text-amber-700">No stock for this SKU. Complete final QC in Quality first.</p>
-                )}
-              </ErpCard>
-
-              <ErpCard className="overflow-hidden p-0">
-                <h3 className="border-b px-4 py-3 text-sm font-medium">Ready for dispatch</h3>
-                <ErpDataTable className="w-full text-[11px]">
-                  <thead>
-                    <tr>
-                      <th className="px-3 py-2 text-left">SKU</th>
-                      <th className="px-3 py-2 text-left">Bin</th>
-                      <th className="px-3 py-2 text-left">Qty</th>
-                      <th className="px-3 py-2 text-right">Action</th>
-                    </tr>
-                  </thead>
+              <Section flush title="Ready to ship" description="Finished goods marked ready. Dispatching reduces on-hand stock.">
+                <ErpDataTable className="min-w-[520px]">
+                  <thead><tr><th>SKU</th><th>Bin</th><th className="erp-num">Quantity</th><th className="erp-cell-actions"><span className="sr-only">Actions</span></th></tr></thead>
                   <tbody>
-                    {dispatchReady.map((row: DispatchReadyBalance) => (
-                      <tr key={row._id} className="border-t border-[var(--erp-border)]">
-                        <td className="px-3 py-2 font-mono">{dispatchRowSku(row)}</td>
-                        <td className="px-3 py-2">{typeof row.storageBinId === 'object' ? binLabel(row.storageBinId) : '—'}</td>
-                        <td className="px-3 py-2">{dispatchRowQty(row)}</td>
-                        <td className="px-3 py-2 text-right">
-                          {canUpdate && (
-                            <ErpButton
-                              className={btnSm}
-                              disabled={mut.isPending}
-                              onClick={() => setConfirmAction({
-                                label: `Dispatch ${dispatchRowQty(row)} units?`,
-                                message: `Ship ${dispatchRowQty(row)} units of ${dispatchRowSku(row)}? On-hand will decrease.`,
-                                fn: () => mut.mutate({
-                                  type: 'dispatch',
-                                  payload: {
-                                    skuId: row.skuId
-                                      ? (typeof row.skuId === 'string' ? row.skuId : row.skuId._id)
-                                      : '',
-                                    storageBinId: getDispatchBinId(row),
-                                    quantity: dispatchRowQty(row),
-                                  },
-                                }),
-                              })}
-                            >
-                              Dispatch
-                            </ErpButton>
-                          )}
+                    {dispatchReadyQ.isLoading ? <TableSkeleton asRows rows={3} columns={4} /> : dispatchReadyQ.isError ? <QueryErrorRow colSpan={4} error={dispatchReadyQ.error} onRetry={() => dispatchReadyQ.refetch()} /> : dispatchReady.length === 0 ? (
+                      <EmptyRow colSpan={4} title="Nothing ready to ship" icon={Truck}>Stage stock below and mark it ready.</EmptyRow>
+                    ) : dispatchReady.map((row: DispatchReadyBalance) => (
+                      <tr key={row._id}>
+                        <td className="erp-cell-primary font-mono">{dispatchRowSku(row)}</td>
+                        <td className="font-mono">{typeof row.storageBinId === 'object' ? binLabel(row.storageBinId) : '—'}</td>
+                        <td className="erp-num">{dispatchRowQty(row).toLocaleString()}</td>
+                        <td className="erp-cell-actions">
+                          <div className="flex justify-end">
+                            {canUpdate && (
+                              <Button
+                                size="sm"
+                                icon={<Truck size={14} />}
+                                disabled={mut.isPending}
+                                onClick={() => ask(
+                                  `Dispatch ${dispatchRowQty(row)} units of ${dispatchRowSku(row)}?`,
+                                  'On-hand stock goes down by this quantity.',
+                                  'Dispatch',
+                                  () => mut.mutate({
+                                    type: 'dispatch',
+                                    payload: {
+                                      skuId: row.skuId ? (typeof row.skuId === 'string' ? row.skuId : row.skuId._id) : '',
+                                      storageBinId: getDispatchBinId(row),
+                                      quantity: dispatchRowQty(row),
+                                    },
+                                  }),
+                                )}
+                              >
+                                Dispatch
+                              </Button>
+                            )}
+                          </div>
                         </td>
                       </tr>
                     ))}
-                    {dispatchReady.length === 0 && (
-                      <tr><td colSpan={4} className="px-3 py-8 text-center text-erp-text-muted">No stock ready to dispatch</td></tr>
-                    )}
                   </tbody>
                 </ErpDataTable>
-              </ErpCard>
+              </Section>
+
+              <Section title="Stage and mark ready" description="Finished goods come from final QC. Stage them in a bin, then mark them ready to ship.">
+                <StepFlow
+                  size="sm"
+                  className="mb-4"
+                  current={fgStatus === 'READY_FOR_DISPATCH' ? 'ready' : fgBinId ? 'ready' : 'stage'}
+                  steps={[{ id: 'stage', label: 'Stage in bin' }, { id: 'ready', label: 'Mark ready' }, { id: 'ship', label: 'Dispatch' }]}
+                />
+                <div className="flex flex-wrap items-end gap-4">
+                  {itemPicker}
+                  <Field label="Bin" className="min-w-[160px]">
+                    <ErpSelect value={stageBinId} onChange={(e) => setDispatchBinId(e.target.value)}>
+                      <option value="">Select bin…</option>
+                      {fgBins.map((b) => <option key={b._id} value={b._id}>{binLabel(b)}</option>)}
+                    </ErpSelect>
+                  </Field>
+                  <Field label="Quantity" className="w-32">
+                    <ErpInput type="number" inputMode="numeric" min={1} max={fgOnHand || undefined} value={dispatchQty} onChange={(e) => setDispatchQty(e.target.value)} />
+                  </Field>
+                </div>
+                {stockSummary && <div className="mt-4">{stockSummary}</div>}
+                {skuId && fgOnHand <= 0 && (
+                  <InfoBanner inset={false} tone="warn" className="mt-3">No stock for this SKU. Complete final QC in Quality first.</InfoBanner>
+                )}
+                {skuId && stageBinId && canUpdate && (
+                  <div className="mt-4 flex flex-wrap justify-end gap-2">
+                    <Button
+                      variant="secondary"
+                      disabled={fgOnHand < (Number(dispatchQty) || 1) || mut.isPending}
+                      onClick={() => {
+                        if (!dispatchBinId && fgBinId) setDispatchBinId(fgBinId);
+                        ask(`Stage ${dispatchQty || 1} in ${stageBinLabel}?`, 'The units are assigned to this bin for dispatch.', 'Stage', () => mut.mutate({ type: 'fgPutAway' }));
+                      }}
+                    >
+                      Stage in bin
+                    </Button>
+                    <Button
+                      icon={<ClipboardList size={16} />}
+                      disabled={fgOnHand <= 0 || mut.isPending}
+                      onClick={() => ask(`Mark ready to ship from ${stageBinLabel}?`, 'The stock appears in the Ready to ship list above.', 'Mark ready', () => mut.mutate({ type: 'markReady' }))}
+                    >
+                      Mark ready to ship
+                    </Button>
+                  </div>
+                )}
+              </Section>
             </>
           ) : (
             <>
-              <ErpCard className="p-4">
-                <h3 className="mb-2 text-sm font-medium">Raw material outbound</h3>
-                <p className="mb-3 text-[10px] text-erp-text-muted">
-                  Issue materials from bins for external dispatch or consumption. Select a material and pick qty, then Dispatch from a bin.
-                </p>
-                <div className="flex flex-wrap items-end gap-3">
-                  {ItemPicker}
-                  <div>
-                    <label className={fieldLabel}>Qty</label>
-                    <ErpInput type="number" min={1} value={opQty} onChange={(e) => setOpQty(e.target.value)} className="w-20" />
-                  </div>
+              <Section title="Raw material outbound" description="Issue material from bins for external dispatch or consumption.">
+                <div className="flex flex-wrap items-end gap-4">
+                  {itemPicker}
+                  <Field label="Quantity" className="w-32">
+                    <ErpInput type="number" inputMode="decimal" min={1} value={opQty} onChange={(e) => setOpQty(e.target.value)} />
+                  </Field>
                 </div>
-              </ErpCard>
-              {!matId && <AlertBanner message="Select a material to dispatch from bins." />}
-              <BinsTable action="pick" />
+                {stockSummary && <div className="mt-4">{stockSummary}</div>}
+              </Section>
+              {!matId && <InfoBanner inset={false} tone="info">Choose a material to dispatch from bins.</InfoBanner>}
+              {renderBinsTable('pick')}
             </>
           )}
         </div>
       )}
 
-      {section === 'stock-locator' && <StockLocatorSection />}
-
       {section === 'cycle-counts' && (
-        <>
-          <ErpCard className="mb-4 flex flex-wrap items-end gap-3 p-4">
-            {InventoryTypeToggle}
-            {WarehousePicker}
-            {canCreate && whId && (
-              <ErpButton className={btnSm} onClick={() => mut.mutate({ type: 'createCount' })}>Start new count</ErpButton>
-            )}
-          </ErpCard>
-
-          <div className="grid gap-4 lg:grid-cols-2">
-            <ErpCard className="overflow-hidden p-0">
-              <ErpDataTable className="w-full text-[11px]">
-                <thead>
-                  <tr>
-                    <th className="px-3 py-2 text-left">Count #</th>
-                    <th className="px-3 py-2 text-left">Warehouse</th>
-                    <th className="px-3 py-2 text-left">Status</th>
-                    <th className="px-3 py-2 text-right">Action</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {cycleCounts.map((c: CycleCount) => (
-                    <tr key={c._id} className={`border-t border-[var(--erp-border)] ${activeCountId === c._id ? 'bg-[var(--erp-accent-muted)]' : ''}`}>
-                      <td className="px-3 py-2 font-mono">{c.countNumber || c._id.slice(-8)}</td>
-                      <td className="px-3 py-2">{warehouseLabel(c.warehouseId ?? '')}</td>
-                      <td className="px-3 py-2"><ErpStatusBadge status={c.status} label={statusLabel(c.status ?? '')} /></td>
-                      <td className="px-3 py-2 text-right">
-                        {c.status !== 'COMPLETED' && (
-                          <div className="flex justify-end gap-1">
-                            <ErpButton className={btnSm} variant="secondary" onClick={() => openCount(c)}>Count</ErpButton>
-                            {c.status === 'DRAFT' && canUpdate && (
-                              <ErpButton className={btnSm} onClick={() => mut.mutate({ type: 'startCount', payload: { id: c._id } })}>Start</ErpButton>
-                            )}
-                          </div>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                  {cycleCounts.length === 0 && (
-                    <tr><td colSpan={4} className="px-3 py-8 text-center text-erp-text-muted">No cycle counts</td></tr>
-                  )}
-                </tbody>
-              </ErpDataTable>
-            </ErpCard>
-
-            {activeCountId && countLines.length > 0 && (
-              <ErpCard className="p-4">
-                <h3 className="mb-3 text-sm font-medium">Count lines</h3>
-                <ErpDataTable className="mb-3 w-full text-[11px]">
-                  <thead>
-                    <tr>
-                      <th className="px-2 py-1 text-left">Item</th>
-                      <th className="px-2 py-1 text-left">System</th>
-                      <th className="px-2 py-1 text-left">Counted</th>
-                      <th className="px-2 py-1 text-left">Var</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {countLines.map((l, idx) => (
-                      <tr key={idx} className="border-t border-[var(--erp-border)]">
-                        <td className="px-2 py-1">{cycleLineMaterial(l)}</td>
-                        <td className="px-2 py-1">{l.systemQty}</td>
-                        <td className="px-2 py-1">
-                          <ErpInput
-                            type="number"
-                            min={0}
-                            value={l.countedQty}
-                            onChange={(e) => updateCountLine(idx, Number(e.target.value) || 0)}
-                            className="!w-16 !py-0.5 text-[10px]"
-                          />
-                        </td>
-                        <td className={`px-2 py-1 ${varianceClass((l.countedQty ?? 0) - (l.systemQty ?? 0))}`}>
-                          {(l.countedQty ?? 0) - (l.systemQty ?? 0)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </ErpDataTable>
-                <label className="mb-3 flex items-center gap-2 text-[10px]">
-                  <input type="checkbox" checked={applyAdjustments} onChange={(e) => setApplyAdjustments(e.target.checked)} />
-                  Post variances to inventory (ADJUSTMENT)
-                </label>
-                {canUpdate && (
-                  <ErpButton
-                    onClick={() => mut.mutate({
-                      type: 'completeCount',
-                      payload: { id: activeCountId, lines: countLines, applyAdjustments },
-                    })}
+        <div className="space-y-4">
+          <Section>
+            <div className="flex flex-wrap items-end gap-4">
+              <Field label="Stock type"><TypeToggle value={opsInvType} onChange={setOpsInvType} /></Field>
+              {warehousePicker}
+            </div>
+          </Section>
+          <Section flush title="Counts">
+            <ErpDataTable className="min-w-[520px]">
+              <thead><tr><th>Count</th><th>Warehouse</th><th>Status</th><th className="erp-cell-actions"><span className="sr-only">Actions</span></th></tr></thead>
+              <tbody>
+                {cycleCountsQ.isLoading ? <TableSkeleton asRows rows={4} columns={4} /> : cycleCountsQ.isError ? <QueryErrorRow colSpan={4} error={cycleCountsQ.error} onRetry={() => cycleCountsQ.refetch()} /> : cycleCounts.length === 0 ? (
+                  <EmptyRow
+                    colSpan={4}
+                    title="No cycle counts yet"
+                    icon={ClipboardCheck}
+                    action={canCreate && whId ? <Button size="sm" icon={<Plus size={14} />} onClick={() => mut.mutate({ type: 'createCount' })}>New count</Button> : undefined}
                   >
-                    Complete count
-                  </ErpButton>
-                )}
-              </ErpCard>
-            )}
-            {activeCountId && countLines.length === 0 && (
-              <ErpCard className="p-4">
-                <h3 className="mb-2 text-sm font-medium">Count lines</h3>
-                <p className="text-[11px] text-erp-text-muted">
-                  No stock lines for this count yet. Put away stock into bins first, then start a new count.
-                </p>
-              </ErpCard>
-            )}
-          </div>
-        </>
+                    Count a warehouse regularly to keep system stock accurate.
+                  </EmptyRow>
+                ) : cycleCounts.map((c: CycleCount) => (
+                  <tr key={c._id} className={c.status !== 'COMPLETED' ? `erp-row-clickable${activeCountId === c._id ? ' erp-row-selected' : ''}` : ''} onClick={c.status !== 'COMPLETED' ? () => openCount(c) : undefined}>
+                    <td className="erp-cell-primary font-mono">{c.countNumber || c._id.slice(-8)}</td>
+                    <td>{warehouseLabel(c.warehouseId ?? '')}</td>
+                    <td><StatusBadge status={c.status} /></td>
+                    <td className="erp-cell-actions">
+                      <div className="flex justify-end gap-1">
+                        {c.status === 'DRAFT' && canUpdate && (
+                          <Button size="sm" variant="secondary" onClick={(e) => { e.stopPropagation(); mut.mutate({ type: 'startCount', payload: { id: c._id } }); }}>Start</Button>
+                        )}
+                        {c.status !== 'COMPLETED' && (
+                          <Button size="sm" onClick={(e) => { e.stopPropagation(); openCount(c); }}>Count</Button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </ErpDataTable>
+          </Section>
+        </div>
       )}
-    </div>
+
+      <Drawer
+        open={!!activeCountId}
+        onClose={() => { setActiveCountId(null); setCountLines([]); }}
+        size="lg"
+        closeOnOverlayClick={false}
+        title={`Count ${cycleCounts.find((c) => c._id === activeCountId)?.countNumber ?? ''}`}
+        description="Enter what you physically counted. Differences are highlighted."
+        footer={(
+          <>
+            {countLines.length > 0 && (
+              <label className="mr-auto flex min-h-11 items-center gap-2 text-sm">
+                <input type="checkbox" className="h-5 w-5" checked={applyAdjustments} onChange={(e) => setApplyAdjustments(e.target.checked)} />
+                Post differences to inventory
+              </label>
+            )}
+            <Button variant="secondary" onClick={() => { setActiveCountId(null); setCountLines([]); }}>Cancel</Button>
+            {canUpdate && countLines.length > 0 && (
+              <Button
+                loading={mut.isPending && mut.variables?.type === 'completeCount'}
+                onClick={() => ask(
+                  'Complete this count?',
+                  applyAdjustments
+                    ? `${countLines.filter((l) => (l.countedQty ?? 0) !== (l.systemQty ?? 0)).length} line(s) with differences will be adjusted in inventory.`
+                    : 'Counts are saved without changing inventory.',
+                  'Complete count',
+                  () => mut.mutate({ type: 'completeCount', payload: { id: activeCountId, lines: countLines, applyAdjustments } }),
+                )}
+              >
+                Complete count
+              </Button>
+            )}
+          </>
+        )}
+      >
+        {activeCountLoading && !countLines.length ? (
+          <TableSkeleton rows={4} columns={4} />
+        ) : countLines.length === 0 ? (
+          <InfoBanner inset={false} tone="muted">No stock lines in this count yet. Put stock away into bins first, then start a new count.</InfoBanner>
+        ) : (
+          <ErpDataTable>
+            <thead><tr><th>Item</th><th className="erp-num">System</th><th className="erp-num w-36">Counted</th><th className="erp-num">Difference</th></tr></thead>
+            <tbody>
+              {countLines.map((l, idx) => {
+                const diff = (l.countedQty ?? 0) - (l.systemQty ?? 0);
+                return (
+                  <tr key={idx}>
+                    <td>{cycleLineMaterial(l)}</td>
+                    <td className="erp-num">{l.systemQty}</td>
+                    <td className="erp-num">
+                      <ErpInput
+                        type="number" inputMode="decimal" min={0} className="text-right" aria-label={`Counted ${cycleLineMaterial(l)}`}
+                        value={l.countedQty}
+                        onChange={(e) => updateCountLine(idx, Number(e.target.value) || 0)}
+                      />
+                    </td>
+                    <td className={`erp-num font-medium ${varianceTone(diff)}`}>
+                      {diff > 0 ? `+${diff}` : diff}
+                      {diff !== 0 && <Badge tone={diff > 0 ? 'success' : 'danger'} dot={false} className="ml-2">{diff > 0 ? 'Over' : 'Short'}</Badge>}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </ErpDataTable>
+        )}
+      </Drawer>
+    </>
   );
 }

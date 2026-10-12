@@ -1,5 +1,6 @@
-import { Link } from 'react-router-dom';
-import { ErpButton, ErpCard } from '../../../components/erp';
+import { useNavigate } from 'react-router-dom';
+import { ArrowLeft, UserX } from 'lucide-react';
+import { Button, EmptyState, Section } from '../../../components/erp';
 
 export function PatternNotAssigned({
   designId,
@@ -10,31 +11,22 @@ export function PatternNotAssigned({
   onClose: () => void;
   canAssign: boolean;
 }) {
+  const navigate = useNavigate();
   return (
-    <ErpCard className="!p-4">
-      <h3 className="text-[11px] font-semibold text-erp-text-primary">Pattern not assigned yet</h3>
-      <p className="mt-2 text-[11px] text-erp-text-muted">
-        This released design does not have a pattern master assignment. Sampling stays blocked until pattern development is assigned and completed.
-      </p>
-      {canAssign ? (
-        <p className="mt-2 text-[11px] text-erp-text-muted">
-          Go back to the queue and use <strong>Assign pattern master</strong> — the design is pre-selected when you arrive from the design pipeline.
-        </p>
-      ) : (
-        <p className="mt-2 text-[11px] text-amber-700">
-          Ask a design manager to assign a pattern master to this design.
-        </p>
-      )}
-      <div className="mt-3 flex flex-wrap gap-2">
-        <ErpButton variant="secondary" className="!px-3 !py-1.5 text-[11px]" onClick={onClose}>
-          Back to queue
-        </ErpButton>
-        {canAssign && (
-          <Link to={`/designs/${designId}/edit`} className="erp-btn-secondary inline-flex px-3 py-1.5 text-[11px]">
-            View tech pack
-          </Link>
+    <Section>
+      <EmptyState
+        icon={UserX}
+        title="No pattern master assigned yet"
+        description={canAssign
+          ? 'Assign a pattern master from the queue to start pattern development. Sampling stays locked until it is complete.'
+          : 'A design manager needs to assign a pattern master to this design before work can start.'}
+        action={(
+          <div className="flex flex-wrap justify-center gap-2">
+            <Button variant="secondary" icon={<ArrowLeft size={14} />} onClick={onClose}>Back to queue</Button>
+            <Button variant="secondary" onClick={() => navigate(`/designs/${designId}/edit`)}>View design</Button>
+          </div>
         )}
-      </div>
-    </ErpCard>
+      />
+    </Section>
   );
 }

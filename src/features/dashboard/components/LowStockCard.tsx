@@ -1,33 +1,47 @@
 import { Link } from 'react-router-dom';
-import { AlertTriangle } from 'lucide-react';
-import { ErpCard } from '../../../components/erp';
+import { ArrowRight, PackageCheck } from 'lucide-react';
+import { Badge, EmptyState, Section } from '../../../components/erp';
 import type { LowStockItem } from '../useDashboardData';
 
 export function LowStockCard({ items, alertCount }: { items: LowStockItem[]; alertCount: number }) {
   return (
-    <ErpCard className="p-4">
-      <div className="mb-3 flex items-center gap-2">
-        <AlertTriangle className="h-4 w-4 text-[var(--erp-warning-text,#f59e0b)]" />
-        <p className="text-sm font-semibold">Low stock</p>
-        <span className="ml-auto rounded-full bg-[var(--erp-danger-bg)] px-2 py-0.5 text-[10px] font-medium text-[var(--erp-danger-text)]">
-          {alertCount}
-        </span>
-        <Link to="/inventory" className="text-[10px] text-[var(--erp-accent)] hover:underline">View all</Link>
-      </div>
-      <ul className="space-y-2">
-        {items.length === 0 && <li className="text-xs text-erp-text-muted">No low-stock materials</li>}
-        {items.map((p) => (
-          <li key={p.sku} className="flex items-center justify-between rounded-lg bg-[var(--erp-row-hover)] px-2.5 py-2">
-            <div className="min-w-0">
-              <p className="truncate text-xs font-medium">{p.name}</p>
-              <p className="text-[10px] text-erp-text-muted">{p.sku}</p>
-            </div>
-            <span className="text-xs font-semibold text-[var(--erp-danger-text)]">
-              {p.stock}{p.reorderLevel != null ? ` / ${p.reorderLevel}` : ''}
-            </span>
-          </li>
-        ))}
-      </ul>
-    </ErpCard>
+    <Section
+      title="Low stock"
+      description={alertCount > 0 ? `${alertCount.toLocaleString()} materials at or below reorder level` : undefined}
+      actions={(
+        <Link to="/inventory?tab=alerts" className="inline-flex items-center gap-1 text-[13px] font-medium text-[var(--erp-accent)] hover:underline">
+          View all <ArrowRight size={14} aria-hidden="true" />
+        </Link>
+      )}
+      className="flex h-full flex-col"
+      flush
+      bodyClassName="flex-1"
+    >
+      {items.length === 0 ? (
+        <EmptyState compact icon={PackageCheck} title="Stock levels look healthy" description="Materials appear here when they drop to their reorder level." />
+      ) : (
+        <ul className="divide-y divide-[var(--erp-border)]">
+          {items.map((p) => {
+            const out = p.stock <= 0;
+            return (
+              <li key={p.sku} className="flex items-center justify-between gap-3 px-4 py-2.5">
+                <div className="min-w-0">
+                  <p className="truncate text-[13px] font-medium text-erp-text-primary">{p.name}</p>
+                  <p className="truncate font-mono text-xs text-erp-text-muted">{p.sku}</p>
+                </div>
+                <div className="flex shrink-0 items-center gap-2 text-right">
+                  <span className="erp-tabular text-[13px] text-erp-text-secondary">
+                    {p.stock.toLocaleString()}
+                    {p.reorderLevel != null && <span className="text-erp-text-muted"> / {p.reorderLevel.toLocaleString()}</span>}
+                    {p.unit && <span className="ml-1 text-xs text-erp-text-muted">{p.unit}</span>}
+                  </span>
+                  <Badge tone={out ? 'danger' : 'warning'}>{out ? 'Out' : 'Low'}</Badge>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </Section>
   );
 }

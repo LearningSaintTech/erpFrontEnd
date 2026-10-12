@@ -1,15 +1,14 @@
-import { Link } from 'react-router-dom';
-import { ErpTabs } from '../../../components/erp';
-import { KpiStrip, SecondaryKpis } from './KpiStrip';
-import { AlertsPanel } from './AlertsPanel';
+import {
+  ClipboardCheck, Factory, FileWarning, Hourglass, ShieldAlert, Truck,
+} from 'lucide-react';
+import {
+  DescriptionList, ErpTabs, KpiGrid, Section, StatTile,
+} from '../../../components/erp';
 import { LowStockCard } from './LowStockCard';
 import { RecentOrdersTable } from './RecentOrdersTable';
-import { ModuleQuickLinks } from './ModuleQuickLinks';
-import {
-  AreaTrendChart, BarStatusChart, DonutChart, FulfillmentGauge,
-} from './ChartPanels';
+import { BarStatusChart, DonutChart, FulfillmentGauge } from './ChartPanels';
 import type { DashboardTab } from '../dashboardUtils';
-import { DASHBOARD_TABS, formatPct } from '../dashboardUtils';
+import { DASHBOARD_TABS, formatCurrency, formatNumber, formatPct } from '../dashboardUtils';
 import type { useDashboardData } from '../useDashboardData';
 
 type DashboardData = ReturnType<typeof useDashboardData>;
@@ -20,164 +19,145 @@ interface DashboardContentProps {
   data: DashboardData;
 }
 
+const noOrders = 'Fulfillment is measured once production orders exist for this period.';
+
 export function DashboardContent({ tab, onTabChange, data }: DashboardContentProps) {
-  const { kpis, alerts, lowStock, recentOrders, permissions } = data;
+  const { kpis, lowStock, recentOrders } = data;
+  const lowStockCount = kpis.lowStock || lowStock.length;
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-4">
       <ErpTabs
-        tabs={DASHBOARD_TABS.map((t) => ({ id: t.id, label: t.label }))}
+        tabs={DASHBOARD_TABS}
         active={tab}
         onChange={(id) => onTabChange(id as DashboardTab)}
+        ariaLabel="Dashboard views"
       />
-
-      <KpiStrip kpis={kpis} />
-      <SecondaryKpis kpis={kpis} />
 
       {tab === 'overview' && (
         <>
-          <div className="grid gap-4 lg:grid-cols-12">
-            <div className="lg:col-span-4">
-              <FulfillmentGauge pct={kpis.fulfillmentPct} link="/production" />
-            </div>
-            <div className="lg:col-span-4">
-              <AlertsPanel alerts={alerts} />
-            </div>
-            <div className="lg:col-span-4">
-              <LowStockCard items={lowStock} alertCount={kpis.lowStock || lowStock.length} />
-            </div>
-          </div>
-          <div className="grid gap-4 lg:grid-cols-2">
-            <AreaTrendChart
-              title="Operations pulse"
-              subtitle="Key metrics for selected period"
-              data={data.activityChart}
-              link="/reports/factory"
+          <div className="grid gap-4 lg:grid-cols-3">
+            <FulfillmentGauge
+              pct={kpis.fulfillmentPct}
+              link="/production/orders"
+              isEmpty={!data.hasProductionData}
+              emptyDescription={noOrders}
+            />
+            <BarStatusChart
+              title="Production orders"
+              description="By status"
+              data={data.productionChart}
+              link="/production/orders"
+              emptyTitle="No production orders"
+              emptyDescription="Orders created in this period will be charted here."
             />
             <DonutChart
               title="Design pipeline"
+              description="Designs by status"
               data={data.designChart}
               link="/designs"
-              centerLabel={String(data.factory?.summary?.approvedDesigns ?? '')}
+              emptyTitle="No designs yet"
+              emptyDescription="Designs appear here once they are created."
             />
           </div>
-          <RecentOrdersTable orders={recentOrders} />
+          <div className="grid gap-4 lg:grid-cols-3">
+            <div className="lg:col-span-1">
+              <LowStockCard items={lowStock} alertCount={lowStockCount} />
+            </div>
+            <div className="min-w-0 lg:col-span-2">
+              <RecentOrdersTable orders={recentOrders} />
+            </div>
+          </div>
         </>
       )}
 
       {tab === 'production' && (
         <>
+          {data.pendingWork && (
+            <KpiGrid cols={4}>
+              <StatTile icon={Factory} label="Batches in process" value={formatNumber(data.pendingWork.inProgressBatches?.length ?? 0)} />
+              <StatTile icon={ClipboardCheck} label="Awaiting final QC" value={formatNumber(data.pendingWork.completedBatches?.length ?? 0)} />
+              <StatTile icon={Hourglass} label="Overdue orders" value={formatNumber(kpis.overdueOrders)} highlight={kpis.overdueOrders > 0 ? 'warn' : undefined} />
+              <StatTile label="Fulfillment" value={data.hasProductionData ? formatPct(kpis.fulfillmentPct) : '—'} />
+            </KpiGrid>
+          )}
           <div className="grid gap-4 lg:grid-cols-3">
-            <FulfillmentGauge pct={kpis.fulfillmentPct} link="/production" />
-            <BarStatusChart title="Orders by status" data={data.productionChart} link="/production" />
-            <BarStatusChart title="Batches by stage" data={data.batchStageChart} link="/production" />
+            <FulfillmentGauge pct={kpis.fulfillmentPct} link="/production/orders" isEmpty={!data.hasProductionData} emptyDescription={noOrders} />
+            <BarStatusChart title="Orders by status" data={data.productionChart} link="/production/orders" emptyTitle="No production orders" />
+            <BarStatusChart title="Running batches by stage" data={data.batchStageChart} link="/production/orders" emptyTitle="No batches running" />
           </div>
           <div className="grid gap-4 lg:grid-cols-2">
-            <AreaTrendChart
-              title="Production workload"
-              data={[
-                { name: 'In progress', value: data.productionReport?.batchesInProgress ?? kpis.batchesInProgress },
-                { name: 'Completed', value: data.productionReport?.batchesCompleted ?? 0 },
-                { name: 'Rework', value: data.productionReport?.batchesRework ?? 0 },
-                { name: 'Overdue', value: kpis.overdueOrders },
-              ].filter((d) => d.value > 0)}
-              link="/production"
-            />
-            <DonutChart
-              title="Capacity"
-              data={[
-                { name: 'Machines', value: data.productionReport?.machineCount ?? 0 },
-                { name: 'Capacity/hr', value: Math.round((data.productionReport?.totalCapacityPerHour ?? 0) / 10) },
-              ].filter((d) => d.value > 0)}
-              link="/production/machines"
-            />
+            <BarStatusChart title="Batch workload" data={data.workloadChart} link="/production/orders" emptyTitle="No batch activity" horizontal />
+            <Section title="Capacity" description="Machines and hourly capacity at this factory.">
+              <DescriptionList
+                columns={2}
+                items={[
+                  { label: 'Machines', value: formatNumber(data.productionReport?.machineCount) },
+                  { label: 'Capacity per hour', value: formatNumber(data.productionReport?.totalCapacityPerHour) },
+                  { label: 'Batches completed', value: formatNumber(data.productionReport?.batchesCompleted) },
+                  { label: 'Rework batches', value: formatNumber(data.productionReport?.batchesRework) },
+                ]}
+              />
+            </Section>
           </div>
-          {data.pendingWork && (
-            <div className="grid gap-4 sm:grid-cols-3">
-              <Link to="/quality/inspections" className="erp-card block p-4 hover:border-[var(--erp-accent)]">
-                <p className="text-[10px] text-erp-text-muted">Batches in process</p>
-                <p className="text-xl font-semibold">{data.pendingWork.inProgressBatches?.length ?? 0}</p>
-              </Link>
-              <Link to="/quality/inspections" className="erp-card block p-4 hover:border-[var(--erp-accent)]">
-                <p className="text-[10px] text-erp-text-muted">Awaiting final QC</p>
-                <p className="text-xl font-semibold">{data.pendingWork.completedBatches?.length ?? 0}</p>
-              </Link>
-              <Link to="/production" className="erp-card block p-4 hover:border-[var(--erp-accent)]">
-                <p className="text-[10px] text-erp-text-muted">Fulfillment</p>
-                <p className="text-xl font-semibold">{formatPct(kpis.fulfillmentPct)}</p>
-              </Link>
-            </div>
-          )}
         </>
       )}
 
       {tab === 'supply' && (
         <>
           <div className="grid gap-4 lg:grid-cols-3">
-            <LowStockCard items={lowStock} alertCount={kpis.lowStock || lowStock.length} />
-            <BarStatusChart title="Payments" data={data.purchaseChart} link="/purchase?tab=po" horizontal />
-            <BarStatusChart title="Spend breakdown (₹ thousands)" data={data.spendChart} link="/reports/financial" />
-          </div>
-          <div className="grid gap-4 lg:grid-cols-2">
-            <AreaTrendChart
-              title="Inventory & dispatch"
-              data={[
-                { name: 'Stock value (₹K)', value: Math.round(kpis.stockValue / 1000) },
-                { name: 'Dispatch ready', value: kpis.dispatchReady },
-                { name: 'Low stock', value: kpis.lowStock },
-                { name: 'Unpaid (₹K)', value: Math.round(kpis.openPoValue / 1000) },
-              ].filter((d) => d.value > 0)}
-              link="/inventory"
-            />
-            <DonutChart
-              title="Waste by type"
-              data={data.wasteChart}
-              link="/waste"
+            <LowStockCard items={lowStock} alertCount={lowStockCount} />
+            <BarStatusChart title="Payments by status" data={data.purchaseChart} link="/purchase?tab=po" horizontal emptyTitle="No payments in this period" />
+            <BarStatusChart
+              title="Spend breakdown"
+              data={data.spendChart}
+              link="/reports/financial"
+              valueFormatter={(v) => formatCurrency(v)}
+              emptyTitle="No spend recorded"
             />
           </div>
-          <RecentOrdersTable orders={recentOrders.filter((o) => o.type === 'Payment')} />
+          <div className="grid gap-4 lg:grid-cols-3">
+            <DonutChart title="Waste by type" data={data.wasteChart} link="/waste" emptyTitle="No waste recorded" />
+            <div className="min-w-0 lg:col-span-2">
+              <RecentOrdersTable title="Recent payments" orders={recentOrders.filter((o) => o.type === 'Payment')} />
+            </div>
+          </div>
         </>
       )}
 
       {tab === 'quality' && (
         <>
+          <KpiGrid cols={4}>
+            <StatTile icon={ClipboardCheck} label="QC queue" value={formatNumber(kpis.qcQueue)} hint="Not started" />
+            <StatTile icon={ShieldAlert} label="Open CAPA" value={formatNumber(kpis.openCapa)} />
+            <StatTile icon={Truck} label="Receipts awaiting QC" value={formatNumber(data.grnPendingQc)} />
+            <StatTile icon={FileWarning} label="Defects logged" value={formatNumber(data.qualityReport?.defectsLogged ?? 0)} />
+          </KpiGrid>
           <div className="grid gap-4 lg:grid-cols-3">
-            <FulfillmentGauge pct={kpis.firstPassYield} link="/quality/inspections" label="First-pass yield" />
+            <FulfillmentGauge
+              title="First-pass yield"
+              label="Inspections passed first time"
+              pct={kpis.firstPassYield}
+              link="/quality/inspections"
+              isEmpty={data.inspectionsTotal === 0}
+              emptyTitle="No inspections yet"
+              emptyDescription="Yield is calculated from completed inspections."
+            />
             <DonutChart
               title="Inspection outcomes"
               data={data.qualityOutcomeChart}
               link="/quality/inspections"
-              centerLabel={formatPct(kpis.firstPassYield)}
+              emptyTitle="No inspections yet"
             />
             <DonutChart
               title="By inspection type"
               data={data.inspectionTypeChart}
               link="/quality/inspections"
+              emptyTitle="No inspections yet"
             />
           </div>
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <Link to="/quality/inspections" className="erp-card block p-4 hover:border-[var(--erp-accent)]">
-              <p className="text-[10px] text-erp-text-muted">QC queue</p>
-              <p className="text-xl font-semibold">{kpis.qcQueue}</p>
-            </Link>
-            <Link to="/quality/capa" className="erp-card block p-4 hover:border-[var(--erp-accent)]">
-              <p className="text-[10px] text-erp-text-muted">Open CAPA</p>
-              <p className="text-xl font-semibold">{kpis.openCapa}</p>
-            </Link>
-            <Link to="/quality/inspections" className="erp-card block p-4 hover:border-[var(--erp-accent)]">
-              <p className="text-[10px] text-erp-text-muted">GRNs pending QC</p>
-              <p className="text-xl font-semibold">{data.pendingWork?.pendingGrns?.length ?? data.purchaseReport?.grnPendingQc ?? 0}</p>
-            </Link>
-            <Link to="/reports/quality" className="erp-card block p-4 hover:border-[var(--erp-accent)]">
-              <p className="text-[10px] text-erp-text-muted">Defects logged</p>
-              <p className="text-xl font-semibold">{data.qualityReport?.defectsLogged ?? 0}</p>
-            </Link>
-          </div>
-          <AlertsPanel alerts={alerts.filter((a) => ['qc', 'capa', 'grn'].includes(a.id))} />
         </>
       )}
-
-      <ModuleQuickLinks permissions={permissions} />
     </div>
   );
 }

@@ -1,0 +1,3 @@
+{"type":"receive","time":1791726556557.199,"opcode":1,"data":"0{\"sid\":\"GD7gECWYduUd8U27AADM\",\"upgrades\":[],\"pingInterval\":25000,\"pingTimeout\":20000,\"maxPayload\":1000000}"}
+{"type":"send","time":1791726556559.504,"opcode":1,"data":"40{\"token\":\"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI2YWNiOGMzM2YwZDk0NjdhZTA2ODUzNTciLCJpc1N1cGVyQWRtaW4iOnRydWUsImlhdCI6MTc5MTcyNjU0NiwiZXhwIjoxNzkxNzI3NDQ2fQ.02HLnqVLqUvAFt3O-XOqufv3gS7qmumX4S58VOGbuo4\",\"factoryId\":\"6acb8c33f0d9467ae068535e\"}"}
+{"type":"receive","time":1791726557667.043,"opcode":1,"data":"40{\"sid\":\"Nh7vhkgDpr18RkhEAADN\"}"}

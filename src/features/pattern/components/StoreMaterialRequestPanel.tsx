@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { PackagePlus } from 'lucide-react';
 import { inventoryApi } from '../../../services/manufacturing';
+import {
+  Badge, Button, ErpInput, ErpSelect, Field, Modal,
+} from '../../../components/erp';
 import type { MaterialMasterRequest } from '../../../types/api';
-
-const label = 'mb-1 block text-[10px] font-medium text-erp-text-muted';
-const input = 'w-full rounded border border-[var(--erp-border)] bg-[var(--erp-surface)] px-2 py-1 text-[11px] disabled:opacity-60';
 
 const UNITS = ['METERS', 'YARDS', 'PIECES', 'CONES', 'KG'] as const;
 
@@ -22,6 +23,7 @@ function materialSnapshot(r: MaterialMasterRequest) {
   };
 }
 
+/** "Not in the store list?" — ask the store keeper to add a fabric; approved items attach to the tech pack. */
 export function StoreMaterialRequestPanel({
   designId,
   defaultName = '',
@@ -48,8 +50,7 @@ export function StoreMaterialRequestPanel({
   const [proposedCode, setProposedCode] = useState('');
   const [unit, setUnit] = useState('METERS');
   const [notes, setNotes] = useState('');
-  const [error, setError] = useState('');
-  const [sentMsg, setSentMsg] = useState('');
+  const [nameError, setNameError] = useState('');
   const lastNotified = useRef('');
 
   const { data } = useQuery({
@@ -86,83 +87,76 @@ export function StoreMaterialRequestPanel({
       notes: notes.trim() || undefined,
       designId,
     }),
-    onSuccess: (created) => {
-      setError('');
-      setSentMsg(`${created.requestNumber} sent to store. It will appear on this tech pack after they approve.`);
+    meta: { successMessage: 'Request sent to the store', successDescription: 'It is added to this tech pack once they approve it.' },
+    onSuccess: () => {
       setName(defaultName);
       setProposedCode('');
       setNotes('');
       setOpen(false);
       qc.invalidateQueries({ queryKey: ['material-master-requests', designId] });
     },
-    onError: (e: Error) => setError(e.message),
   });
 
-  if (readOnly && !pending.length && !rejected.length && !approved.length) return null;
+  if (readOnly && !pending.length && !rejected.length) return null;
+
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    if (!name.trim()) {
+      setNameError('Enter the fabric name so the store can find or create it.');
+      return;
+    }
+    create.mutate();
+  };
 
   return (
-    <div className="mt-2 rounded border border-dashed border-[var(--erp-border)] p-2">
-      <p className="text-[10px] text-erp-text-muted">
-        Not in the store list? Ask the store keeper to add it. After they approve, it lands on this tech pack.
-      </p>
-      {sentMsg && <p className="mt-1 text-[10px] text-emerald-700">{sentMsg}</p>}
-      {pending.length > 0 && (
-        <ul className="mt-1.5 space-y-1">
-          {pending.map((r) => (
-            <li key={r._id} className="text-[10px] text-amber-800">
-              Waiting on store · {r.requestNumber} · {r.name}
-              {r.proposedCode ? ` (${r.proposedCode})` : ''}
-            </li>
-          ))}
-        </ul>
-      )}
+    <div className="flex flex-wrap items-center gap-2 border-t border-[var(--erp-border)] px-4 py-3 text-[13px]">
+      {pending.map((r) => (
+        <Badge key={r._id} tone="warning">Waiting on store · {r.name}{r.proposedCode ? ` (${r.proposedCode})` : ''}</Badge>
+      ))}
       {rejected.map((r) => (
-        <p key={r._id} className="mt-1 text-[10px] text-red-700">
-          Declined · {r.name}{r.reviewNotes ? ` — ${r.reviewNotes}` : ''}
-        </p>
+        <Badge key={r._id} tone="danger">Declined · {r.name}{r.reviewNotes ? ` — ${r.reviewNotes}` : ''}</Badge>
       ))}
       {!readOnly && (
-        open ? (
-          <div className="mt-2 grid grid-cols-12 gap-2">
-            <div className="col-span-5">
-              <span className={label}>Fabric name</span>
-              <input className={input} value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. 180 GSM cotton jersey" />
-            </div>
-            <div className="col-span-3">
-              <span className={label}>Suggested code</span>
-              <input className={input} value={proposedCode} onChange={(e) => setProposedCode(e.target.value)} placeholder="Optional" />
-            </div>
-            <div className="col-span-2">
-              <span className={label}>Unit</span>
-              <select className={input} value={unit} onChange={(e) => setUnit(e.target.value)}>
-                {UNITS.map((u) => <option key={u} value={u}>{u}</option>)}
-              </select>
-            </div>
-            <div className="col-span-12">
-              <span className={label}>Note for store</span>
-              <input className={input} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="GSM, mill, colourway…" />
-            </div>
-            {error && <p className="col-span-12 text-[10px] text-red-700">{error}</p>}
-            <div className="col-span-12 flex gap-2">
-              <button
-                type="button"
-                className="text-[10px] text-[var(--erp-accent)] disabled:opacity-50"
-                disabled={!name.trim() || create.isPending}
-                onClick={() => create.mutate()}
-              >
-                {create.isPending ? 'Sending…' : 'Send to store'}
-              </button>
-              <button type="button" className="text-[10px] text-erp-text-muted" onClick={() => { setOpen(false); setError(''); }}>
-                Cancel
-              </button>
-            </div>
-          </div>
-        ) : (
-          <button type="button" className="mt-1.5 text-[10px] text-[var(--erp-accent)]" onClick={() => { setOpen(true); setName((n) => n || defaultName); }}>
-            Request from store
-          </button>
-        )
+        <>
+          <span className="text-erp-text-muted">Fabric not in the store list?</span>
+          <Button size="sm" variant="link" icon={<PackagePlus size={14} />} onClick={() => { setName((n) => n || defaultName); setNameError(''); setOpen(true); }}>
+            Request it from the store
+          </Button>
+        </>
       )}
+
+      <Modal
+        open={open}
+        onClose={() => setOpen(false)}
+        size="sm"
+        title="Request a new fabric"
+        description="The store keeper adds it to the material list. Once approved it appears on this tech pack."
+        footer={(
+          <>
+            <Button variant="secondary" onClick={() => setOpen(false)}>Cancel</Button>
+            <Button type="submit" form="store-material-request" loading={create.isPending}>Send to store</Button>
+          </>
+        )}
+      >
+        <form id="store-material-request" className="space-y-4" onSubmit={submit} noValidate>
+          <Field label="Fabric name" required error={nameError}>
+            <ErpInput value={name} onChange={(e) => { setName(e.target.value); setNameError(''); }} placeholder="e.g. 180 GSM cotton jersey" invalid={!!nameError} />
+          </Field>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="Suggested code" hint="Optional">
+              <ErpInput value={proposedCode} onChange={(e) => setProposedCode(e.target.value)} />
+            </Field>
+            <Field label="Stock unit">
+              <ErpSelect value={unit} onChange={(e) => setUnit(e.target.value)}>
+                {UNITS.map((u) => <option key={u} value={u}>{u.charAt(0) + u.slice(1).toLowerCase()}</option>)}
+              </ErpSelect>
+            </Field>
+          </div>
+          <Field label="Note for the store">
+            <ErpInput value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="GSM, mill, colourway…" />
+          </Field>
+        </form>
+      </Modal>
     </div>
   );
 }

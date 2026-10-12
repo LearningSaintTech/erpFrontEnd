@@ -1,12 +1,20 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { ToggleRight } from 'lucide-react';
 import { settingsApi } from '../../../services/admin';
 import type { FeatureFlagDefinition, FeatureFlagsSettings } from '../../../types/api';
-import { ErpButton, ErpCard } from '../../../components/erp';
+import { EmptyState, Section } from '../../../components/erp';
+import { SaveBar } from '../SettingsSection';
+import { SettingsSkeleton } from './GeneralSettingsTab';
+import { Switch } from './IntegrationsSettingsTab';
 
-export function FeatureFlagsSettingsTab({ onError, onSuccess }: { onError: (m: string) => void; onSuccess: (m: string) => void }) {
+export function FeatureFlagsSettingsTab({ onDirtyChange, factoryScoped }: {
+  onDirtyChange?: (dirty: boolean) => void;
+  /** True when a factory is selected (flags may override per site). */
+  factoryScoped?: boolean;
+}) {
   const qc = useQueryClient();
-  const { data: catalog = [] } = useQuery<FeatureFlagDefinition[]>({
+  const { data: catalog = [], isLoading: catalogLoading } = useQuery<FeatureFlagDefinition[]>({
     queryKey: ['feature-flag-catalog'],
     queryFn: settingsApi.getFeatureFlagCatalog,
   });
@@ -19,63 +27,59 @@ export function FeatureFlagsSettingsTab({ onError, onSuccess }: { onError: (m: s
   const [dirty, setDirty] = useState(false);
 
   useEffect(() => {
-    if (data) {
-      setFlags(data);
-      setDirty(false);
-    }
+    if (data) { setFlags(data); setDirty(false); }
   }, [data]);
+  useEffect(() => { onDirtyChange?.(dirty); }, [dirty, onDirtyChange]);
 
   const save = useMutation({
     mutationFn: () => settingsApi.updateFeatureFlags(flags),
+    meta: { successMessage: 'Feature flags saved' },
     onSuccess: (saved) => {
       setFlags(saved);
       setDirty(false);
       qc.invalidateQueries({ queryKey: ['settings-flags'] });
-      onSuccess('Feature flags saved');
     },
-    onError: (e: Error) => onError(e.message),
   });
 
-  if (isLoading) {
-    return <p className="text-[11px] text-erp-text-muted">Loading feature flags…</p>;
-  }
-
-  const toggle = (key: string) => {
-    setFlags((f) => ({ ...f, [key]: !f[key] }));
-    setDirty(true);
-  };
+  if (isLoading || catalogLoading) return <SettingsSkeleton />;
 
   return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-[10px] text-erp-text-muted">
-          Toggle modules and behaviors. Org-level flags apply when no factory is selected; with a factory selected, flags can override per site.
-        </p>
-        {dirty && (
-          <ErpButton className="!px-3 !py-1 text-[11px]" disabled={save.isPending} onClick={() => save.mutate()}>
-            Save flags
-          </ErpButton>
+    <div className="space-y-4">
+      <Section
+        title="Feature flags"
+        description={factoryScoped
+          ? 'Turn modules and behaviours on or off for the selected factory.'
+          : 'Turn modules and behaviours on or off for the whole organization.'}
+        flush
+      >
+        {catalog.length === 0 ? (
+          <EmptyState icon={ToggleRight} title="No feature flags available" />
+        ) : (
+          <ul className="divide-y divide-[var(--erp-border)]">
+            {catalog.map((f) => (
+              <li key={f.key} className="flex items-start justify-between gap-4 px-4 py-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-erp-text-primary">{f.label}</p>
+                  {f.description && <p className="mt-0.5 text-[13px] text-erp-text-muted">{f.description}</p>}
+                  <p className="mt-0.5 font-mono text-xs text-erp-text-muted">{f.key}</p>
+                </div>
+                <Switch
+                  checked={!!flags[f.key]}
+                  label={f.label ?? f.key}
+                  onChange={(v) => { setFlags((cur) => ({ ...cur, [f.key]: v })); setDirty(true); }}
+                />
+              </li>
+            ))}
+          </ul>
         )}
-      </div>
-      <div className="grid gap-2 sm:grid-cols-2">
-        {catalog.map((f) => (
-          <ErpCard key={f.key} className="!p-2.5">
-            <label className="flex cursor-pointer items-start gap-2">
-              <input
-                type="checkbox"
-                className="mt-0.5 rounded"
-                checked={!!flags[f.key]}
-                onChange={() => toggle(f.key)}
-              />
-              <span>
-                <span className="block text-[11px] font-medium text-erp-text-primary">{f.label}</span>
-                <span className="block text-[10px] text-erp-text-muted">{f.description}</span>
-                <span className="mt-0.5 block font-mono text-[9px] text-erp-text-muted">{f.key}</span>
-              </span>
-            </label>
-          </ErpCard>
-        ))}
-      </div>
+      </Section>
+      <SaveBar
+        dirty={dirty}
+        saving={save.isPending}
+        onSave={() => save.mutate()}
+        onDiscard={() => { if (data) setFlags(data); setDirty(false); }}
+        saveLabel="Save flags"
+      />
     </div>
   );
 }

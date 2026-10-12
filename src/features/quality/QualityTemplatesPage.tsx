@@ -1,368 +1,311 @@
-import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useEffect, useState, type FormEvent } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { BookTemplate, Plus, RefreshCw, Tags, X } from 'lucide-react';
+import { BookTemplate, ClipboardCheck, Plus, RefreshCw, Tags, X } from 'lucide-react';
 import { qualityAdminApi } from '../../services/admin';
 import { qualityApi } from '../../services/operations';
+import type { InspectionTemplate } from '../../types/api.extended';
 import {
-  ComposeSection, EmptyRow, ErpButton, ErpDataTable, ErpInput, ErpPageHeader, ErpSelect,
-  ErpStatusBadge, ErpTabs, StatTile, TabShell, TabToolbar, btnSm, fieldLabel,
+  Badge, Button, Drawer, EmptyRow, ErpDataTable, ErpInput, ErpSelect, Field, FilterBar, IconButton, PageHeader, Section,
+  StatusBadge, TableSkeleton, Tabs, humanizeStatus, toast,
 } from '../../components/erp';
-import { AlertBanner } from '../../components/AlertBanner';
-import { SuccessBanner } from '../users/SuccessBanner';
 import { useAuth } from '../../app/providers/AuthProvider';
 import { typeLabel } from './qualityUtils';
+import { QueryErrorRow } from '../production/QueryErrorRow';
 
 type TabId = 'templates' | 'categories';
+type Errors = Record<string, string>;
 
-export function QualityTemplatesPage() {
+function useInvalidate() {
   const qc = useQueryClient();
-  const { permissions } = useAuth();
-  const canConfigure = permissions.includes('*') || permissions.includes('quality.configure');
-
-  const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
-  const [tab, setTab] = useState<TabId>('templates');
-  const [showTemplateForm, setShowTemplateForm] = useState(false);
-  const [showCategoryForm, setShowCategoryForm] = useState(false);
-  const [typeFilter, setTypeFilter] = useState('');
-
-  const [templateForm, setTemplateForm] = useState({
-    name: '',
-    inspectionType: 'INCOMING',
-    checklistItem: '',
-    checklist: [] as { item: string; required: boolean }[],
-  });
-
-  const [categoryForm, setCategoryForm] = useState({
-    code: '',
-    name: '',
-    severity: 'MINOR',
-  });
-
-  const showSuccess = (msg: string) => {
-    setSuccess(msg);
-    setError('');
-    setTimeout(() => setSuccess(''), 4000);
-  };
-
-  const invalidate = () => {
+  return () => {
     qc.invalidateQueries({ queryKey: ['inspection-templates'] });
     qc.invalidateQueries({ queryKey: ['defect-categories'] });
   };
+}
 
-  const { data: catalog } = useQuery({ queryKey: ['quality-catalog'], queryFn: () => qualityApi.catalog() });
+function severityTone(s?: string) {
+  return s === 'CRITICAL' ? 'danger' as const : s === 'MAJOR' ? 'warning' as const : 'neutral' as const;
+}
 
-  const { data: templates = [], isFetching: templatesFetching, refetch: refetchTemplates } = useQuery({
-    queryKey: ['inspection-templates', typeFilter],
-    queryFn: () => qualityAdminApi.listTemplates(typeFilter || undefined),
-  });
+function TemplateFormDrawer({ open, onClose, types }: { open: boolean; onClose: () => void; types: string[] }) {
+  const invalidate = useInvalidate();
+  const [name, setName] = useState('');
+  const [inspectionType, setInspectionType] = useState('INCOMING');
+  const [item, setItem] = useState('');
+  const [checklist, setChecklist] = useState<{ item: string; required: boolean }[]>([]);
+  const [errors, setErrors] = useState<Errors>({});
+  useEffect(() => { if (open) { setName(''); setInspectionType('INCOMING'); setItem(''); setChecklist([]); setErrors({}); } }, [open]);
 
-  const { data: categories = [], isFetching: categoriesFetching, refetch: refetchCategories } = useQuery({
-    queryKey: ['defect-categories'],
-    queryFn: qualityAdminApi.listDefectCategories,
-  });
-
-  const createTemplate = useMutation({
+  const save = useMutation({
     mutationFn: () => qualityAdminApi.createTemplate({
-      name: templateForm.name.trim(),
-      inspectionType: templateForm.inspectionType,
-      checklist: templateForm.checklist.length ? templateForm.checklist : undefined,
+      name: name.trim(),
+      inspectionType,
+      checklist: checklist.length ? checklist : undefined,
       isActive: true,
     }),
-    onSuccess: (t) => {
-      setTemplateForm({ name: '', inspectionType: 'INCOMING', checklistItem: '', checklist: [] });
-      setShowTemplateForm(false);
-      showSuccess(`Template "${t.name}" created`);
-      invalidate();
-    },
-    onError: (e: Error) => setError(e.message),
+    onSuccess: (t) => { toast.success(`Template "${t.name}" created`); invalidate(); onClose(); },
   });
 
-  const createCategory = useMutation({
-    mutationFn: () => qualityAdminApi.createDefectCategory({
-      code: categoryForm.code.trim().toUpperCase(),
-      name: categoryForm.name.trim(),
-      severity: categoryForm.severity,
-    }),
-    onSuccess: (c) => {
-      setCategoryForm({ code: '', name: '', severity: 'MINOR' });
-      setShowCategoryForm(false);
-      showSuccess(`Category ${c.code} created`);
-      invalidate();
-    },
-    onError: (e: Error) => setError(e.message),
-  });
-
-  const addChecklistItem = () => {
-    const item = templateForm.checklistItem.trim();
-    if (!item) return;
-    setTemplateForm((f) => ({
-      ...f,
-      checklist: [...f.checklist, { item, required: true }],
-      checklistItem: '',
-    }));
+  const addItem = () => {
+    const v = item.trim();
+    if (!v) return;
+    setChecklist((c) => [...c, { item: v, required: true }]);
+    setItem('');
   };
 
-  const isFetching = templatesFetching || categoriesFetching;
-
-  const goTab = (id: TabId) => {
-    setTab(id);
-    setShowTemplateForm(false);
-    setShowCategoryForm(false);
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    const next: Errors = {};
+    if (!name.trim()) next.name = 'Give the template a name, e.g. "Fabric incoming check".';
+    setErrors(next);
+    if (!Object.keys(next).length) save.mutate();
   };
 
   return (
-    <div className="space-y-3">
-      <AlertBanner message={error} onDismiss={() => setError('')} />
-      <SuccessBanner message={success} onDismiss={() => setSuccess('')} />
+    <Drawer
+      open={open}
+      onClose={onClose}
+      size="md"
+      closeOnOverlayClick={false}
+      title="New inspection template"
+      description="A checklist inspectors follow for one inspection type."
+      footer={(
+        <>
+          <Button variant="secondary" onClick={onClose}>Cancel</Button>
+          <Button type="submit" form="template-form" loading={save.isPending}>Save template</Button>
+        </>
+      )}
+    >
+      <form id="template-form" onSubmit={submit} className="space-y-4" noValidate>
+        <Field label="Name" required error={errors.name}>
+          <ErpInput value={name} onChange={(e) => setName(e.target.value)} />
+        </Field>
+        <Field label="Inspection type">
+          <ErpSelect value={inspectionType} onChange={(e) => setInspectionType(e.target.value)}>
+            {types.map((t) => <option key={t} value={t}>{typeLabel(t)}</option>)}
+          </ErpSelect>
+        </Field>
+        <Field label="Checklist items" hint="Press Enter to add each item.">
+          <div className="flex gap-2">
+            <ErpInput
+              value={item}
+              onChange={(e) => setItem(e.target.value)}
+              placeholder="e.g. Shade matches approved swatch"
+              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addItem(); } }}
+            />
+            <Button variant="secondary" onClick={addItem} disabled={!item.trim()}>Add</Button>
+          </div>
+        </Field>
+        {checklist.length > 0 && (
+          <ol className="divide-y divide-[var(--erp-border)] rounded-lg border border-[var(--erp-border)]">
+            {checklist.map((c, i) => (
+              <li key={i} className="flex items-center justify-between gap-2 px-3 py-2 text-sm">
+                <span><span className="mr-2 text-erp-text-muted">{i + 1}.</span>{c.item}</span>
+                <IconButton aria-label={`Remove ${c.item}`} size="sm" onClick={() => setChecklist((l) => l.filter((_, j) => j !== i))}><X size={14} /></IconButton>
+              </li>
+            ))}
+          </ol>
+        )}
+      </form>
+    </Drawer>
+  );
+}
 
-      <ErpPageHeader
-        title="Templates and defect categories"
-        subtitle={(
+function CategoryFormDrawer({ open, onClose, severities }: { open: boolean; onClose: () => void; severities: string[] }) {
+  const invalidate = useInvalidate();
+  const [form, setForm] = useState({ code: '', name: '', severity: 'MINOR' });
+  const [errors, setErrors] = useState<Errors>({});
+  useEffect(() => { if (open) { setForm({ code: '', name: '', severity: 'MINOR' }); setErrors({}); } }, [open]);
+  const save = useMutation({
+    mutationFn: () => qualityAdminApi.createDefectCategory({ code: form.code.trim().toUpperCase(), name: form.name.trim(), severity: form.severity }),
+    onSuccess: (c) => { toast.success(`Category ${c.code} created`); invalidate(); onClose(); },
+  });
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    const next: Errors = {};
+    if (!form.code.trim()) next.code = 'Enter a short code, e.g. STAIN.';
+    if (!form.name.trim()) next.name = 'Enter the category name.';
+    setErrors(next);
+    if (!Object.keys(next).length) save.mutate();
+  };
+  return (
+    <Drawer
+      open={open}
+      onClose={onClose}
+      size="sm"
+      closeOnOverlayClick={false}
+      title="New defect category"
+      description="Shown when inspectors log defects."
+      footer={(
+        <>
+          <Button variant="secondary" onClick={onClose}>Cancel</Button>
+          <Button type="submit" form="category-form" loading={save.isPending}>Save category</Button>
+        </>
+      )}
+    >
+      <form id="category-form" onSubmit={submit} className="space-y-4" noValidate>
+        <Field label="Code" required error={errors.code}>
+          <ErpInput className="font-mono uppercase" value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} placeholder="STAIN" />
+        </Field>
+        <Field label="Name" required error={errors.name}>
+          <ErpInput value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Fabric stain" />
+        </Field>
+        <Field label="Default severity">
+          <ErpSelect value={form.severity} onChange={(e) => setForm({ ...form, severity: e.target.value })}>
+            {severities.map((s) => <option key={s} value={s}>{humanizeStatus(s)}</option>)}
+          </ErpSelect>
+        </Field>
+      </form>
+    </Drawer>
+  );
+}
+
+function TemplateDetailDrawer({ template, onClose }: { template: InspectionTemplate | null; onClose: () => void }) {
+  if (!template) return null;
+  const items = template.checklist ?? [];
+  return (
+    <Drawer
+      open
+      onClose={onClose}
+      size="sm"
+      title={template.name}
+      description={`${typeLabel(template.inspectionType ?? '')} inspection`}
+      headerExtra={<div className="mt-2"><StatusBadge status={template.isActive === false ? 'INACTIVE' : 'ACTIVE'} /></div>}
+      footer={<Button variant="secondary" onClick={onClose}>Close</Button>}
+    >
+      {items.length === 0 ? (
+        <p className="text-sm text-erp-text-muted">This template has no checklist items.</p>
+      ) : (
+        <ol className="space-y-2">
+          {items.map((c, i) => (
+            <li key={i} className="flex items-start gap-3 text-sm">
+              <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--erp-surface-muted)] text-xs font-semibold">{i + 1}</span>
+              <span className="pt-0.5">{c.item}{c.required !== false && <Badge tone="neutral" dot={false} className="ml-2">Required</Badge>}</span>
+            </li>
+          ))}
+        </ol>
+      )}
+    </Drawer>
+  );
+}
+
+export function QualityTemplatesPage() {
+  const navigate = useNavigate();
+  const { permissions } = useAuth();
+  const canConfigure = permissions.includes('*') || permissions.includes('quality.configure');
+
+  const [tab, setTab] = useState<TabId>('templates');
+  const [typeFilter, setTypeFilter] = useState('');
+  const [creating, setCreating] = useState<TabId | null>(null);
+  const [selected, setSelected] = useState<InspectionTemplate | null>(null);
+
+  const { data: catalog } = useQuery({ queryKey: ['quality-catalog'], queryFn: () => qualityApi.catalog() });
+  const templatesQ = useQuery({
+    queryKey: ['inspection-templates', typeFilter],
+    queryFn: () => qualityAdminApi.listTemplates(typeFilter || undefined),
+  });
+  const categoriesQ = useQuery({ queryKey: ['defect-categories'], queryFn: qualityAdminApi.listDefectCategories });
+  const templates = templatesQ.data ?? [];
+  const categories = categoriesQ.data ?? [];
+  const types = catalog?.templateTypes ?? catalog?.inspectionTypes ?? ['INCOMING', 'IN_PROCESS', 'FINAL', 'SAMPLING'];
+  const severities = catalog?.defectSeverities ?? ['MINOR', 'MAJOR', 'CRITICAL'];
+
+  return (
+    <>
+      <PageHeader
+        title="Inspection templates"
+        description="Standard checklists and the defect categories inspectors log against."
+        secondaryActions={(
           <>
-            Standardize inspection checklists and defect taxonomy.
-            <Link to="/quality/inspections" className="ml-2 text-[var(--erp-accent)]">Inspections -&gt;</Link>
+            <IconButton aria-label="Refresh" loading={templatesQ.isFetching || categoriesQ.isFetching} onClick={() => { templatesQ.refetch(); categoriesQ.refetch(); }}>
+              <RefreshCw size={16} />
+            </IconButton>
+            <Button variant="secondary" icon={<ClipboardCheck size={16} />} onClick={() => navigate('/quality/inspections')}>Inspections</Button>
           </>
         )}
-        actions={(
-          <ErpButton
-            variant="secondary"
-            className={btnSm}
-            onClick={() => { refetchTemplates(); refetchCategories(); }}
-            disabled={isFetching}
-          >
-            <RefreshCw className={`mr-1 inline h-3.5 w-3.5 ${isFetching ? 'animate-spin' : ''}`} />
-            Refresh
-          </ErpButton>
-        )}
+        primaryAction={canConfigure ? (
+          <Button icon={<Plus size={16} />} onClick={() => setCreating(tab)}>{tab === 'templates' ? 'New template' : 'New category'}</Button>
+        ) : undefined}
       />
 
-      <div className="grid grid-cols-1 overflow-hidden rounded-lg border border-[var(--erp-border)] bg-[var(--erp-border)] sm:grid-cols-2">
-        <StatTile icon={BookTemplate} label="Templates" value={templates.length} onClick={() => goTab('templates')} />
-        <StatTile icon={Tags} label="Defect categories" value={categories.length} onClick={() => goTab('categories')} />
-      </div>
-
-      <TabShell
-        tabs={(
-          <ErpTabs
+      <Section flush>
+        <div className="px-3">
+          <Tabs
+            ariaLabel="Quality setup"
             tabs={[
-              { id: 'templates', label: `Templates (${templates.length})` },
-              { id: 'categories', label: `Categories (${categories.length})` },
+              { id: 'templates', label: 'Templates', count: templatesQ.data ? templates.length : undefined },
+              { id: 'categories', label: 'Defect categories', count: categoriesQ.data ? categories.length : undefined },
             ]}
             active={tab}
-            onChange={(id) => goTab(id as TabId)}
+            onChange={(id) => setTab(id as TabId)}
           />
-        )}
-      >
+        </div>
+
         {tab === 'templates' && (
           <>
-            {canConfigure && showTemplateForm && (
-              <ComposeSection title="New inspection template" hint="Add checklist items, then save. Used when creating inspections of this type.">
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <div>
-                    <label className={fieldLabel}>Name</label>
-                    <ErpInput className="!py-1.5 text-[12px]" value={templateForm.name} onChange={(e) => setTemplateForm((f) => ({ ...f, name: e.target.value }))} />
-                  </div>
-                  <div>
-                    <label className={fieldLabel}>Inspection type</label>
-                    <ErpSelect
-                      className="!py-1.5 text-[12px]"
-                      value={templateForm.inspectionType}
-                      onChange={(e) => setTemplateForm((f) => ({ ...f, inspectionType: e.target.value }))}
-                    >
-                      {(catalog?.templateTypes ?? ['INCOMING', 'IN_PROCESS', 'FINAL', 'SAMPLING']).map((t) => (
-                        <option key={t} value={t}>{typeLabel(t)}</option>
-                      ))}
-                    </ErpSelect>
-                  </div>
-                  <div className="sm:col-span-2">
-                    <label className={fieldLabel}>Checklist items</label>
-                    <div className="flex gap-2">
-                      <ErpInput
-                        className="!py-1.5 text-[12px]"
-                        value={templateForm.checklistItem}
-                        onChange={(e) => setTemplateForm((f) => ({ ...f, checklistItem: e.target.value }))}
-                        placeholder="e.g. Visual inspection"
-                        onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), addChecklistItem())}
-                      />
-                      <ErpButton variant="secondary" className={btnSm} onClick={addChecklistItem}>Add</ErpButton>
-                    </div>
-                    {templateForm.checklist.length > 0 && (
-                      <ul className="mt-2 space-y-1 text-[12px] text-erp-text-muted">
-                        {templateForm.checklist.map((c, i) => (
-                          <li key={i} className="flex justify-between gap-2">
-                            <span>{c.item}</span>
-                            <button
-                              type="button"
-                              className="text-red-500 hover:underline"
-                              onClick={() => setTemplateForm((f) => ({
-                                ...f,
-                                checklist: f.checklist.filter((_, j) => j !== i),
-                              }))}
-                            >
-                              Remove
-                            </button>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-                </div>
-                <div className="mt-3 flex gap-2">
-                  <ErpButton
-                    className={btnSm}
-                    disabled={!templateForm.name.trim() || createTemplate.isPending}
-                    onClick={() => createTemplate.mutate()}
-                  >
-                    {createTemplate.isPending ? 'Saving...' : 'Save template'}
-                  </ErpButton>
-                  <ErpButton variant="secondary" className={btnSm} onClick={() => setShowTemplateForm(false)}>
-                    Cancel
-                  </ErpButton>
-                </div>
-              </ComposeSection>
-            )}
-
-            <TabToolbar title="Inspection templates" hint="Filter by inspection type.">
-              <div className="w-44">
-                <label className={fieldLabel}>Type</label>
-                <ErpSelect className="!py-1.5 text-[12px]" value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
+            <FilterBar
+              filters={(
+                <ErpSelect inputSize="sm" aria-label="Inspection type" value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
                   <option value="">All types</option>
-                  {(catalog?.templateTypes ?? catalog?.inspectionTypes ?? ['INCOMING', 'IN_PROCESS', 'FINAL']).map((t) => (
-                    <option key={t} value={t}>{typeLabel(t)}</option>
-                  ))}
+                  {types.map((t) => <option key={t} value={t}>{typeLabel(t)}</option>)}
                 </ErpSelect>
-              </div>
-              {canConfigure && (
-                <ErpButton className={btnSm} onClick={() => setShowTemplateForm((v) => !v)}>
-                  {showTemplateForm ? <X className="mr-1 inline h-3.5 w-3.5" /> : <Plus className="mr-1 inline h-3.5 w-3.5" />}
-                  {showTemplateForm ? 'Cancel' : 'Add'}
-                </ErpButton>
               )}
-            </TabToolbar>
-
-            <div className="overflow-x-auto">
-              <ErpDataTable className="w-full min-w-[560px] text-[12px]">
-                <thead>
-                  <tr>
-                    <th>Name</th>
-                    <th>Type</th>
-                    <th className="text-right">Checklist</th>
-                    <th>Active</th>
+              onClear={typeFilter ? () => setTypeFilter('') : undefined}
+            />
+            <ErpDataTable className="min-w-[560px]">
+              <thead><tr><th>Name</th><th>Type</th><th className="erp-num">Checklist items</th><th>Status</th></tr></thead>
+              <tbody>
+                {templatesQ.isLoading ? <TableSkeleton asRows rows={4} columns={4} /> : templatesQ.isError ? <QueryErrorRow colSpan={4} error={templatesQ.error} onRetry={() => templatesQ.refetch()} /> : templates.length === 0 ? (
+                  <EmptyRow
+                    colSpan={4}
+                    icon={BookTemplate}
+                    title={typeFilter ? 'No templates for this type' : 'No templates yet'}
+                    action={canConfigure && !typeFilter ? <Button size="sm" icon={<Plus size={14} />} onClick={() => setCreating('templates')}>New template</Button> : undefined}
+                  >
+                    {typeFilter ? undefined : 'Templates give inspectors the same checklist every time.'}
+                  </EmptyRow>
+                ) : templates.map((t) => (
+                  <tr key={t._id} className="erp-row-clickable" onClick={() => setSelected(t)}>
+                    <td className="erp-cell-primary">{t.name}</td>
+                    <td>{typeLabel(t.inspectionType ?? '')}</td>
+                    <td className="erp-num">{t.checklist?.length ?? 0}</td>
+                    <td><StatusBadge status={t.isActive === false ? 'INACTIVE' : 'ACTIVE'} /></td>
                   </tr>
-                </thead>
-                <tbody>
-                  {templates.map((t) => (
-                    <tr key={t._id}>
-                      <td className="font-medium">{t.name}</td>
-                      <td>{typeLabel(t.inspectionType ?? '')}</td>
-                      <td className="text-right text-erp-text-muted">{t.checklist?.length ?? 0} items</td>
-                      <td>
-                        <ErpStatusBadge status={t.isActive === false ? 'INACTIVE' : 'ACTIVE'} />
-                      </td>
-                    </tr>
-                  ))}
-                  {templates.length === 0 && (
-                    <EmptyRow colSpan={4}>No templates</EmptyRow>
-                  )}
-                </tbody>
-              </ErpDataTable>
-            </div>
+                ))}
+              </tbody>
+            </ErpDataTable>
           </>
         )}
 
         {tab === 'categories' && (
-          <>
-            {canConfigure && showCategoryForm && (
-              <ComposeSection title="New defect category" hint="Code and name appear when recording defects on an inspection.">
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <div>
-                    <label className={fieldLabel}>Code</label>
-                    <ErpInput
-                      className="!py-1.5 font-mono text-[12px]"
-                      value={categoryForm.code}
-                      onChange={(e) => setCategoryForm((f) => ({ ...f, code: e.target.value }))}
-                      placeholder="STAIN"
-                    />
-                  </div>
-                  <div>
-                    <label className={fieldLabel}>Severity default</label>
-                    <ErpSelect
-                      className="!py-1.5 text-[12px]"
-                      value={categoryForm.severity}
-                      onChange={(e) => setCategoryForm((f) => ({ ...f, severity: e.target.value }))}
-                    >
-                      {(catalog?.defectSeverities ?? ['MINOR', 'MAJOR', 'CRITICAL']).map((s) => (
-                        <option key={s} value={s}>{s}</option>
-                      ))}
-                    </ErpSelect>
-                  </div>
-                  <div className="sm:col-span-2">
-                    <label className={fieldLabel}>Name</label>
-                    <ErpInput
-                      className="!py-1.5 text-[12px]"
-                      value={categoryForm.name}
-                      onChange={(e) => setCategoryForm((f) => ({ ...f, name: e.target.value }))}
-                      placeholder="Fabric stain"
-                    />
-                  </div>
-                </div>
-                <div className="mt-3 flex gap-2">
-                  <ErpButton
-                    className={btnSm}
-                    disabled={!categoryForm.code.trim() || !categoryForm.name.trim() || createCategory.isPending}
-                    onClick={() => createCategory.mutate()}
-                  >
-                    {createCategory.isPending ? 'Saving...' : 'Save category'}
-                  </ErpButton>
-                  <ErpButton variant="secondary" className={btnSm} onClick={() => setShowCategoryForm(false)}>
-                    Cancel
-                  </ErpButton>
-                </div>
-              </ComposeSection>
-            )}
-
-            <TabToolbar title="Defect categories" hint="Used when logging defects during inspection.">
-              {canConfigure && (
-                <ErpButton className={btnSm} onClick={() => setShowCategoryForm((v) => !v)}>
-                  {showCategoryForm ? <X className="mr-1 inline h-3.5 w-3.5" /> : <Plus className="mr-1 inline h-3.5 w-3.5" />}
-                  {showCategoryForm ? 'Cancel' : 'Add'}
-                </ErpButton>
-              )}
-            </TabToolbar>
-
-            <div className="overflow-x-auto">
-              <ErpDataTable className="w-full min-w-[480px] text-[12px]">
-                <thead>
-                  <tr>
-                    <th>Code</th>
-                    <th>Name</th>
-                    <th>Severity</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {categories.map((c) => (
-                    <tr key={c._id}>
-                      <td className="whitespace-nowrap font-mono">{c.code}</td>
-                      <td>{c.name}</td>
-                      <td>
-                        <ErpStatusBadge
-                          status={c.severity === 'CRITICAL' ? 'REJECTED' : c.severity === 'MAJOR' ? 'IN_REVIEW' : 'PENDING'}
-                          label={c.severity || 'MINOR'}
-                        />
-                      </td>
-                    </tr>
-                  ))}
-                  {categories.length === 0 && (
-                    <EmptyRow colSpan={3}>No categories</EmptyRow>
-                  )}
-                </tbody>
-              </ErpDataTable>
-            </div>
-          </>
+          <ErpDataTable className="min-w-[480px]">
+            <thead><tr><th>Code</th><th>Name</th><th>Default severity</th></tr></thead>
+            <tbody>
+              {categoriesQ.isLoading ? <TableSkeleton asRows rows={4} columns={3} /> : categoriesQ.isError ? <QueryErrorRow colSpan={3} error={categoriesQ.error} onRetry={() => categoriesQ.refetch()} /> : categories.length === 0 ? (
+                <EmptyRow
+                  colSpan={3}
+                  icon={Tags}
+                  title="No defect categories yet"
+                  action={canConfigure ? <Button size="sm" icon={<Plus size={14} />} onClick={() => setCreating('categories')}>New category</Button> : undefined}
+                >
+                  Categories keep defect reporting consistent across inspectors.
+                </EmptyRow>
+              ) : categories.map((c) => (
+                <tr key={c._id}>
+                  <td className="erp-cell-primary whitespace-nowrap font-mono">{c.code}</td>
+                  <td>{c.name}</td>
+                  <td><Badge tone={severityTone(c.severity)}>{humanizeStatus(c.severity || 'MINOR')}</Badge></td>
+                </tr>
+              ))}
+            </tbody>
+          </ErpDataTable>
         )}
-      </TabShell>
-    </div>
+      </Section>
+
+      <TemplateFormDrawer open={creating === 'templates'} onClose={() => setCreating(null)} types={types} />
+      <CategoryFormDrawer open={creating === 'categories'} onClose={() => setCreating(null)} severities={severities} />
+      <TemplateDetailDrawer template={selected} onClose={() => setSelected(null)} />
+    </>
   );
 }

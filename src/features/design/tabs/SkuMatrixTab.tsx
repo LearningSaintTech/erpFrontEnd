@@ -1,105 +1,93 @@
-﻿import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useParams } from 'react-router-dom';
+import { RefreshCw } from 'lucide-react';
 import { designApi } from '../../../services/manufacturing';
 import { useDesignForm } from '../DesignFormContext';
-import { labelClass } from '../designFormUtils';
+import { Button, ErpDataTable, Field, InfoBanner, Section } from '../../../components/erp';
 import { InventoryCodeChips } from '../../../components/InventoryCodeSelect';
+import { DesignFormSection } from '../components/DesignFormSection';
 
 export function SkuMatrixTab() {
   const { id } = useParams<{ id: string }>();
   const qc = useQueryClient();
   const { form, setForm, design, editable } = useDesignForm();
   const sizeLabels = form.sizeChartData?.sizeLabels || [];
+  const colours = form.colors.filter((c) => c.name.trim());
 
   const setSizeLabels = (labels: string[]) =>
     setForm((f) => ({ ...f, sizeChartData: { ...f.sizeChartData, sizeLabels: labels } }));
 
   const regenerate = useMutation({
     mutationFn: () => designApi.regenerateSkus(id!),
+    meta: { successMessage: 'SKU codes regenerated' },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['design', id] });
     },
   });
 
-  const sizeRangeEditor = (
-    <div className="space-y-2 rounded border border-[var(--erp-border)] p-3">
-      <span className={labelClass()}>Size range</span>
-      <InventoryCodeChips
-        type="SIZE"
-        values={sizeLabels}
-        disabled={!editable}
-        onChange={setSizeLabels}
-      />
-      <p className="text-xs text-erp-text-muted">
-        Sizes this style will be offered in. Graded measurements are filled by the pattern master.
-      </p>
-    </div>
-  );
-
-  if (!design) {
-    return (
-      <div className="space-y-4">
-        {sizeRangeEditor}
-        <p className="text-sm text-erp-text-muted">Save the design first to preview generated SKUs.</p>
-      </div>
-    );
-  }
-
   return (
     <div className="space-y-4">
-      {sizeRangeEditor}
+      <DesignFormSection
+        title="Size range"
+        hint="The sizes this style is offered in. The pattern master fills in graded measurements after release."
+        columns={1}
+      >
+        <Field
+          label="Sizes"
+          required
+          htmlFor="design-sizes"
+          hint={editable && !sizeLabels.length ? 'Add at least one size — it is required before you submit.' : undefined}
+        >
+          <InventoryCodeChips type="SIZE" values={sizeLabels} disabled={!editable} onChange={setSizeLabels} />
+        </Field>
+      </DesignFormSection>
 
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-sm text-erp-text-secondary">
-          Style <span className="font-mono">{design.styleNumber || '—'}</span>
-          {design.skuCodeInputs?.styleGender && (
-            <span className="ml-2 text-erp-text-muted">({design.skuCodeInputs.styleGender})</span>
-          )}
-        </p>
-        {editable && id && (
-          <button
-            type="button"
-            onClick={() => regenerate.mutate()}
-            disabled={regenerate.isPending}
-            className="rounded border px-3 py-1.5 text-sm hover:bg-transparent disabled:opacity-50"
-          >
-            {regenerate.isPending ? 'Regenerating…' : 'Regenerate SKUs'}
-          </button>
+      <Section
+        title="SKU preview"
+        description={(
+          <>
+            Code format: style gender – product type – fit – colour – size
+            {design?.styleNumber && <> · Style <span className="font-mono">{design.styleNumber}</span></>}
+          </>
         )}
-      </div>
-
-      {!form.colors.filter((c) => c.name.trim()).length || !sizeLabels.length ? (
-        <p className="text-sm text-amber-700">Add colors and a size range to generate SKUs.</p>
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="erp-data-table min-w-full">
+        actions={design && editable && id ? (
+          <Button size="sm" variant="secondary" icon={<RefreshCw size={14} />} loading={regenerate.isPending} onClick={() => regenerate.mutate()}>
+            Regenerate codes
+          </Button>
+        ) : undefined}
+        flush={!!design && !!colours.length && !!sizeLabels.length}
+      >
+        {!design ? (
+          <p className="text-sm text-erp-text-muted">Save the draft to preview the SKU codes.</p>
+        ) : !colours.length || !sizeLabels.length ? (
+          <InfoBanner inset={false} tone="muted">Add colours and a size range to see the SKU matrix.</InfoBanner>
+        ) : (
+          <ErpDataTable>
             <thead>
-              <tr className="border-b text-left text-erp-text-secondary">
-                <th className="px-2 py-2">Color</th>
-                {sizeLabels.map((s) => (
-                  <th key={s} className="px-2 py-2 font-mono">{s}</th>
-                ))}
+              <tr>
+                <th>Colour</th>
+                {sizeLabels.map((s) => <th key={s} className="font-mono">{s}</th>)}
               </tr>
             </thead>
             <tbody>
-              {form.colors.filter((c) => c.name.trim()).map((color, i) => (
-                <tr key={i} className="border-b">
-                  <td className="px-2 py-2">{color.name}</td>
+              {colours.map((color, i) => (
+                <tr key={i}>
+                  <td>
+                    <span className="inline-flex items-center gap-2">
+                      <span className="h-3 w-3 rounded-sm border border-[var(--erp-border)]" style={{ background: color.hexCode || 'transparent' }} aria-hidden />
+                      {color.name}
+                    </span>
+                  </td>
                   {sizeLabels.map((size) => {
                     const sku = color.sizes?.find((r) => r.size === size)?.sku;
-                    return (
-                      <td key={size} className="px-2 py-2 font-mono text-xs text-erp-text-secondary">
-                        {sku || '—'}
-                      </td>
-                    );
+                    return <td key={size} className="font-mono text-xs text-erp-text-secondary">{sku || '—'}</td>;
                   })}
                 </tr>
               ))}
             </tbody>
-          </table>
-        </div>
-      )}
-      <p className={labelClass()}>Format: styleGender-productType-fitType-colour-size (hyphenated)</p>
+          </ErpDataTable>
+        )}
+      </Section>
     </div>
   );
 }

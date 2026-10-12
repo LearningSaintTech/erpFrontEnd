@@ -1,66 +1,194 @@
-import type { ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import type { LucideIcon } from 'lucide-react';
+import {
+  AlertTriangle, ArrowDownRight, ArrowUpRight, ChevronLeft, ChevronRight, Info, X, type LucideIcon,
+} from 'lucide-react';
 import { ErpButton } from './ErpButton';
+import { EmptyState } from './DataDisplay';
 
-export const fieldLabel = 'mb-0.5 block text-[11px] font-medium text-erp-text-muted';
-export const btnSm = '!px-2.5 !py-1.5 text-[11px]';
+/** Form label class for raw <label>/<span> (12px, medium, secondary). Prefer <Field>. */
+export const fieldLabel = 'mb-1 block text-xs font-medium text-erp-text-secondary';
+/** Small (32px) button override for legacy ErpButton usages. Prefer `size="sm"`. */
+export const btnSm = '!min-h-8 !px-2.5 !text-[13px] !gap-1';
 
-export function StatTile({
-  icon: Icon,
-  label,
-  value,
-  hint,
-  onClick,
-  highlight,
-}: {
-  icon: LucideIcon;
+/* ─────────────────────────────── StatTile ───────────────────────────────── */
+
+export interface StatTileProps {
+  icon?: LucideIcon;
   label: string;
   value: ReactNode;
-  hint?: string;
+  /** Secondary line under the value, e.g. "12 overdue". */
+  hint?: ReactNode;
+  /** Makes the tile a button (e.g. filter the list below). */
   onClick?: () => void;
+  /** Legacy emphasis. 'accent' = selected/primary, 'warn' = needs attention. */
   highlight?: 'accent' | 'warn';
-}) {
+  /** Pressed state when the tile acts as a filter. */
+  active?: boolean;
+  /** Change indicator, e.g. { value: '+12%', direction: 'up' }. */
+  delta?: { value: ReactNode; direction: 'up' | 'down' | 'flat'; /** default true */ upIsGood?: boolean };
+  className?: string;
+}
+
+/**
+ * KPI tile: label · big value · optional hint/delta · optional icon.
+ * Put several in a <KpiGrid> (they become individual cards there). Inside legacy
+ * "strip" grids (bg-border, no gap) they render flush as before.
+ */
+export function StatTile({
+  icon: Icon, label, value, hint, onClick, highlight, active, delta, className = '',
+}: StatTileProps) {
+  const warn = highlight === 'warn';
+  const selected = active || highlight === 'accent';
   const cls = [
-    'flex min-w-0 items-start gap-2.5 bg-[var(--erp-surface)] px-3 py-2.5 text-left',
-    onClick ? 'cursor-pointer hover:bg-[var(--erp-row-hover)]' : '',
-    highlight === 'accent' ? 'ring-1 ring-inset ring-[var(--erp-accent)]/35' : '',
-    highlight === 'warn' ? 'ring-1 ring-inset ring-amber-500/35' : '',
-  ].join(' ');
+    'erp-stat-tile group relative flex min-w-0 items-start justify-between gap-3 bg-[var(--erp-surface)] px-4 py-3.5 text-left',
+    onClick ? 'cursor-pointer transition-colors hover:bg-[var(--erp-surface-muted)] focus-visible:z-[1]' : '',
+    selected ? 'erp-stat-tile-selected' : '',
+    className,
+  ].filter(Boolean).join(' ');
+
+  const deltaGood = delta
+    ? delta.direction === 'flat' ? null : (delta.direction === 'up') === (delta.upIsGood ?? true)
+    : null;
+
   const inner = (
     <>
-      <Icon
-        size={15}
-        className={`mt-0.5 shrink-0 ${highlight === 'warn' ? 'text-amber-500' : 'text-[var(--erp-accent)]'}`}
-      />
       <div className="min-w-0">
-        <p className="text-[10px] font-medium uppercase tracking-wide text-erp-text-muted">{label}</p>
-        <p className={`text-base font-semibold leading-tight ${highlight === 'warn' ? 'text-amber-700' : 'text-erp-text-primary'}`}>
+        <p className="erp-kpi-label line-clamp-2" title={typeof label === 'string' ? label : undefined}>{label}</p>
+        <p className={`erp-kpi-value mt-1 truncate text-2xl font-semibold leading-8 tracking-tight ${warn ? '!text-[var(--erp-warning-text)]' : ''}`}>
           {value}
         </p>
-        {hint && <p className="mt-0.5 truncate text-[11px] text-erp-text-muted">{hint}</p>}
+        {(hint || delta) && (
+          <p className="mt-1 flex min-w-0 items-center gap-1.5 text-xs text-erp-text-muted">
+            {delta && (
+              <span
+                className={`inline-flex shrink-0 items-center gap-0.5 font-medium ${
+                  deltaGood == null ? 'text-erp-text-muted' : deltaGood ? 'text-[var(--erp-success-text)]' : 'text-[var(--erp-danger-text)]'
+                }`}
+              >
+                {delta.direction === 'up' && <ArrowUpRight size={12} aria-hidden="true" />}
+                {delta.direction === 'down' && <ArrowDownRight size={12} aria-hidden="true" />}
+                {delta.value}
+              </span>
+            )}
+            {hint && <span className="line-clamp-2" title={typeof hint === 'string' ? hint : undefined}>{hint}</span>}
+          </p>
+        )}
       </div>
+      {Icon && (
+        <span
+          className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md ${
+            warn
+              ? 'bg-[var(--erp-warning-bg)] text-[var(--erp-warning-text)]'
+              : 'bg-[var(--erp-accent-subtle)] text-[var(--erp-accent)]'
+          }`}
+          aria-hidden="true"
+        >
+          <Icon size={16} />
+        </span>
+      )}
     </>
   );
+  const title = typeof hint === 'string' ? hint : undefined;
   if (onClick) {
     return (
-      <button type="button" className={cls} onClick={onClick} title={hint}>
+      <button type="button" className={cls} onClick={onClick} title={title} aria-pressed={active ?? undefined}>
         {inner}
       </button>
     );
   }
-  return <div className={cls} title={hint}>{inner}</div>;
+  return <div className={cls} title={title}>{inner}</div>;
 }
+
+/* ─────────────────────────────── Section ────────────────────────────────── */
+
+/**
+ * Card with a header (title, description, actions) and body.
+ *   <Section title="Line items" description="…" actions={<Button size="sm">Add</Button>}>…</Section>
+ */
+export function Section({
+  title, description, actions, children, flush = false, className = '', bodyClassName = '', id,
+}: {
+  title?: ReactNode;
+  description?: ReactNode;
+  actions?: ReactNode;
+  children?: ReactNode;
+  /** No body padding (tables). */
+  flush?: boolean;
+  className?: string;
+  bodyClassName?: string;
+  id?: string;
+}) {
+  return (
+    <section id={id} className={`erp-card overflow-hidden ${className}`.trim()}>
+      {(title || actions) && (
+        <header className="erp-section-header">
+          <div className="min-w-0">
+            {title && <h3 className="erp-section-title">{title}</h3>}
+            {description && <p className="erp-section-description">{description}</p>}
+          </div>
+          {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
+        </header>
+      )}
+      {children != null && (
+        <div className={`${flush ? 'erp-table-wrap' : 'p-4'} ${bodyClassName}`.trim()}>{children}</div>
+      )}
+    </section>
+  );
+}
+
+/* ─────────────────────────────── FilterBar ──────────────────────────────── */
+
+/**
+ * Toolbar above a list: search + filters on the left, "Clear filters", actions on the right.
+ *   <FilterBar
+ *     search={<SearchInput value={q} onChange={setQ} placeholder="Search POs…" />}
+ *     filters={<ErpSelect …/>}
+ *     onClear={hasFilters ? clear : undefined}
+ *     actions={<Button variant="secondary" icon={<Download size={16} />}>Export</Button>} />
+ */
+export function FilterBar({
+  search, filters, actions, onClear, clearLabel = 'Clear filters', className = '', bordered = true,
+}: {
+  search?: ReactNode;
+  filters?: ReactNode;
+  actions?: ReactNode;
+  /** Shown only when provided — pass undefined when no filter is active. */
+  onClear?: () => void;
+  clearLabel?: string;
+  className?: string;
+  /** Bottom hairline (when used as a card header). */
+  bordered?: boolean;
+}) {
+  return (
+    <div
+      role="toolbar"
+      aria-label="Filters"
+      className={`flex flex-wrap items-center gap-2 px-4 py-3 ${bordered ? 'border-b border-[var(--erp-border)]' : ''} ${className}`.trim()}
+    >
+      {search && <div className="w-full min-w-0 sm:w-72">{search}</div>}
+      {filters && <div className="flex min-w-0 flex-wrap items-center gap-2">{filters}</div>}
+      {onClear && (
+        <ErpButton variant="ghost" size="sm" onClick={onClear} icon={<X size={14} />}>
+          {clearLabel}
+        </ErpButton>
+      )}
+      {actions && <div className="ml-auto flex flex-wrap items-center gap-2">{actions}</div>}
+    </div>
+  );
+}
+
+/* ─────────────────────────────── TabShell ───────────────────────────────── */
 
 export function TabShell({ tabs, children }: { tabs?: ReactNode; children: ReactNode }) {
   return (
-    <div className="overflow-hidden rounded-lg border border-[var(--erp-border)] bg-[var(--erp-surface)]">
+    <div className="erp-card min-w-0 overflow-hidden">
       {tabs ? (
-        <div className="px-2 pt-1 [&_.erp-tabs]:mb-0 [&_.erp-tabs]:border-[var(--erp-border)]">
+        <div className="px-3 [&_.erp-tabs]:mb-0 [&_.erp-tabs]:border-[var(--erp-border)]">
           {tabs}
         </div>
       ) : null}
-      <div>{children}</div>
+      <div className="erp-tabshell-body min-w-0">{children}</div>
     </div>
   );
 }
@@ -77,40 +205,83 @@ export function TabToolbar({
   return (
     <div className="flex flex-wrap items-end justify-between gap-3 border-b border-[var(--erp-border)] px-4 py-3">
       <div className="min-w-0 max-w-xl">
-        <h3 className="text-sm font-semibold text-erp-text-primary">{title}</h3>
-        {hint && <p className="mt-0.5 text-[12px] leading-snug text-erp-text-muted">{hint}</p>}
+        <h3 className="text-base font-semibold text-erp-text-primary">{title}</h3>
+        {hint && <p className="mt-0.5 text-[13px] leading-snug text-erp-text-muted">{hint}</p>}
       </div>
       {children ? <div className="flex flex-wrap items-end gap-2">{children}</div> : null}
     </div>
   );
 }
 
+/* ─────────────────────────────── TablePager ─────────────────────────────── */
+
+/**
+ * Pagination bar: "21–40 of 135" (when pageSize is given) or "Page 2 of 7 · 135 results", with prev/next.
+ */
 export function TablePager({
   page,
   totalPages,
   total,
   onPrev,
   onNext,
+  pageSize,
+  itemLabel = 'results',
 }: {
   page: number;
   totalPages: number;
   total: number;
   onPrev: () => void;
   onNext: () => void;
+  pageSize?: number;
+  itemLabel?: string;
 }) {
   if (!totalPages) return null;
+  const fmt = (n: number) => n.toLocaleString();
+  const summary = pageSize
+    ? (
+      <>
+        <span className="font-medium text-erp-text-primary">
+          {fmt(total === 0 ? 0 : (page - 1) * pageSize + 1)}–{fmt(Math.min(page * pageSize, total))}
+        </span>{' '}
+        of {fmt(total)} {itemLabel}
+      </>
+    )
+    : (
+      <>
+        Page <span className="font-medium text-erp-text-primary">{page}</span> of {fmt(totalPages)}
+        {' · '}{fmt(total)} {itemLabel}
+      </>
+    );
   return (
-    <div className="flex items-center justify-between border-t border-[var(--erp-border)] px-4 py-2.5 sm:pr-24">
-      <p className="text-[12px] text-erp-text-muted">
-        Page {page} of {totalPages} · {total} total
-      </p>
-      <div className="flex items-center gap-1.5 sm:mr-16">
-        <ErpButton variant="secondary" className={btnSm} disabled={page <= 1} onClick={onPrev}>Prev</ErpButton>
-        <ErpButton variant="secondary" className={btnSm} disabled={page >= totalPages} onClick={onNext}>Next</ErpButton>
+    <nav className="erp-pager sm:pr-20" aria-label="Pagination">
+      <p className="erp-tabular" aria-live="polite">{summary}</p>
+      <div className="flex items-center gap-1.5">
+        <ErpButton
+          variant="secondary"
+          size="sm"
+          disabled={page <= 1}
+          onClick={onPrev}
+          icon={<ChevronLeft size={16} />}
+          aria-label="Previous page"
+        >
+          <span className="hidden sm:inline">Previous</span>
+        </ErpButton>
+        <ErpButton
+          variant="secondary"
+          size="sm"
+          disabled={page >= totalPages}
+          onClick={onNext}
+          iconRight={<ChevronRight size={16} />}
+          aria-label="Next page"
+        >
+          <span className="hidden sm:inline">Next</span>
+        </ErpButton>
       </div>
-    </div>
+    </nav>
   );
 }
+
+/* ─────────────────────────────── misc helpers ───────────────────────────── */
 
 export function ActionStack({ children }: { children: ReactNode }) {
   return <div className="flex flex-col items-end gap-1">{children}</div>;
@@ -118,40 +289,107 @@ export function ActionStack({ children }: { children: ReactNode }) {
 
 export function TextLink({ to, children }: { to: string; children: ReactNode }) {
   return (
-    <Link to={to} className="whitespace-nowrap text-[12px] font-medium text-[var(--erp-accent)] hover:underline">
+    <Link to={to} className="whitespace-nowrap text-[13px] font-medium text-[var(--erp-accent)] hover:underline">
       {children}
     </Link>
   );
 }
 
+const BANNER_TONE = {
+  muted: 'border-[var(--erp-border)] bg-[var(--erp-surface-muted)] text-erp-text-secondary',
+  accent: 'border-[var(--erp-info-border)] bg-[var(--erp-info-bg)] text-erp-text-primary',
+  info: 'border-[var(--erp-info-border)] bg-[var(--erp-info-bg)] text-erp-text-primary',
+  warn: 'border-[var(--erp-warning-border)] bg-[var(--erp-warning-bg)] text-[#78350f]',
+  success: 'border-[var(--erp-success-border)] bg-[var(--erp-success-bg)] text-[#065f46]',
+  danger: 'border-[var(--erp-danger-border)] bg-[var(--erp-danger-bg)] text-[var(--erp-danger-text)]',
+} as const;
+
+/**
+ * Inline note / "How it works" banner.
+ * `dismissKey` makes it dismissible and remembers the dismissal in localStorage.
+ * `inset={false}` removes the legacy mx-4 mt-3 margins (use inside page flow).
+ */
 export function InfoBanner({
   tone = 'muted',
   icon,
+  title,
   children,
+  dismissKey,
+  inset = true,
+  action,
+  className = '',
 }: {
-  tone?: 'muted' | 'accent' | 'warn';
+  tone?: keyof typeof BANNER_TONE;
   icon?: ReactNode;
+  title?: ReactNode;
   children: ReactNode;
+  dismissKey?: string;
+  inset?: boolean;
+  action?: ReactNode;
+  className?: string;
 }) {
-  const cls =
-    tone === 'warn'
-      ? 'border-amber-500/35 bg-amber-500/10 text-amber-900'
-      : tone === 'accent'
-        ? 'border-[var(--erp-accent)]/30 bg-[var(--erp-accent-muted)] text-erp-text-primary'
-        : 'border-[var(--erp-border)] bg-[var(--erp-surface-muted)] text-erp-text-muted';
+  const storageKey = dismissKey ? `erp-banner-dismissed:${dismissKey}` : '';
+  const [hidden, setHidden] = useState(() => {
+    if (!storageKey) return false;
+    try { return localStorage.getItem(storageKey) === '1'; } catch { return false; }
+  });
+  useEffect(() => {
+    if (!storageKey) return;
+    try { setHidden(localStorage.getItem(storageKey) === '1'); } catch { /* ignore */ }
+  }, [storageKey]);
+  if (hidden) return null;
+
+  const defaultIcon = tone === 'warn' || tone === 'danger'
+    ? <AlertTriangle size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
+    : title ? <Info size={16} className="mt-0.5 shrink-0 text-[var(--erp-info-solid)]" aria-hidden="true" /> : null;
+
   return (
-    <div className={`mx-4 mt-3 flex flex-wrap items-center gap-2 rounded-md border px-3 py-2 text-[12px] leading-snug ${cls}`}>
-      {icon}
-      {children}
+    <div
+      className={`${inset ? 'mx-4 mt-3' : ''} flex items-start gap-2.5 rounded-lg border px-3 py-2.5 text-[13px] leading-snug ${BANNER_TONE[tone]} ${className}`.trim()}
+      role={tone === 'warn' || tone === 'danger' ? 'alert' : undefined}
+    >
+      {icon ?? defaultIcon}
+      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
+        {title && <p className="w-full font-semibold text-erp-text-primary">{title}</p>}
+        {children}
+      </div>
+      {action}
+      {dismissKey && (
+        <button
+          type="button"
+          className="erp-icon-btn erp-btn-sm -my-1 -mr-1.5 !min-h-7 !min-w-7"
+          aria-label="Dismiss"
+          onClick={() => {
+            setHidden(true);
+            try { localStorage.setItem(storageKey, '1'); } catch { /* ignore */ }
+          }}
+        >
+          <X size={14} />
+        </button>
+      )}
     </div>
   );
 }
 
-export function EmptyRow({ colSpan, children }: { colSpan: number; children: ReactNode }) {
+/** Table row spanning all columns that shows an EmptyState. */
+export function EmptyRow({
+  colSpan, children, title, icon, action,
+}: {
+  colSpan: number;
+  /** Legacy: plain message (becomes the title). */
+  children?: ReactNode;
+  title?: ReactNode;
+  icon?: LucideIcon;
+  action?: ReactNode;
+}) {
   return (
-    <tr>
-      <td colSpan={colSpan} className="px-4 py-10 text-center text-[13px] text-erp-text-muted">
-        {children}
+    <tr className="hover:!bg-transparent">
+      <td colSpan={colSpan} className="!h-auto !p-0">
+        {title ? (
+          <EmptyState icon={icon} title={title} description={children} action={action} />
+        ) : (
+          <EmptyState icon={icon} title={children ?? 'Nothing here yet'} action={action} />
+        )}
       </td>
     </tr>
   );
@@ -168,8 +406,8 @@ export function ComposeSection({
 }) {
   return (
     <div className="border-b border-[var(--erp-border)] px-4 py-4">
-      <h4 className="text-[13px] font-semibold text-erp-text-primary">{title}</h4>
-      {hint && <p className="mt-0.5 mb-3 text-[12px] leading-relaxed text-erp-text-muted">{hint}</p>}
+      <h4 className="text-sm font-semibold text-erp-text-primary">{title}</h4>
+      {hint && <p className="mt-0.5 mb-3 text-[13px] leading-relaxed text-erp-text-muted">{hint}</p>}
       {!hint && <div className="mb-3" />}
       {children}
     </div>

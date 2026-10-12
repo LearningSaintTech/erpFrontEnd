@@ -25,7 +25,8 @@ const RECOVERY_LABELS: Record<string, string> = {
 };
 
 export function typeLabel(type: string): string {
-  return TYPE_LABELS[type] || type.replace(/_/g, ' ');
+  // Unknown codes (reason codes, new types): "QC_REJECT" → "QC reject", "MANUAL" → "Manual".
+  return TYPE_LABELS[type] || type.replace(/_/g, ' ').toLowerCase().replace(/^\w/, (c) => c.toUpperCase()).replace(/\bqc\b/g, 'QC');
 }
 
 export function statusLabel(status: string): string {
@@ -44,7 +45,7 @@ export function formatCurrency(n?: number): string {
 
 export function formatDateTime(d?: string): string {
   if (!d) return '—';
-  return new Date(d).toLocaleString();
+  return new Date(d).toLocaleString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' });
 }
 
 export function batchLabel(batch: WasteRecord['batchId']): string {

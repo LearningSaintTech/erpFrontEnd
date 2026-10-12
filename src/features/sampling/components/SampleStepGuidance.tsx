@@ -1,7 +1,8 @@
-import { CheckCircle2, Lock, PlayCircle, Minus } from 'lucide-react';
+import { Button, InfoBanner } from '../../../components/erp';
 import type { SampleWorkflowStepId } from '../sampleWorkflowUtils';
 import { stepGuidance } from '../sampleNextActions';
 
+/** One-line status of the step being viewed (done / now / not started), with a jump to the live step. */
 export function SampleStepGuidance({
   stepId,
   status,
@@ -16,34 +17,19 @@ export function SampleStepGuidance({
   onGoActive?: () => void;
 }) {
   const g = stepGuidance(stepId, status, sampleType);
-  const icon = g.state === 'done'
-    ? <CheckCircle2 size={14} className="text-emerald-600" />
-    : g.state === 'active'
-      ? <PlayCircle size={14} className="text-[var(--erp-accent)]" />
-      : g.state === 'skipped'
-        ? <Minus size={14} className="text-erp-text-muted" />
-        : <Lock size={14} className="text-erp-text-muted" />;
-
+  // The live step is already explained by the next-action card at the top.
+  if (g.state === 'active') return null;
+  const tone = g.state === 'done' ? 'success' : 'muted';
   return (
-    <div className={`mb-3 flex flex-wrap items-start gap-2 rounded-lg border px-3 py-2 text-[10px] ${
-      g.state === 'active'
-        ? 'border-[var(--erp-accent)]/40 bg-[var(--erp-accent-muted)]/10'
-        : 'border-[var(--erp-border)] bg-[var(--erp-surface-muted)]/30'
-    }`}>
-      <span className="mt-0.5">{icon}</span>
-      <div className="min-w-0 flex-1">
-        <p className="font-semibold text-erp-text-primary">{g.title}</p>
-        <p className="mt-0.5 text-erp-text-muted">{g.body}</p>
-      </div>
-      {g.state === 'locked' && stepId !== activeStep && onGoActive && (
-        <button
-          type="button"
-          onClick={onGoActive}
-          className="shrink-0 text-[10px] font-medium text-[var(--erp-accent)] hover:underline"
-        >
-          Go to active step →
-        </button>
-      )}
-    </div>
+    <InfoBanner
+      inset={false}
+      tone={tone}
+      className="mb-4"
+      action={g.state === 'locked' && stepId !== activeStep && onGoActive
+        ? <Button size="sm" variant="secondary" onClick={onGoActive}>Go to current step</Button>
+        : undefined}
+    >
+      <span className="font-medium">{g.title}.</span> {g.body}
+    </InfoBanner>
   );
 }

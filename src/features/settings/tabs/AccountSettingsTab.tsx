@@ -1,48 +1,73 @@
-import { useState } from 'react';
+import { useState, type FormEvent } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { usersApi } from '../../../services/admin';
-import { ErpButton, ErpInput } from '../../../components/erp';
-import { FieldLabel, SettingsSection } from '../SettingsSection';
+import { useAuth } from '../../../app/providers/AuthProvider';
+import {
+  Button, DescriptionList, ErpInput, Field,
+} from '../../../components/erp';
+import { SettingsSection } from '../SettingsSection';
 
-export function AccountSettingsTab({ onError, onSuccess }: { onError: (m: string) => void; onSuccess: (m: string) => void }) {
+export function AccountSettingsTab() {
+  const { user } = useAuth();
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [errors, setErrors] = useState<Record<string, string>>({});
 
   const change = useMutation({
     mutationFn: () => usersApi.changePassword(currentPassword, newPassword),
+    meta: { successMessage: 'Password changed', successDescription: 'Other devices have been signed out.' },
     onSuccess: () => {
       setCurrentPassword('');
       setNewPassword('');
       setConfirmPassword('');
-      onSuccess('Password changed successfully');
+      setErrors({});
     },
-    onError: (e: Error) => onError(e.message),
   });
 
-  const canSubmit = currentPassword.length >= 1 && newPassword.length >= 8 && newPassword === confirmPassword;
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    const next: Record<string, string> = {};
+    if (!currentPassword) next.current = 'Enter your current password.';
+    if (newPassword.length < 8) next.new = 'Use at least 8 characters.';
+    else if (newPassword === currentPassword) next.new = 'Choose a password different from the current one.';
+    if (confirmPassword !== newPassword) next.confirm = 'The two new passwords do not match.';
+    setErrors(next);
+    if (Object.keys(next).length === 0) change.mutate();
+  };
 
   return (
-    <SettingsSection title="Change password" description="Update your login password. You will stay signed in on this device.">
-      <div className="grid max-w-md gap-2">
-        <FieldLabel label="Current password">
-          <ErpInput type="password" value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} className="!py-1 !text-[11px] w-full" autoComplete="current-password" />
-        </FieldLabel>
-        <FieldLabel label="New password" hint="Minimum 8 characters">
-          <ErpInput type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} className="!py-1 !text-[11px] w-full" autoComplete="new-password" />
-        </FieldLabel>
-        <FieldLabel label="Confirm new password">
-          <ErpInput type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} className="!py-1 !text-[11px] w-full" autoComplete="new-password" />
-        </FieldLabel>
-        {confirmPassword && newPassword !== confirmPassword && (
-          <p className="text-[10px] text-red-500">Passwords do not match</p>
-        )}
-        <div className="pt-1">
-          <ErpButton className="!px-3 !py-1 text-[11px]" disabled={!canSubmit || change.isPending} onClick={() => change.mutate()}>
-            Update password
-          </ErpButton>
-        </div>
-      </div>
-    </SettingsSection>
+    <div className="space-y-4">
+      {user && (
+        <SettingsSection title="Profile" description="Ask an administrator to change your name or email.">
+          <DescriptionList
+            columns={2}
+            items={[
+              { label: 'Name', value: [user.firstName, user.lastName].filter(Boolean).join(' ') },
+              { label: 'Email', value: user.email },
+            ]}
+          />
+        </SettingsSection>
+      )}
+
+      <SettingsSection title="Change password" description="Other devices are signed out. Use the new password next time you sign in.">
+        <form onSubmit={submit} className="grid max-w-md gap-4" noValidate>
+          {/* Hidden username helps password managers associate the new password. */}
+          <input type="text" name="username" autoComplete="username" value={user?.email ?? ''} readOnly hidden />
+          <Field label="Current password" required error={errors.current}>
+            <ErpInput type="password" value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} autoComplete="current-password" />
+          </Field>
+          <Field label="New password" required hint="At least 8 characters." error={errors.new}>
+            <ErpInput type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} autoComplete="new-password" />
+          </Field>
+          <Field label="Confirm new password" required error={errors.confirm}>
+            <ErpInput type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} autoComplete="new-password" />
+          </Field>
+          <div>
+            <Button type="submit" loading={change.isPending}>Update password</Button>
+          </div>
+        </form>
+      </SettingsSection>
+    </div>
   );
 }

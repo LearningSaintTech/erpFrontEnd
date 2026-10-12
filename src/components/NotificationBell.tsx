@@ -72,11 +72,14 @@ export function NotificationBell() {
         type="button"
         className="erp-icon-btn relative"
         title="Notifications"
+        aria-label={`Notifications${count ? `, ${count} unread` : ''}`}
+        aria-expanded={open}
+        aria-haspopup="true"
         onClick={() => setOpen((v) => !v)}
       >
         <Bell className="h-5 w-5" />
         {count > 0 && (
-          <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold text-white">
+          <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-600 px-1 text-xs font-bold text-white">
             {count > 9 ? '9+' : count}
           </span>
         )}
@@ -90,7 +93,7 @@ export function NotificationBell() {
               <button
                 type="button"
                 onClick={() => markAll.mutate()}
-                className="flex items-center gap-1 text-[10px] text-[var(--erp-accent)] hover:underline"
+                className="flex items-center gap-1 text-xs text-[var(--erp-accent)] hover:underline"
               >
                 <CheckCheck className="h-3 w-3" />
                 Mark all read
@@ -110,8 +113,8 @@ export function NotificationBell() {
                     onClick={() => handleOpen(n._id, link, n.eventType, n.referenceType, n.referenceId)}
                   >
                     <p className="text-xs font-medium leading-snug">{n.title}</p>
-                    {n.message && <p className="mt-0.5 line-clamp-2 text-[10px] text-erp-text-muted">{n.message}</p>}
-                    <p className="mt-1 text-[10px] text-erp-text-muted">
+                    {n.message && <p className="mt-0.5 line-clamp-2 text-xs text-erp-text-muted">{n.message}</p>}
+                    <p className="mt-1 text-xs text-erp-text-muted">
                       {eventLabel(n.eventType)} · {relativeTime(n.createdAt)}
                     </p>
                   </button>
@@ -122,7 +125,7 @@ export function NotificationBell() {
           <div className="border-t border-[var(--erp-border)] px-3 py-2 text-center">
             <Link
               to="/notifications"
-              className="text-[11px] text-[var(--erp-accent)] hover:underline"
+              className="text-[13px] text-[var(--erp-accent)] hover:underline"
               onClick={() => setOpen(false)}
             >
               View all notifications

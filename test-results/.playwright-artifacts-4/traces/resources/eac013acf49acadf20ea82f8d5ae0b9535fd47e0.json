@@ -1,0 +1,1 @@
+{"success":true,"data":{"period":{"from":"2026-09-30T18:30:00.000Z","to":"2026-10-11T13:49:17.627Z"},"prByStatus":{"CONVERTED":2,"APPROVED":2,"DRAFT":1},"poByStatus":{"PARTIAL":2,"RECEIVED":2},"grnPendingQc":1,"spendMtd":40850,"suppliers":37,"poOpen":2,"openPoValue":36000,"unpaidValue":40850}}

@@ -1,47 +1,86 @@
-import { ErpButton } from '../../../components/erp';
+import { ArrowRight, Hourglass } from 'lucide-react';
+import { Button, DropdownMenu, type DropdownMenuItem } from '../../../components/erp';
 import type { SampleAction } from '../sampleNextActions';
+import { lowerFirst } from '../sampleWorkflowUtils';
 
+/**
+ * "What do I do next" card for a sample: one primary action, a secondary or two,
+ * and everything negative / rare in the "⋯" menu. When the user has nothing to do,
+ * it says who the sample is waiting on.
+ */
 export function SampleNextActionBar({
   actions,
   loading,
-  onConfirm,
-  onComment,
-  onModal,
+  waiting,
+  onAction,
 }: {
   actions: SampleAction[];
   loading?: boolean;
-  onConfirm: (action: SampleAction) => void;
-  onComment: (action: SampleAction) => void;
-  onModal: (action: SampleAction) => void;
+  /** Shown when the user has no actions. */
+  waiting?: { who: string; action: string } | null;
+  onAction: (action: SampleAction) => void;
 }) {
-  if (!actions.length) return null;
+  const isMenuOnly = (a: SampleAction) => !!a.danger && a.id !== 'qc-fail';
+  const candidates = actions.filter((a) => !isMenuOnly(a));
+
+  // Nothing for this user to move forward — say who it is waiting on; rare actions stay in "⋯".
+  if (!candidates.length) {
+    if (!waiting && !actions.length) return null;
+    const menuOnly: DropdownMenuItem[] = actions.map((a) => ({
+      label: a.label, danger: a.danger, disabled: loading, onSelect: () => onAction(a),
+    }));
+    return (
+      <div className="mb-4 flex items-start gap-3 rounded-lg border border-[var(--erp-border)] bg-[var(--erp-surface)] px-4 py-3 shadow-erp-xs">
+        <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--erp-surface-muted)] text-erp-text-muted">
+          <Hourglass size={16} />
+        </span>
+        <div className="min-w-0 flex-1">
+          {waiting ? (
+            <>
+              <p className="text-sm font-medium text-erp-text-primary">Waiting on {lowerFirst(waiting.who)}</p>
+              <p className="text-[13px] text-erp-text-secondary">{waiting.action}.</p>
+            </>
+          ) : <p className="text-sm text-erp-text-secondary">No action needed from you.</p>}
+        </div>
+        {menuOnly.length > 0 && <DropdownMenu items={menuOnly} label="More sample actions" align="end" />}
+      </div>
+    );
+  }
+
+  const primary = candidates.find((a) => a.kind !== 'comment' && !a.danger) ?? candidates[0];
+  const secondary = candidates.filter((a) => a !== primary).slice(0, 2);
+  const menu = actions.filter((a) => a !== primary && !secondary.includes(a));
+  const who = primary.who;
+
+  const menuItems: DropdownMenuItem[] = menu.map((a) => ({
+    label: a.label,
+    danger: a.danger,
+    disabled: loading,
+    onSelect: () => onAction(a),
+  }));
 
   return (
-    <div className="border-b border-[var(--erp-border)] bg-[var(--erp-surface-muted)]/40 px-3 py-2">
-      <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-erp-text-muted">
-        Actions for this sample
-      </p>
-      <div className="flex flex-wrap gap-1.5">
-        {actions.map((a) => (
-          <ErpButton
+    <div className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-[var(--erp-accent)] bg-[var(--erp-accent-muted)] px-4 py-3">
+      <div className="min-w-0 flex-1">
+        <p className="text-xs font-medium text-[var(--erp-accent)]">Your next step · {who}</p>
+        <p className="text-sm font-medium text-erp-text-primary">{waiting ? `${waiting.action}.` : primary.label}</p>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        {secondary.map((a) => (
+          <Button
             key={a.id}
-            variant={a.kind === 'comment' || a.id.includes('reject') || a.id === 'qc-fail' ? 'secondary' : undefined}
-            className="!px-2.5 !py-1 text-[10px]"
+            variant={a.danger ? 'danger' : 'secondary'}
             disabled={loading}
-            title={a.who}
-            onClick={() => {
-              if (a.kind === 'confirm') onConfirm(a);
-              else if (a.kind === 'comment') onComment(a);
-              else onModal(a);
-            }}
+            onClick={() => onAction(a)}
           >
             {a.label}
-          </ErpButton>
+          </Button>
         ))}
+        <Button iconRight={<ArrowRight size={16} />} loading={loading} onClick={() => onAction(primary)}>
+          {primary.label}
+        </Button>
+        {menuItems.length > 0 && <DropdownMenu items={menuItems} label="More sample actions" align="end" />}
       </div>
-      <p className="mt-1 text-[9px] text-erp-text-muted">
-        Role: {actions.map((a) => a.who).filter((v, i, arr) => arr.indexOf(v) === i).join(' · ')}
-      </p>
     </div>
   );
 }

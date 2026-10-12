@@ -1,4 +1,5 @@
 import { Navigate } from 'react-router-dom';
+import { AppLoader } from './AppLoader';
 import { useAuth } from './providers/AuthProvider';
 import { hasPermission } from '../utils/permissions';
 
@@ -21,7 +22,7 @@ export function PermissionRoute({
   const isSuperAdmin = !!user?.isSuperAdmin;
 
   if (loading) {
-    return <div className="flex min-h-[40vh] items-center justify-center text-[11px] text-erp-text-muted">Loading…</div>;
+    return <AppLoader label="Loading…" />;
   }
   if (!user) return <Navigate to="/login" replace />;
 

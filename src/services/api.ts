@@ -27,9 +27,48 @@ apiClient.interceptors.request.use((config) => {
   return config;
 });
 
+/**
+ * Access tokens are short-lived (15m). On a 401 we try ONE silent refresh using the httpOnly
+ * refresh-token cookie, then replay the request — instead of bouncing the user to /login mid-task.
+ * Concurrent 401s share one refresh call.
+ */
+let refreshing: Promise<string | null> | null = null;
+function refreshAccessToken(): Promise<string | null> {
+  if (!refreshing) {
+    refreshing = axios
+      .post(`${API_URL}/auth/refresh`, {}, { withCredentials: true, headers: { 'x-device-id': getDeviceId() } })
+      .then((r) => {
+        const token = r.data?.data?.accessToken as string | undefined;
+        if (!token) return null;
+        localStorage.setItem('accessToken', token);
+        return token;
+      })
+      .catch(() => null)
+      .finally(() => { setTimeout(() => { refreshing = null; }, 0); });
+  }
+  return refreshing;
+}
+
 apiClient.interceptors.response.use(
   (res) => res,
-  (err) => {
+  async (err) => {
+    const cfg = err.config as (typeof err.config & { _retried?: boolean }) | undefined;
+    const url = String(cfg?.url || '');
+    if (
+      err.response?.status === 401
+      && cfg
+      && !cfg._retried
+      && !/\/auth\//.test(url)
+      && localStorage.getItem('accessToken')
+    ) {
+      cfg._retried = true;
+      const token = await refreshAccessToken();
+      if (token) {
+        cfg.headers = cfg.headers || {};
+        cfg.headers.Authorization = `Bearer ${token}`;
+        return apiClient(cfg);
+      }
+    }
     if (err.response?.status === 401) {
       localStorage.removeItem('accessToken');
       if (!window.location.pathname.startsWith('/login')) {

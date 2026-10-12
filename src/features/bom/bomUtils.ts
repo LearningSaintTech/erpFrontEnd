@@ -25,6 +25,7 @@ export function statusLabel(status?: string) {
 
 export function workflowStep(status: string) {
   if (status === 'DRAFT') return { label: 'Draft', step: 1 };
+  if (status === 'PENDING_APPROVAL') return { label: 'Pending approval', step: 1 };
   if (status === 'APPROVED') return { label: 'Approved', step: 2 };
   if (status === 'ACTIVE') return { label: 'Active', step: 3 };
   if (status === 'OBSOLETE') return { label: 'Obsolete', step: 0 };
@@ -39,4 +40,11 @@ export function formatCost(value?: number) {
 export function mrpShortageCount(mrp?: MrpPreview | null) {
   if (!mrp?.lines?.length) return 0;
   return mrp.lines.filter((l) => (l.shortageQty ?? 0) > 0).length;
+}
+
+/** Four-eyes: the submitter of a BOM can't approve it themselves (super admin exempt). */
+export function isOwnSubmission(bom: Bom, user?: { _id?: string; isSuperAdmin?: boolean } | null) {
+  if (!user?._id || user.isSuperAdmin || !bom.submittedBy) return false;
+  const id = typeof bom.submittedBy === 'object' ? bom.submittedBy._id : bom.submittedBy;
+  return String(id) === String(user._id);
 }

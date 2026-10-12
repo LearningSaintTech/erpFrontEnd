@@ -128,7 +128,7 @@ export function ChatFab() {
             <div className="relative flex items-center justify-center">
               <MessageSquare className="h-4 w-4 text-[var(--erp-accent,#3b82f6)]" />
               {unreadTotal > 0 && (
-                <span className="absolute -top-1 -right-1 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-red-500 px-0.5 text-[9px] font-bold text-white">
+                <span className="absolute -top-1 -right-1 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-red-500 px-0.5 text-xs font-bold text-white">
                   {unreadTotal > 9 ? '9+' : unreadTotal}
                 </span>
               )}
@@ -174,14 +174,14 @@ export function ChatFab() {
               <MessageSquare className="h-5 w-5" strokeWidth={2.2} />
 
               {unreadTotal > 0 && (
-                <span className="absolute -top-0.5 -right-0.5 flex h-5 min-w-5 items-center justify-center rounded-full border-2 border-white bg-red-500 px-1 text-[10px] font-bold text-white shadow-sm">
+                <span className="absolute -top-0.5 -right-0.5 flex h-5 min-w-5 items-center justify-center rounded-full border-2 border-white bg-red-600 px-1 text-xs font-bold text-white shadow-sm">
                   {unreadTotal > 9 ? '9+' : unreadTotal}
                 </span>
               )}
 
               {/* Hover tooltip */}
               <span
-                className="pointer-events-none absolute right-full mr-3 hidden origin-right scale-95 whitespace-nowrap rounded-lg border border-[var(--erp-border,#e2e8f0)] bg-[var(--erp-surface,#fff)] px-2.5 py-1 text-[11px] font-medium text-[var(--erp-text-primary,#0f172a)] opacity-0 shadow-lg transition-all duration-150 group-hover:scale-100 group-hover:opacity-100 sm:block"
+                className="pointer-events-none absolute right-full mr-3 hidden origin-right scale-95 whitespace-nowrap rounded-lg border border-[var(--erp-border,#e2e8f0)] bg-[var(--erp-surface,#fff)] px-2.5 py-1 text-[13px] font-medium text-[var(--erp-text-primary,#0f172a)] opacity-0 shadow-lg transition-all duration-150 group-hover:scale-100 group-hover:opacity-100 sm:block"
                 aria-hidden
               >
                 {unreadTotal > 0 ? `${unreadTotal} unread · Click to chat (drag to move)` : 'Messages (drag to move)'}

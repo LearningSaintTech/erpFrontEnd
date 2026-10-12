@@ -1,5 +1,6 @@
 import type { QualityInspection } from '../../types/api';
 import type { GoodsReceiptRef } from '../../types/api.extended';
+import { humanizeStatus } from '../../components/erp';
 
 export const INSPECTION_TYPES = ['INCOMING', 'IN_PROCESS', 'FINAL', 'SAMPLING'] as const;
 export const DISPOSITIONS = ['PASS', 'REWORK', 'REJECT'] as const;
@@ -49,12 +50,12 @@ export function dispositionLabel(d?: string): string {
 
 export function formatDateTime(d?: string): string {
   if (!d) return '—';
-  return new Date(d).toLocaleString();
+  return new Date(d).toLocaleString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' });
 }
 
 export function inspectionSummary(i: QualityInspection): string {
   const parts = [typeLabel(i.inspectionType)];
-  if (i.stageAtInspection) parts.push(i.stageAtInspection);
+  if (i.stageAtInspection) parts.push(humanizeStatus(i.stageAtInspection));
   return parts.join(' · ');
 }
 

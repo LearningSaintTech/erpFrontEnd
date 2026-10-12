@@ -1,14 +1,16 @@
 import { useState, useEffect, useMemo, type ReactNode } from 'react';
-import { useNavigate, useParams, Link, Navigate } from 'react-router-dom';
+import { useNavigate, useParams, Navigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { designApi, patternApi } from '../../services/manufacturing';
+import {
+  Ban, CheckCircle2, ChevronLeft, ChevronRight, Copy, MessageSquareWarning, Rocket, Ruler, Send,
+} from 'lucide-react';
+import { designApi, patternApi, skuApi } from '../../services/manufacturing';
 import type { DesignAsset } from '../../types/api';
-import { DesignFormProvider } from './DesignFormContext';
+import { DesignFormProvider, type DesignFieldErrors } from './DesignFormContext';
 import {
   TAB_GROUPS, TabId, TabGroupId, designToFormState, formStateToPayload, fileToBase64, hasImageAsset,
-  getWizardSteps, findWizardIndex,
   getDesignSubmitGaps, isReadyForSubmit, designSubmitHint, designTabProgress,
-  type DesignFormState, emptyColor, defaultSizeChartData, defaultProductSpecs,
+  type DesignFormState, emptyColor, defaultSizeChartData, defaultProductSpecs, designerName,
 } from './designFormUtils';
 import { BasicDetailsTab } from './tabs/BasicDetailsTab';
 import { ProductSpecsTab } from './tabs/ProductSpecsTab';
@@ -19,21 +21,18 @@ import { DesignReviewTab } from './tabs/DesignReviewTab';
 import { VersionHistoryTab } from './tabs/VersionHistoryTab';
 import { SkuMatrixTab } from './tabs/SkuMatrixTab';
 import type { PendingUpload } from './DesignFormContext';
-import { ErpButton, ErpPageHeader, ErpStatusBadge, ErpCard } from '../../components/erp';
+import {
+  Button, IconButton, PageHeader, Section, Skeleton, StatusBadge, Tooltip, toast,
+} from '../../components/erp';
 import { useAuth } from '../../app/providers/AuthProvider';
 import { hasPermission } from '../../utils/permissions';
 import { canCreateDesign, canEditDesign, canShowDesignApproverUi, isDesignAdmin } from './designUtils';
-import { AlertBanner } from '../../components/AlertBanner';
-import { SuccessBanner } from '../users/SuccessBanner';
-import { CommentPrompt } from '../approvals/components/CommentPrompt';
 import { RevisionFeedbackBanner, RejectionFeedbackBanner } from './RevisionFeedbackBanner';
-import { toErrorMessage } from '../../utils/errors';
-import { DesignPipelineCard } from './components/DesignPipelineCard';
-import { DesignWizardNav } from './components/DesignWizardNav';
 import { DesignFormNav } from './components/DesignFormNav';
-import { ApproverActionDropdown, type ApproverDecision } from './components/ApproverActionDropdown';
-import { ReleasePatternMasterModal } from './components/ReleasePatternMasterModal';
+import { DesignLifecycle } from './components/DesignLifecycle';
+import { StickyActionBar, SaveState, Completeness } from './components/StickyActionBar';
 import { buildDesignPipeline } from './designFlowUtils';
+import { useDesignDecisions } from './useDesignDecisions';
 
 const emptyForm = (): DesignFormState => ({
   title: '',
@@ -63,16 +62,10 @@ const emptyForm = (): DesignFormState => ({
   sizeChartData: defaultSizeChartData(),
 });
 
-function TabPanel({
-  tab,
-  active,
-  onJumpTo,
-}: {
-  tab: TabId;
-  active: TabId;
-  onJumpTo?: (groupId: TabGroupId, tabId: TabId) => void;
-}) {
-  if (tab !== active) return null;
+const REQUIRED_SECTIONS: TabId[] = ['basic', 'files', 'colors', 'skus'];
+const IMAGE_TYPES = ['FRONT_IMAGE', 'BACK_IMAGE', 'SIDE_IMAGE', 'ZOOM_IMAGE', 'TECHNICAL_SKETCH', 'IMAGE', 'SKETCH'];
+
+function TabPanel({ tab, onJumpTo }: { tab: TabId; onJumpTo?: (groupId: TabGroupId, tabId: TabId) => void }) {
   const panels: Record<TabId, ReactNode> = {
     basic: <BasicDetailsTab />,
     specs: <ProductSpecsTab />,
@@ -83,7 +76,7 @@ function TabPanel({
     review: <DesignReviewTab onJumpTo={onJumpTo} />,
     versions: <VersionHistoryTab />,
   };
-  return <div>{panels[tab]}</div>;
+  return <>{panels[tab]}</>;
 }
 
 export function DesignFormPage() {
@@ -94,18 +87,10 @@ export function DesignFormPage() {
   const [activeGroup, setActiveGroup] = useState<TabGroupId>('overview');
   const [activeTab, setActiveTab] = useState<TabId>('basic');
   const [form, setForm] = useState<DesignFormState>(emptyForm);
+  const [baseline, setBaseline] = useState(() => JSON.stringify(emptyForm()));
   const [assets, setAssets] = useState<DesignAsset[]>([]);
   const [pendingUploads, setPendingUploads] = useState<PendingUpload[]>([]);
-  const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
-  const [reviewPrompt, setReviewPrompt] = useState<'reject' | 'revision' | null>(null);
-  const [releasePrompt, setReleasePrompt] = useState(false);
-
-  const showSuccess = (msg: string) => {
-    setSuccess(msg);
-    setError('');
-    setTimeout(() => setSuccess(''), 4000);
-  };
+  const [errors, setErrors] = useState<DesignFieldErrors>({});
 
   const { data: lookups } = useQuery({ queryKey: ['design-lookups'], queryFn: designApi.getLookups });
   const { data: materials = [] } = useQuery({ queryKey: ['design-material-options'], queryFn: designApi.listMaterialOptions });
@@ -119,8 +104,9 @@ export function DesignFormPage() {
   const canRead = hasPermission(permissions, 'design.read', isSuperAdmin) || isAdmin;
   // Approver UI: review-only admins — never designers (create/update authors)
   const showApproverActions = canShowDesignApproverUi(permissions, isSuperAdmin);
-  const canPattern = !isAdmin && hasPermission(permissions, 'pattern.read', isSuperAdmin);
-  const canSample = !isAdmin && hasPermission(permissions, 'sampling.read', isSuperAdmin);
+  const canPattern = hasPermission(permissions, 'pattern.read', isSuperAdmin);
+  const canSample = hasPermission(permissions, 'sampling.read', isSuperAdmin);
+  const canSku = hasPermission(permissions, 'sku.read', isSuperAdmin);
 
   const { data: design, isLoading } = useQuery({
     queryKey: ['design', id],
@@ -140,29 +126,41 @@ export function DesignFormPage() {
     enabled: isEdit,
   });
 
-  const showPipeline = isEdit && design
-    && !['DRAFT', 'REVISION_REQUESTED'].includes(design.status)
-    && (showApproverActions || design.status !== 'IN_REVIEW');
-
   const { data: patternDev } = useQuery({
     queryKey: ['pattern-development', id],
     queryFn: () => patternApi.get(id!),
-    enabled: showPipeline && (design?.status === 'RELEASED' || samples.length > 0),
+    enabled: isEdit && (design?.status === 'RELEASED' || samples.length > 0),
     retry: false,
+  });
+
+  const sampleApproved = samples.some((s) => s.status === 'APPROVED');
+  const { data: skuCount } = useQuery({
+    queryKey: ['skus', 'design-count', id],
+    queryFn: async () => (await skuApi.listPage({ designId: id, limit: 1 })).meta?.total ?? 0,
+    enabled: isEdit && canSku && sampleApproved,
+  });
+  const { data: activeBomSkuCount } = useQuery({
+    queryKey: ['skus', 'design-active-bom-count', id],
+    queryFn: async () => (await skuApi.listPage({ designId: id, hasActiveBom: true, limit: 1 })).meta?.total ?? 0,
+    enabled: isEdit && canSku && !!skuCount,
   });
 
   const pipelineSteps = useMemo(
     () => (design && id ? buildDesignPipeline(design, patternDev ?? null, samples, id, {
       canApprove: false,
-      canPattern: !isAdmin && canPattern,
-      canSample: !isAdmin && canSample,
+      canPattern,
+      canSample,
+      skuCount,
+      activeBomSkuCount,
     }) : []),
-    [design, patternDev, samples, id, isAdmin, canPattern, canSample],
+    [design, patternDev, samples, id, canPattern, canSample, skuCount, activeBomSkuCount],
   );
 
   useEffect(() => {
     if (!design) return;
-    setForm(designToFormState(design));
+    const next = designToFormState(design);
+    setForm(next);
+    setBaseline(JSON.stringify(next));
     setAssets(design.assets || []);
   }, [design]);
 
@@ -170,43 +168,42 @@ export function DesignFormPage() {
     ? canEditDesign(permissions, isSuperAdmin, design?.status)
     : canCreate);
 
-  const wizardSteps = useMemo(
-    () => getWizardSteps({ includeHistory: isEdit && !editable }),
-    [isEdit, editable],
-  );
+  const dirty = editable && (JSON.stringify(form) !== baseline || pendingUploads.length > 0);
 
-  const wizardIndex = findWizardIndex(wizardSteps, activeGroup, activeTab);
-  const currentWizardStep = wizardSteps[wizardIndex] ?? wizardSteps[0];
-  const isLastWizardStep = wizardIndex >= wizardSteps.length - 1;
-  const isReviewStep = activeTab === 'review';
-
-  const goToWizardStep = (index: number) => {
-    const step = wizardSteps[index];
-    if (!step) return;
-    setActiveGroup(step.groupId);
-    setActiveTab(step.tabId);
-  };
-
-  const jumpToSection = (groupId: TabGroupId, tabId: TabId) => {
-    setActiveGroup(groupId);
-    setActiveTab(tabId);
-  };
-
-  const imageOk = hasImageAsset(assets) || pendingUploads.some((p) =>
-    ['FRONT_IMAGE', 'BACK_IMAGE', 'SIDE_IMAGE', 'ZOOM_IMAGE', 'TECHNICAL_SKETCH', 'IMAGE', 'SKETCH'].includes(p.assetType),
-  );
-  const submitGaps = getDesignSubmitGaps({ hasImage: imageOk, sizeChartData: form.sizeChartData });
-  const canSubmit = isReadyForSubmit(submitGaps);
-  const submitHint = designSubmitHint(submitGaps);
+  useEffect(() => {
+    if (!dirty) return undefined;
+    const warn = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ''; };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [dirty]);
 
   const visibleGroups = useMemo(
     () => TAB_GROUPS.filter((g) => {
       if (g.id === 'history') return isEdit;
-      if (g.id === 'submit') return editable || (!isAdmin && activeGroup === 'submit');
+      if (g.id === 'submit') return editable;
       return true;
     }),
-    [isEdit, editable, isAdmin, activeGroup],
+    [isEdit, editable],
   );
+
+  const order = useMemo(
+    () => visibleGroups.flatMap((g) => g.tabs.map((t) => ({ groupId: g.id as TabGroupId, tabId: t.id as TabId, label: t.label }))),
+    [visibleGroups],
+  );
+  const orderIndex = Math.max(0, order.findIndex((o) => o.tabId === activeTab));
+  const prevStep = order[orderIndex - 1];
+  const nextStep = order[orderIndex + 1];
+
+  const jumpToSection = (groupId: TabGroupId, tabId: TabId) => {
+    setActiveGroup(groupId);
+    setActiveTab(tabId);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const imageOk = hasImageAsset(assets) || pendingUploads.some((p) => IMAGE_TYPES.includes(p.assetType));
+  const submitGaps = getDesignSubmitGaps({ hasImage: imageOk, sizeChartData: form.sizeChartData });
+  const canSubmit = isReadyForSubmit(submitGaps);
+  const submitHint = designSubmitHint(submitGaps);
 
   const tabProgress = useMemo(() => {
     const map: Partial<Record<TabId, ReturnType<typeof designTabProgress>>> = {};
@@ -217,9 +214,11 @@ export function DesignFormPage() {
     }
     return map;
   }, [form, imageOk]);
+  const sectionsDone = REQUIRED_SECTIONS.filter((t) => tabProgress[t] === 'done').length;
 
   const deleteAssetMutation = useMutation({
     mutationFn: (assetId: string) => designApi.deleteAsset(id!, assetId),
+    meta: { successMessage: 'Image removed' },
     onSuccess: (_, assetId) => setAssets((prev) => prev.filter((a) => a._id !== assetId)),
   });
 
@@ -239,14 +238,8 @@ export function DesignFormPage() {
 
   const saveMutation = useMutation({
     mutationFn: async (andSubmit: boolean) => {
-      setError('');
       const payload = formStateToPayload(form);
-      if (!payload.title) throw new Error('Title is required');
-      if (!payload.collectionCode) throw new Error('Collection is required');
-      if (!payload.styleNumber?.trim()) throw new Error('Style number is required');
-      if (andSubmit && !canSubmit) {
-        throw new Error(submitHint || 'Design is not ready for submit');
-      }
+      if (andSubmit && !canSubmit) throw new Error(submitHint || 'Design is not ready to submit.');
 
       let savedId = id;
       if (isEdit && id) {
@@ -269,68 +262,67 @@ export function DesignFormPage() {
         qc.invalidateQueries({ queryKey: ['design-timeline', savedId] });
       }
       if (andSubmit) {
-        showSuccess('Design submitted for approval');
+        toast.success('Submitted for review', { description: 'Your design manager has been notified.' });
         qc.invalidateQueries({ queryKey: ['approvals-pending'] });
         qc.invalidateQueries({ queryKey: ['notifications-unread'] });
+        setBaseline(JSON.stringify(form));
+        // Drop the cached list so the page opens on fresh rows — not the pre-submit status
+        // flashing next to the "Submitted" toast.
+        qc.removeQueries({ queryKey: ['designs-page'] });
+        qc.removeQueries({ queryKey: ['design-stats'] });
         navigate('/designs');
       } else {
-        showSuccess('Draft saved');
-        if (!isEdit && savedId) navigate(`/designs/${savedId}/edit`);
-        else if (id) qc.invalidateQueries({ queryKey: ['design', id] });
+        toast.success(isEdit ? 'Draft saved' : 'Design created', isEdit ? undefined : { description: 'Keep going — add images, colours and sizes.' });
+        setBaseline(JSON.stringify(form));
+        if (!isEdit && savedId) navigate(`/designs/${savedId}/edit`, { replace: true });
       }
     },
-    onError: (e: unknown) => setError(toErrorMessage(e) || 'Save failed'),
   });
 
-  const lifecycleMutation = useMutation({
-    mutationFn: async (vars: { action: 'approve' | 'release'; patternMasterId?: string }) => {
-      if (!id) throw new Error('No design id');
-      if (vars.action === 'approve') return designApi.approve(id);
-      return designApi.release(id, { patternMasterId: vars.patternMasterId });
-    },
-    onSuccess: (_, vars) => {
-      if (vars.action === 'release') setReleasePrompt(false);
-      qc.invalidateQueries({ queryKey: ['design', id] });
-      qc.invalidateQueries({ queryKey: ['design-timeline', id] });
+  const cloneMutation = useMutation({
+    mutationFn: () => designApi.clone(id!),
+    meta: { successMessage: 'Design cloned', successDescription: 'Opening the new draft.' },
+    onSuccess: (created) => {
       qc.invalidateQueries({ queryKey: ['designs-page'] });
       qc.invalidateQueries({ queryKey: ['design-stats'] });
-      qc.invalidateQueries({ queryKey: ['approvals-pending'] });
-      qc.invalidateQueries({ queryKey: ['approvals-stats'] });
-      qc.invalidateQueries({ queryKey: ['notifications-unread'] });
-      qc.invalidateQueries({ queryKey: ['notifications-recent'] });
-      showSuccess(vars.action === 'approve' ? 'Design approved' : 'Design released and assigned to pattern master');
-      if (vars.action === 'release') {
-        qc.invalidateQueries({ queryKey: ['pattern-development', id] });
-        qc.invalidateQueries({ queryKey: ['pattern-developments'] });
-        qc.invalidateQueries({ queryKey: ['pattern-stats'] });
-        qc.invalidateQueries({ queryKey: ['designs-released'] });
+      if (created?._id) navigate(`/designs/${created._id}/edit`);
+    },
+  });
+
+  const decisions = useDesignDecisions({
+    onDone: (decision) => {
+      if (decision !== 'release') {
+        qc.removeQueries({ queryKey: ['designs-page'] });
+        qc.removeQueries({ queryKey: ['design-stats'] });
+        navigate('/designs');
       }
-      if (vars.action === 'approve') navigate('/designs');
     },
-    onError: (e: unknown) => setError(toErrorMessage(e) || 'Action failed'),
   });
 
-  const reviewMutation = useMutation({
-    mutationFn: (comments: string) => {
-      if (!id || !reviewPrompt) throw new Error('No design');
-      return reviewPrompt === 'reject' ? designApi.reject(id, comments) : designApi.revision(id, comments);
-    },
-    onSuccess: () => {
-      const action = reviewPrompt;
-      setReviewPrompt(null);
-      qc.invalidateQueries({ queryKey: ['design', id] });
-      qc.invalidateQueries({ queryKey: ['design-timeline', id] });
-      qc.invalidateQueries({ queryKey: ['designs-page'] });
-      qc.invalidateQueries({ queryKey: ['design-stats'] });
-      qc.invalidateQueries({ queryKey: ['approvals-pending'] });
-      qc.invalidateQueries({ queryKey: ['approvals-stats'] });
-      qc.invalidateQueries({ queryKey: ['notifications-unread'] });
-      qc.invalidateQueries({ queryKey: ['notifications-recent'] });
-      showSuccess(action === 'reject' ? 'Design rejected' : 'Revision requested');
-      navigate('/designs');
-    },
-    onError: (e: unknown) => setError(toErrorMessage(e)),
-  });
+  const validate = () => {
+    const next: DesignFieldErrors = {};
+    if (!form.title.trim()) next.title = 'Enter a title for this style.';
+    if (!form.styleNumber.trim()) next.styleNumber = 'Enter the style number, e.g. STY-001.';
+    if (!form.collectionCode) next.collectionCode = 'Choose the collection this style belongs to.';
+    setErrors(next);
+    if (Object.keys(next).length) {
+      jumpToSection('overview', 'basic');
+      toast.error('Some required details are missing', { description: 'Fill in the highlighted fields in Basic details.' });
+      return false;
+    }
+    return true;
+  };
+
+  const save = (andSubmit: boolean) => {
+    if (!validate()) return;
+    if (andSubmit && !canSubmit) {
+      toast.warning(submitHint);
+      if (submitGaps.image) jumpToSection('overview', 'files');
+      else if (submitGaps.sizeRange) jumpToSection('variants', 'skus');
+      return;
+    }
+    saveMutation.mutate(andSubmit);
+  };
 
   const ctxValue = {
     form,
@@ -349,179 +341,187 @@ export function DesignFormPage() {
     versions,
     samples,
     onDeleteAsset: (assetId: string) => deleteAssetMutation.mutate(assetId),
+    errors,
+    clearError: (key: keyof DesignFieldErrors) => setErrors((e) => (e[key] ? { ...e, [key]: undefined } : e)),
   };
 
   if (!isEdit && !canCreate) return <Navigate to="/designs" replace />;
-  if (isEdit && !canRead && !editable) {
-    return <Navigate to="/designs" replace />;
+  if (isEdit && !canRead && !editable) return <Navigate to="/designs" replace />;
+
+  if (isEdit && isLoading) {
+    return (
+      <div className="space-y-4" aria-busy="true">
+        <Skeleton height={28} width="40%" />
+        <Skeleton height={14} width="60%" />
+        <Skeleton height={64} />
+        <Skeleton height={320} />
+      </div>
+    );
   }
 
-  if (isEdit && isLoading) return <p className="p-4 text-[11px] text-erp-text-muted">Loading design…</p>;
+  const status = design?.status ?? 'DRAFT';
+  const designerLabel = design ? designerName(design.createdBy) : '';
+  const description = !isEdit
+    ? 'Describe the new style, add images and pick the size range, then submit it for review.'
+    : editable
+      ? status === 'REVISION_REQUESTED'
+        ? 'Update the tech pack using the feedback below, then resubmit.'
+        : 'Complete each section, then submit the tech pack for review.'
+      : showApproverActions && status === 'IN_REVIEW'
+        ? `Submitted by ${designerLabel}. Review the tech pack and make a decision.`
+        : 'Tech pack for this style.';
+
+  const navButtons = (
+    <>
+      <IconButton
+        aria-label={prevStep ? `Previous: ${prevStep.label}` : 'Previous section'}
+        outlined
+        className="hidden sm:inline-flex"
+        disabled={!prevStep}
+        onClick={() => prevStep && jumpToSection(prevStep.groupId, prevStep.tabId)}
+      >
+        <ChevronLeft size={16} />
+      </IconButton>
+      <IconButton
+        aria-label={nextStep ? `Next: ${nextStep.label}` : 'Next section'}
+        outlined
+        className="hidden sm:inline-flex"
+        disabled={!nextStep}
+        onClick={() => nextStep && jumpToSection(nextStep.groupId, nextStep.tabId)}
+      >
+        <ChevronRight size={16} />
+      </IconButton>
+    </>
+  );
+
+  let barStatus: ReactNode = null;
+  let barActions: ReactNode = null;
+
+  if (editable) {
+    barStatus = (
+      <span className="flex flex-wrap items-center gap-x-4 gap-y-1">
+        <SaveState dirty={dirty} saving={saveMutation.isPending} savedLabel={isEdit ? 'All changes saved' : 'Not saved yet'} />
+        <Completeness done={sectionsDone} total={REQUIRED_SECTIONS.length} />
+      </span>
+    );
+    const submitButton = (
+      <Button
+        icon={<Send size={16} />}
+        disabled={saveMutation.isPending || !canSubmit}
+        loading={saveMutation.isPending && saveMutation.variables === true}
+        onClick={() => save(true)}
+      >
+        {status === 'REVISION_REQUESTED' ? 'Resubmit for review' : 'Submit for review'}
+      </Button>
+    );
+    barActions = (
+      <>
+        {navButtons}
+        <Button
+          variant="secondary"
+          loading={saveMutation.isPending && saveMutation.variables === false}
+          disabled={saveMutation.isPending || (isEdit && !dirty)}
+          onClick={() => save(false)}
+        >
+          {isEdit ? 'Save draft' : 'Create draft'}
+        </Button>
+        {canSubmit ? submitButton : <Tooltip content={submitHint}><span>{submitButton}</span></Tooltip>}
+      </>
+    );
+  } else if (showApproverActions && design && status === 'IN_REVIEW') {
+    barStatus = 'Approve to move on to release, or send it back with comments.';
+    barActions = (
+      <>
+        {navButtons}
+        <Button variant="danger" icon={<Ban size={16} />} disabled={decisions.pending} onClick={() => decisions.reject(design)}>Reject</Button>
+        <Button variant="secondary" icon={<MessageSquareWarning size={16} />} disabled={decisions.pending} onClick={() => decisions.requestRevision(design)}>
+          Request revision
+        </Button>
+        <Button icon={<CheckCircle2 size={16} />} loading={decisions.approving} disabled={decisions.pending} onClick={() => decisions.approve(design)}>
+          Approve
+        </Button>
+      </>
+    );
+  } else if (showApproverActions && design && status === 'APPROVED') {
+    barStatus = 'Approved. Release it to hand the tech pack to a pattern master.';
+    barActions = (
+      <>
+        {navButtons}
+        <Button icon={<Rocket size={16} />} disabled={decisions.pending} onClick={() => decisions.openRelease(design)}>Release to pattern</Button>
+      </>
+    );
+  } else if (design && status === 'RELEASED') {
+    barStatus = `Released as v${design.releasedVersion ?? design.currentVersion ?? 1}. The tech pack is locked.`;
+    barActions = (
+      <>
+        {navButtons}
+        {canPattern && (
+          <Button icon={<Ruler size={16} />} onClick={() => navigate(`/pattern?designId=${id}`)}>Open pattern workspace</Button>
+        )}
+      </>
+    );
+  } else if (design && status === 'REJECTED' && canCreate) {
+    barStatus = 'This design was rejected. Clone it to start a new draft.';
+    barActions = (
+      <>
+        {navButtons}
+        <Button icon={<Copy size={16} />} loading={cloneMutation.isPending} onClick={() => cloneMutation.mutate()}>Clone as new draft</Button>
+      </>
+    );
+  } else {
+    barStatus = status === 'IN_REVIEW'
+      ? 'Submitted for review. You can edit again if it is sent back.'
+      : status === 'APPROVED'
+        ? 'Approved — waiting to be released to pattern.'
+        : 'Read-only.';
+    barActions = navButtons;
+  }
 
   return (
     <DesignFormProvider value={ctxValue}>
-      <div className="design-form-page mx-auto max-w-6xl text-xs leading-snug">
-        <AlertBanner message={error} onDismiss={() => setError('')} />
-        <SuccessBanner message={success} onDismiss={() => setSuccess('')} />
-
-        <ErpPageHeader
-          title={isEdit ? (design?.title || 'Design') : 'New design tech pack'}
-          subtitle={(
-            <>
-              <Link to="/designs" className="text-[var(--erp-accent)]">← Design library</Link>
-              {design && (
-                <span className="ml-2 font-mono text-[10px] text-erp-text-muted">{design.designCode}</span>
-              )}
-              {editable && (
-                <span className="ml-2 text-[10px] text-erp-text-muted">Designer workspace — edit and use Next through each section</span>
-              )}
-              {isAdmin && (
-                <span className="ml-2 text-[10px] text-erp-text-muted">Admin view — details only; use review decision below</span>
-              )}
-              {!editable && !isAdmin && design?.status === 'IN_REVIEW' && (
-                <span className="ml-2 text-[10px] text-erp-text-muted">Submitted — waiting for review</span>
-              )}
-              {editable && (design?.status === 'DRAFT' || design?.status === 'REVISION_REQUESTED') && (
-                <span className="ml-2 rounded bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-emerald-700">
-                  Editable
-                </span>
-              )}
-            </>
-          )}
-          actions={
-            design ? (
-              <div className="flex items-center gap-2">
-                <ErpStatusBadge status={design.status} />
-                <span className="text-[10px] text-erp-text-muted">v{design.currentVersion ?? 1}</span>
-              </div>
-            ) : undefined
-          }
+      <div className="design-form-page mx-auto max-w-7xl">
+        <PageHeader
+          title={isEdit ? (design?.title || 'Design') : 'New design'}
+          description={description}
+          meta={design ? (
+            <span className="flex flex-wrap items-center gap-2 text-[13px] text-erp-text-muted">
+              <StatusBadge status={status} />
+              <span className="font-mono">{design.designCode}</span>
+              <span>v{design.currentVersion ?? 1}</span>
+              {design.styleNumber && <span className="font-mono">· {design.styleNumber}</span>}
+            </span>
+          ) : undefined}
         />
 
-        {design?.status === 'REVISION_REQUESTED' && design.revisionComments && (
-          <RevisionFeedbackBanner comments={design.revisionComments} />
+        {isEdit && design && pipelineSteps.length > 0 && (
+          <Section className="mb-4">
+            <DesignLifecycle steps={pipelineSteps} designStatus={status} />
+          </Section>
         )}
 
-        {design?.status === 'REJECTED' && design.rejectionComments && (
+        {status === 'REVISION_REQUESTED' && design?.revisionComments && (
+          <RevisionFeedbackBanner comments={design.revisionComments} />
+        )}
+        {status === 'REJECTED' && design?.rejectionComments && (
           <RejectionFeedbackBanner comments={design.rejectionComments} />
         )}
 
-        {showPipeline && pipelineSteps.length > 0 && (
-          <DesignPipelineCard steps={pipelineSteps} />
-        )}
+        <div className="grid gap-6 lg:grid-cols-[210px_minmax(0,1fr)]">
+          <DesignFormNav
+            groups={visibleGroups}
+            activeTab={activeTab}
+            progress={tabProgress}
+            showProgress={editable}
+            onSelect={jumpToSection}
+          />
+          <div className="min-w-0" key={activeGroup + activeTab}>
+            <TabPanel tab={activeTab} onJumpTo={jumpToSection} />
+          </div>
+        </div>
 
-        {design && !editable && (
-          <ErpCard className="mb-3 !border-amber-500/30 !bg-amber-500/5 !p-3">
-            <p className="text-[11px]" style={{ color: 'var(--erp-warning-text)' }}>
-              {isAdmin
-                ? (
-                  <>
-                    Read-only details.
-                    {design.status === 'IN_REVIEW' && ' Choose Approve, Request revision, or Reject below.'}
-                    {design.status === 'APPROVED' && ' Release below when ready for pattern development.'}
-                  </>
-                )
-                : design.status === 'IN_REVIEW'
-                  ? 'This design is submitted for review. You cannot edit it until an admin requests a revision or it is returned.'
-                  : (
-                    <>
-                      This design is locked while in <strong>{design.status.replace(/_/g, ' ')}</strong>.
-                    </>
-                  )}
-            </p>
-          </ErpCard>
-        )}
+        <StickyActionBar status={barStatus}>{barActions}</StickyActionBar>
 
-        <DesignFormNav
-          groups={visibleGroups}
-          activeGroup={activeGroup}
-          activeTab={activeTab}
-          progress={tabProgress}
-          onGroupChange={(gid) => {
-            const group = TAB_GROUPS.find((g) => g.id === gid);
-            setActiveGroup(gid);
-            if (group?.tabs[0]) setActiveTab(group.tabs[0].id as TabId);
-          }}
-          onTabChange={(tid) => setActiveTab(tid)}
-        />
-
-        <ErpCard className="!p-4">
-          <TabPanel tab={activeTab} active={activeTab} onJumpTo={jumpToSection} />
-        </ErpCard>
-
-        <DesignWizardNav
-          stepIndex={wizardIndex}
-          stepCount={wizardSteps.length}
-          groupLabel={currentWizardStep?.groupLabel ?? ''}
-          tabLabel={currentWizardStep?.tabLabel ?? ''}
-          canGoBack={wizardIndex > 0}
-          canGoNext={!isLastWizardStep}
-          isLast={isLastWizardStep || isReviewStep}
-          editable={editable && !isAdmin}
-          saving={saveMutation.isPending}
-          canSubmit={canSubmit}
-          submitHint={submitHint || undefined}
-          nextLabel={wizardSteps[wizardIndex + 1]?.tabId === 'review' ? 'Go to check & submit' : undefined}
-          onBack={() => goToWizardStep(wizardIndex - 1)}
-          onNext={() => goToWizardStep(wizardIndex + 1)}
-          onSaveDraft={() => saveMutation.mutate(false)}
-          onSubmit={() => saveMutation.mutate(true)}
-        />
-
-        {showApproverActions && design && (design.status === 'IN_REVIEW' || design.status === 'APPROVED') && (
-          <ErpCard className="mt-3 !p-3">
-            <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-erp-text-muted">Review decision</p>
-            <ApproverActionDropdown
-              allowed={showApproverActions}
-              status={design.status}
-              disabled={lifecycleMutation.isPending || reviewMutation.isPending}
-              loading={lifecycleMutation.isPending || reviewMutation.isPending}
-              onDecide={(decision: ApproverDecision) => {
-                if (decision === 'approve') {
-                  lifecycleMutation.mutate({ action: 'approve' });
-                  return;
-                }
-                if (decision === 'release') {
-                  setReleasePrompt(true);
-                  return;
-                }
-                setReviewPrompt(decision);
-              }}
-            />
-          </ErpCard>
-        )}
-
-        {!isAdmin && design?.status === 'RELEASED' && canPattern && (
-          <ErpCard className="mt-3 !p-3">
-            <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-erp-text-muted">Next step</p>
-            <Link to={`/pattern?designId=${id}`} className="erp-btn-primary inline-flex items-center px-3 py-1.5 text-[11px]">
-              Continue to pattern development →
-            </Link>
-          </ErpCard>
-        )}
-
-        {showApproverActions && (
-          <>
-            <CommentPrompt
-              open={!!reviewPrompt}
-              title={reviewPrompt === 'reject' ? 'Reject design' : 'Request revision'}
-              message="Comments are required so the designer knows what to fix."
-              required
-              minLength={3}
-              confirmLabel={reviewPrompt === 'reject' ? 'Reject' : 'Send back'}
-              loading={reviewMutation.isPending}
-              onCancel={() => setReviewPrompt(null)}
-              onConfirm={(comments) => reviewMutation.mutate(comments)}
-            />
-            <ReleasePatternMasterModal
-              open={releasePrompt}
-              designLabel={design ? `${design.designCode} — ${design.title}` : undefined}
-              loading={lifecycleMutation.isPending}
-              onCancel={() => setReleasePrompt(false)}
-              onConfirm={(patternMasterId) => lifecycleMutation.mutate({ action: 'release', patternMasterId })}
-            />
-          </>
-        )}
+        {showApproverActions && decisions.releaseModal}
       </div>
     </DesignFormProvider>
   );

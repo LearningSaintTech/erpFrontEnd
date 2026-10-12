@@ -33,8 +33,6 @@ import type {
   InspectionTemplate,
   CapaRecord,
   QualityInspection,
-  Rfq,
-  Quotation,
   WasteRecord,
   WasteStats,
   WasteSummary,
@@ -54,7 +52,7 @@ const unwrapList = <T>(res: { data: { data: T; meta?: ApiListMeta } }) => ({
 export const purchaseApi = {
   stats: () => api.get<{ data: PurchaseStats }>('/purchase/stats').then(unwrap),
   catalog: () => api.get<{ data: Record<string, string[]> }>('/purchase/catalog').then(unwrap),
-  listSuppliers: (params?: { limit?: number }) =>
+  listSuppliers: (params?: { limit?: number; status?: 'ACTIVE' | 'INACTIVE' }) =>
     api.get<{ data: Supplier[]; meta?: ApiListMeta }>('/suppliers', { params: { limit: 200, ...params } }).then(unwrap),
   listSuppliersPage: (params?: { page?: number; limit?: number; search?: string }) =>
     api.get<{ data: Supplier[]; meta: ApiListMeta }>('/suppliers', { params }).then(unwrapList),
@@ -73,6 +71,9 @@ export const purchaseApi = {
   approvePR: (id: string) => api.post<{ data: PurchaseRequisition }>(`/purchase-requisitions/${id}/approve`).then(unwrap),
   rejectPR: (id: string, comments: string) =>
     api.post<{ data: PurchaseRequisition }>(`/purchase-requisitions/${id}/reject`, { comments }).then(unwrap),
+  requestPrChanges: (id: string, comments: string) =>
+    api.post<{ data: PurchaseRequisition }>(`/purchase-requisitions/${id}/request-changes`, { comments }).then(unwrap),
+  cancelPR: (id: string) => api.post<{ data: PurchaseRequisition }>(`/purchase-requisitions/${id}/cancel`).then(unwrap),
   listPOs: (params?: { status?: string; excludeStatus?: string; limit?: number; paymentStatus?: string }) =>
     api.get<{ data: PurchaseOrder[]; meta?: ApiListMeta }>('/purchase-orders', { params: { limit: 200, ...params } }).then(unwrap),
   listPOsPage: (params?: { page?: number; limit?: number; status?: string; excludeStatus?: string; search?: string; paymentStatus?: string }) =>
@@ -82,10 +83,15 @@ export const purchaseApi = {
   createPO: (body: {
     supplierId: string;
     prId?: string;
-    lines?: { materialId: string; orderedQty: number; unit?: string; unitPrice?: number }[];
+    /** With prId, orderedQty may be omitted (defaults to the PR qty) to override only unitPrice. */
+    lines?: { materialId: string; orderedQty?: number; unit?: string; unitPrice?: number }[];
     receipts?: { dataUrl?: string; fileName?: string; contentType?: string; url?: string }[];
   }) =>
     api.post<{ data: PurchaseOrder }>('/purchase-orders', body).then(unwrap),
+  cancelPO: (id: string, reason?: string) =>
+    api.post<{ data: PurchaseOrder }>(`/purchase-orders/${id}/cancel`, { reason }).then(unwrap),
+  closePO: (id: string, reason?: string) =>
+    api.post<{ data: PurchaseOrder }>(`/purchase-orders/${id}/close`, { reason }).then(unwrap),
   setPoReceipts: (id: string, receipts: { url?: string; fileName?: string; dataUrl?: string; contentType?: string }[]) =>
     api.patch<{ data: PurchaseOrder }>(`/purchase-orders/${id}/receipts`, { receipts }).then(unwrap),
   downloadReceipt: (kind: 'po' | 'grn', id: string, index: number, fileName?: string) =>
@@ -111,19 +117,7 @@ export const purchaseApi = {
   setGrnReceipts: (id: string, receipts: { url?: string; fileName?: string; dataUrl?: string; contentType?: string }[]) =>
     api.patch<{ data: GoodsReceipt }>(`/goods-receipts/${id}/receipts`, { receipts }).then(unwrap),
   submitGrnQc: (id: string) => api.post<{ data: GoodsReceipt }>(`/goods-receipts/${id}/submit-qc`).then(unwrap),
-  listRfqs: (params?: { status?: string; limit?: number }) =>
-    api.get<{ data: Rfq[]; meta?: ApiListMeta }>('/rfqs', { params: { limit: 200, ...params } }).then(unwrap),
-  listRfqsPage: (params?: { page?: number; limit?: number; status?: string; search?: string }) =>
-    api.get<{ data: Rfq[]; meta: ApiListMeta }>('/rfqs', { params }).then(unwrapList),
-  createRfqFromPr: (prId: string, supplierIds?: string[]) =>
-    api.post<{ data: Rfq }>('/rfqs/from-pr', { prId, supplierIds }).then(unwrap),
-  sendRfq: (id: string) => api.post<{ data: Rfq }>(`/rfqs/${id}/send`).then(unwrap),
-  addQuotation: (rfqId: string, body: { supplierId: string; lines: { materialId: string; quantity: number; unit?: string; unitPrice: number }[] }) =>
-    api.post<{ data: Quotation }>(`/rfqs/${rfqId}/quotations`, body).then(unwrap),
-  compareQuotations: (rfqId: string) =>
-    api.get<{ data: Quotation[] }>(`/rfqs/${rfqId}/quotations/compare`).then(unwrap),
-  selectQuotation: (id: string) =>
-    api.post<{ data: { quotation: Quotation; purchaseOrder: PurchaseOrder } }>(`/quotations/${id}/select`).then(unwrap),
+  cancelGRN: (id: string) => api.post<{ data: GoodsReceipt }>(`/goods-receipts/${id}/cancel`).then(unwrap),
 };
 
 export const productionApi = {
@@ -271,7 +265,12 @@ export const wasteApi = {
     const token = localStorage.getItem('accessToken');
     const factoryId = localStorage.getItem('factoryId');
     const base = import.meta.env.VITE_API_URL || 'http://localhost:3000/api/v1';
-    const qs = new URLSearchParams(params as Record<string, string> || {}).toString();
+    // Drop unset filters — URLSearchParams turns undefined into the literal "undefined",
+    // which made the export match nothing.
+    const clean = Object.entries((params || {}) as Record<string, unknown>)
+      .filter(([, v]) => v !== undefined && v !== null && v !== '')
+      .map(([k, v]) => [k, String(v)]);
+    const qs = new URLSearchParams(clean).toString();
     const res = await fetch(`${base}/waste-records/export${qs ? `?${qs}` : ''}`, {
       headers: { Authorization: `Bearer ${token}`, 'X-Factory-Id': factoryId || '' },
     });
@@ -304,6 +303,8 @@ export const qualityApi = {
     failedQuantity?: number;
     result?: string;
     disposition?: 'PASS' | 'REWORK' | 'REJECT';
+    /** Incoming (GRN) QC: one result per GRN line; accepted + rejected <= received. */
+    lines?: { materialId: string; acceptedQty: number; rejectedQty: number }[];
     storageBinId?: string;
     autoDispatchReady?: boolean;
     notes?: string;

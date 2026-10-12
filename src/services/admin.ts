@@ -101,8 +101,10 @@ export const machineApi = {
     api.get<{ data: ProductionLine[]; meta: ApiListMeta }>('/production-lines', { params: { limit: 100, ...params } })
       .then(unwrapList).then((r) => r.items),
   createLine: (body: object) => api.post<{ data: ProductionLine }>('/production-lines', body).then(unwrap),
+  updateLine: (id: string, body: object) => api.patch<{ data: ProductionLine }>(`/production-lines/${id}`, body).then(unwrap),
   listShifts: () => api.get<{ data: Shift[] }>('/shifts').then(unwrap),
   createShift: (body: object) => api.post<{ data: Shift }>('/shifts', body).then(unwrap),
+  updateShift: (id: string, body: object) => api.patch<{ data: Shift }>(`/shifts/${id}`, body).then(unwrap),
 };
 
 export const qualityAdminApi = {

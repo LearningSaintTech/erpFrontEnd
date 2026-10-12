@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { Check, ChevronDown, Search } from 'lucide-react';
 
@@ -21,11 +21,14 @@ export function ErpSearchSelect({
   placeholder = '— Select —',
   disabled = false,
   loading = false,
-  className = 'w-full !py-1.5 text-[11px]',
+  className = 'w-full !py-1.5 text-[13px]',
   allowClear = true,
   emptyText = 'No matches',
   searchPlaceholder = 'Search…',
   id,
+  'aria-invalid': ariaInvalid,
+  'aria-describedby': ariaDescribedBy,
+  'aria-label': ariaLabel,
 }: {
   value: string;
   onChange: (value: string, option: ErpSearchOption | null) => void;
@@ -38,11 +41,18 @@ export function ErpSearchSelect({
   emptyText?: string;
   searchPlaceholder?: string;
   id?: string;
+  /** Wired automatically by <Field>. */
+  'aria-invalid'?: boolean;
+  'aria-describedby'?: string;
+  /** Use when there is no visible <Field> label. */
+  'aria-label'?: string;
 }) {
   const triggerRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const itemRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const listId = useId();
+  const optionId = (i: number) => `${listId}-opt-${i}`;
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [highlight, setHighlight] = useState(0);
@@ -90,11 +100,17 @@ export function ErpSearchSelect({
     };
   }, [open]);
 
+  // Letters typed on the closed trigger open the panel and seed the search with them.
+  const typedAhead = useRef('');
+
   useEffect(() => {
     if (!open) return;
-    setQuery('');
-    const idx = options.findIndex((o) => o.value === value);
+    setQuery(typedAhead.current);
+    const idx = typedAhead.current ? -1 : options.findIndex((o) => o.value === value);
+    typedAhead.current = '';
     setHighlight(idx >= 0 ? idx : 0);
+    // Focus now (the panel is already rendered) so fast typing is not lost; retry after paint.
+    searchRef.current?.focus();
     const t = window.setTimeout(() => searchRef.current?.focus(), 0);
     return () => window.clearTimeout(t);
     // Reset search only when the panel opens.
@@ -119,6 +135,8 @@ export function ErpSearchSelect({
   const pick = (opt: ErpSearchOption | null) => {
     onChange(opt?.value || '', opt);
     setOpen(false);
+    // Back to the field (the search box is gone) so Tab continues to the next input.
+    triggerRef.current?.focus({ preventScroll: true });
   };
 
   const onTriggerKey = (e: KeyboardEvent) => {
@@ -126,11 +144,33 @@ export function ErpSearchSelect({
     if (e.key === 'ArrowDown' || e.key === 'Enter' || e.key === ' ') {
       e.preventDefault();
       setOpen(true);
+      return;
+    }
+    // Printable key while the trigger has focus: type-to-search instead of dropping the key.
+    // Only for keys typed on the trigger itself — the search box's keys bubble here through the
+    // React tree (the panel is portaled) and must not be added a second time.
+    if (e.target === triggerRef.current && e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      if (open) {
+        // Move focus first and let the browser deliver the character to the search box itself
+        // (adding it here as well typed every letter twice).
+        searchRef.current?.focus();
+      } else {
+        e.preventDefault();
+        typedAhead.current += e.key;
+        setOpen(true);
+      }
     }
   };
 
   const onSearchKey = (e: KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Escape') {
+      e.preventDefault();
+      setOpen(false);
+      triggerRef.current?.focus();
+      return;
+    }
+    // The panel is portaled to <body>: Tab must not wander into it or past it — close and return.
+    if (e.key === 'Tab') {
       e.preventDefault();
       setOpen(false);
       triggerRef.current?.focus();
@@ -165,6 +205,9 @@ export function ErpSearchSelect({
         disabled={disabled || loading}
         aria-haspopup="listbox"
         aria-expanded={open}
+        aria-invalid={ariaInvalid || undefined}
+        aria-describedby={ariaDescribedBy}
+        aria-label={ariaLabel}
         onClick={() => { if (!disabled && !loading) setOpen((o) => !o); }}
         onKeyDown={onTriggerKey}
         className={`erp-select flex w-full min-w-0 items-center justify-between gap-1 text-left disabled:cursor-not-allowed disabled:opacity-60 ${className}`.trim()}
@@ -172,11 +215,11 @@ export function ErpSearchSelect({
         <span className={`min-w-0 truncate ${muted ? 'text-erp-text-muted' : 'text-erp-text-primary'}`}>
           {display}
         </span>
-        <ChevronDown size={12} className={`shrink-0 text-erp-text-muted ${open ? 'rotate-180' : ''}`} />
+        <ChevronDown size={12} aria-hidden="true" className={`shrink-0 text-erp-text-muted ${open ? 'rotate-180' : ''}`} />
       </button>
 
       {open && createPortal(
-        <div
+        <div data-overlay-popover=""
           ref={panelRef}
           data-erp-search-panel="true"
           className="fixed z-[11000] overflow-hidden rounded-md border border-[var(--erp-border)] bg-[var(--erp-surface,#fff)] shadow-lg"
@@ -189,7 +232,7 @@ export function ErpSearchSelect({
           }}
         >
           <div className="relative border-b border-[var(--erp-border)] p-1.5">
-            <Search size={12} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-erp-text-muted" />
+            <Search size={12} aria-hidden="true" className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-erp-text-muted" />
             <input
               ref={searchRef}
               value={query}
@@ -199,47 +242,59 @@ export function ErpSearchSelect({
               }}
               onKeyDown={onSearchKey}
               placeholder={searchPlaceholder}
-              className="erp-input w-full !py-1 !pl-7 !text-[11px]"
+              className="erp-input w-full !py-1 !pl-7 !text-[13px]"
               aria-label="Filter options"
+              role="combobox"
+              aria-expanded="true"
+              aria-autocomplete="list"
+              aria-controls={listId}
+              aria-activedescendant={filtered[safeHighlight] ? optionId(safeHighlight) : undefined}
             />
           </div>
+          {filtered.length === 0 && (
+            <p className="px-2.5 py-2 text-[13px] text-erp-text-muted" role="status">{emptyText}</p>
+          )}
           <ul
+            id={listId}
             role="listbox"
+            aria-label="Options"
             className="overflow-y-auto py-0.5"
             style={{ maxHeight: Math.max(80, pos.maxHeight - 44) }}
           >
             {allowClear && value && !query.trim() && (
-              <li>
+              <li role="presentation">
                 <button
                   type="button"
-                  className="flex w-full px-2.5 py-1.5 text-left text-[11px] text-erp-text-muted hover:bg-[var(--erp-surface-muted)]"
+                  role="option"
+                  aria-selected={false}
+                  tabIndex={-1}
+                  className="flex w-full px-2.5 py-1.5 text-left text-[13px] text-erp-text-muted hover:bg-[var(--erp-surface-muted)]"
                   onClick={() => pick(null)}
                 >
                   {placeholder}
                 </button>
               </li>
             )}
-            {filtered.length === 0 && (
-              <li className="px-2.5 py-2 text-[11px] text-erp-text-muted">{emptyText}</li>
-            )}
             {filtered.map((opt, i) => {
               const on = opt.value === value;
               const hi = i === safeHighlight;
               return (
-                <li key={opt.value}>
+                <li key={opt.value} role="presentation">
                   <button
                     ref={(el) => { itemRefs.current[i] = el; }}
+                    id={optionId(i)}
                     type="button"
                     role="option"
+                    tabIndex={-1}
                     aria-selected={on}
-                    className={`flex w-full items-center justify-between gap-2 px-2.5 py-1.5 text-left text-[11px] ${
+                    className={`flex w-full items-center justify-between gap-2 px-2.5 py-1.5 text-left text-[13px] ${
                       hi ? 'bg-[var(--erp-accent-muted)]/40' : 'hover:bg-[var(--erp-surface-muted)]'
-                    } ${on ? 'text-[var(--erp-accent)]' : 'text-erp-text-primary'}`}
+                    } ${on ? 'text-[var(--erp-accent-text)]' : 'text-erp-text-primary'}`}
                     onMouseEnter={() => setHighlight(i)}
                     onClick={() => pick(opt)}
                   >
                     <span className="min-w-0 truncate">{opt.label}</span>
-                    {on && <Check size={12} className="shrink-0" />}
+                    {on && <Check size={12} className="shrink-0" aria-hidden="true" />}
                   </button>
                 </li>
               );

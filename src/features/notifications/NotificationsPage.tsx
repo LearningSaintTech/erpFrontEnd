@@ -1,20 +1,24 @@
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Bell, CheckCheck, RefreshCw, Search } from 'lucide-react';
-import { notificationApi } from '../../services/notifications';
-import type { NotificationItem } from '../../types/api';
 import {
-  ErpPageHeader, ErpButton, ErpCard, ErpDataTable, ErpInput, ErpSelect, ErpStatusBadge,
+  Bell, BellDot, CalendarDays, CheckCheck, ChevronRight, Inbox,
+} from 'lucide-react';
+import { notificationApi } from '../../services/notifications';
+import type { NotificationItem, ReportDatePreset } from '../../types/api';
+import {
+  Badge, Button, EmptyState, ErpSelect, FilterBar, IconButton, KpiGrid, PageHeader, SearchInput,
+  Section, Skeleton, StatTile, TablePager, Tabs,
 } from '../../components/erp';
-import { AlertBanner } from '../../components/AlertBanner';
-import { SuccessBanner } from '../users/SuccessBanner';
+import { QueryState } from '../../components/QueryState';
 import { useAuth } from '../../app/providers/AuthProvider';
-import { eventLabel, isUnread, notificationLink, relativeTime, statusLabel } from './notificationsUtils';
+import { eventLabel, isUnread, notificationLink, relativeTime } from './notificationsUtils';
+import { useDebouncedValue } from '../users/useDebouncedValue';
+import { PRESET_OPTIONS, presetToRange } from '../dashboard/dashboardUtils';
+import { formatDateTime } from '../../utils/format';
 
 const PAGE_SIZE = 20;
-const fieldLabel = 'mb-0.5 block text-[10px] font-medium text-erp-text-muted';
-const btnSm = '!px-2 !py-1 text-[10px]';
+type StatusTab = 'all' | 'UNREAD' | 'READ';
 
 export function NotificationsPage() {
   const qc = useQueryClient();
@@ -23,18 +27,11 @@ export function NotificationsPage() {
   const canRead = permissions.includes('*') || permissions.includes('notification.read');
 
   const [page, setPage] = useState(1);
-  const [statusFilter, setStatusFilter] = useState('');
+  const [statusTab, setStatusTab] = useState<StatusTab>('all');
   const [eventFilter, setEventFilter] = useState('');
-  const [search, setSearch] = useState('');
+  const [preset, setPreset] = useState<ReportDatePreset>('all');
   const [searchInput, setSearchInput] = useState('');
-  const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
-
-  const showSuccess = (msg: string) => {
-    setSuccess(msg);
-    setError('');
-    setTimeout(() => setSuccess(''), 3000);
-  };
+  const search = useDebouncedValue(searchInput.trim());
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ['notifications'] });
@@ -55,14 +52,17 @@ export function NotificationsPage() {
     enabled: canRead,
   });
 
-  const { data, isLoading, isFetching, refetch } = useQuery({
-    queryKey: ['notifications', page, statusFilter, eventFilter, search],
+  const range = presetToRange(preset);
+  const { data, isLoading, isError, error, refetch } = useQuery({
+    queryKey: ['notifications', page, statusTab, eventFilter, search, preset],
     queryFn: () => notificationApi.listPage({
       page,
       limit: PAGE_SIZE,
-      status: statusFilter || undefined,
+      status: statusTab === 'all' ? undefined : statusTab,
       eventType: eventFilter || undefined,
       search: search || undefined,
+      from: range.from,
+      to: range.to,
     }),
     enabled: canRead,
   });
@@ -72,17 +72,13 @@ export function NotificationsPage() {
 
   const markRead = useMutation({
     mutationFn: (id: string) => notificationApi.markRead(id),
-    onSuccess: () => { invalidate(); },
-    onError: (e: Error) => setError(e.message),
+    onSuccess: invalidate,
   });
 
   const markAll = useMutation({
     mutationFn: () => notificationApi.markAllRead(),
-    onSuccess: () => {
-      showSuccess('All notifications marked as read');
-      invalidate();
-    },
-    onError: (e: Error) => setError(e.message),
+    meta: { successMessage: 'All notifications marked as read' },
+    onSuccess: invalidate,
   });
 
   const openNotification = (n: NotificationItem) => {
@@ -91,172 +87,144 @@ export function NotificationsPage() {
     if (link) navigate(link);
   };
 
+  const hasFilters = !!(search || eventFilter || preset !== 'all');
+  const clear = () => { setSearchInput(''); setEventFilter(''); setPreset('all'); setPage(1); };
+  const selectTab = (t: StatusTab) => { setStatusTab(t); setPage(1); };
+
   if (!canRead) {
     return (
-      <div>
-        <ErpPageHeader title="Notifications" subtitle="Your in-app alerts and updates" />
-        <p className="text-sm text-erp-text-muted">You do not have permission to view notifications.</p>
+      <div className="space-y-4">
+        <PageHeader title="Notifications" description="Your in-app alerts and updates." />
+        <Section><EmptyState icon={Bell} title="You don't have access to notifications" description="Ask an administrator for the notification permission." /></Section>
       </div>
     );
   }
 
   const eventTypes = catalog?.eventTypes ?? [];
+  const unread = stats?.unread ?? 0;
 
   return (
-    <div>
-      <AlertBanner message={error} onDismiss={() => setError('')} />
-      <SuccessBanner message={success} onDismiss={() => setSuccess('')} />
-
-      <ErpPageHeader
+    <div className="space-y-4">
+      <PageHeader
         title="Notifications"
-        subtitle="Design, production, purchase payments, and approval updates"
-        actions={(
-          <div className="flex gap-2">
-            <ErpButton variant="secondary" onClick={() => refetch()} disabled={isFetching}>
-              <RefreshCw className={`mr-1 inline h-3.5 w-3.5 ${isFetching ? 'animate-spin' : ''}`} />
-              Refresh
-            </ErpButton>
-            {(stats?.unread ?? 0) > 0 && (
-              <ErpButton variant="secondary" onClick={() => markAll.mutate()} disabled={markAll.isPending}>
-                <CheckCheck className="mr-1 inline h-3.5 w-3.5" />
-                Mark all read
-              </ErpButton>
-            )}
-          </div>
-        )}
+        description="Updates about designs, production, payments and approvals."
+        primaryAction={unread > 0 ? (
+          <Button size="sm" variant="secondary" icon={<CheckCheck size={16} />} loading={markAll.isPending} onClick={() => markAll.mutate()}>
+            Mark all as read
+          </Button>
+        ) : undefined}
       />
 
-      <div className="mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <ErpCard className="p-3">
-          <span className="text-[10px] text-erp-text-muted">Unread</span>
-          <p className="mt-1 text-lg font-semibold">{stats?.unread ?? '—'}</p>
-        </ErpCard>
-        <ErpCard className="p-3">
-          <span className="text-[10px] text-erp-text-muted">Read</span>
-          <p className="mt-1 text-lg font-semibold">{stats?.read ?? '—'}</p>
-        </ErpCard>
-        <ErpCard className="p-3">
-          <span className="text-[10px] text-erp-text-muted">Today</span>
-          <p className="mt-1 text-lg font-semibold">{stats?.todayCount ?? '—'}</p>
-        </ErpCard>
-        <ErpCard className="p-3">
-          <span className="text-[10px] text-erp-text-muted">Total</span>
-          <p className="mt-1 text-lg font-semibold">{stats?.total ?? '—'}</p>
-        </ErpCard>
-      </div>
+      <KpiGrid cols={4}>
+        <StatTile icon={BellDot} label="Unread" value={stats?.unread ?? '—'} onClick={() => selectTab(statusTab === 'UNREAD' ? 'all' : 'UNREAD')} active={statusTab === 'UNREAD'} />
+        <StatTile icon={CalendarDays} label="Today" value={stats?.todayCount ?? '—'} />
+        <StatTile icon={CheckCheck} label="Read" value={stats?.read ?? '—'} onClick={() => selectTab(statusTab === 'READ' ? 'all' : 'READ')} active={statusTab === 'READ'} />
+        <StatTile icon={Inbox} label="Total" value={stats?.total ?? '—'} />
+      </KpiGrid>
 
-      <ErpCard className="p-4">
-        <div className="mb-4 flex flex-wrap items-end gap-3">
-          <div className="min-w-[180px] flex-1">
-            <span className={fieldLabel}>Search</span>
-            <div className="flex gap-2">
-              <ErpInput
-                value={searchInput}
-                onChange={(e) => setSearchInput(e.target.value)}
-                placeholder="Title or message…"
-                onKeyDown={(e) => e.key === 'Enter' && (setSearch(searchInput), setPage(1))}
-              />
-              <ErpButton variant="secondary" onClick={() => { setSearch(searchInput); setPage(1); }}>
-                <Search className="h-3.5 w-3.5" />
-              </ErpButton>
-            </div>
-          </div>
-          <label>
-            <span className={fieldLabel}>Status</span>
-            <ErpSelect value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}>
-              <option value="">All</option>
-              <option value="UNREAD">Unread</option>
-              <option value="READ">Read</option>
-            </ErpSelect>
-          </label>
-          <label>
-            <span className={fieldLabel}>Event type</span>
-            <ErpSelect value={eventFilter} onChange={(e) => { setEventFilter(e.target.value); setPage(1); }}>
-              <option value="">All</option>
-              {eventTypes.map((t) => (
-                <option key={t} value={t}>{catalog?.eventTypeLabels?.[t] || eventLabel(t)}</option>
+      <Tabs
+        tabs={[
+          { id: 'all', label: 'All' },
+          { id: 'UNREAD', label: 'Unread', count: stats?.unread ?? null },
+          { id: 'READ', label: 'Read' },
+        ]}
+        active={statusTab}
+        onChange={(id) => selectTab(id as StatusTab)}
+        ariaLabel="Notification status"
+      />
+
+      <Section flush>
+        <FilterBar
+          search={<SearchInput value={searchInput} onChange={(v) => { setSearchInput(v); setPage(1); }} placeholder="Search title or message…" inputSize="sm" />}
+          filters={(
+            <>
+              <ErpSelect inputSize="sm" value={eventFilter} onChange={(e) => { setEventFilter(e.target.value); setPage(1); }} aria-label="Event type">
+                <option value="">All events</option>
+                {eventTypes.map((t) => <option key={t} value={t}>{catalog?.eventTypeLabels?.[t] || eventLabel(t)}</option>)}
+              </ErpSelect>
+              <ErpSelect inputSize="sm" value={preset} onChange={(e) => { setPreset(e.target.value as ReportDatePreset); setPage(1); }} aria-label="Period">
+                {PRESET_OPTIONS.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+              </ErpSelect>
+            </>
+          )}
+          onClear={hasFilters ? clear : undefined}
+        />
+        <QueryState isError={isError} error={error} onRetry={refetch}>
+          {isLoading ? (
+            <ul className="divide-y divide-[var(--erp-border)]" aria-busy="true">
+              {Array.from({ length: 6 }).map((_, i) => (
+                <li key={i} className="space-y-2 px-4 py-3.5"><Skeleton width="40%" /><Skeleton width="70%" /></li>
               ))}
-            </ErpSelect>
-          </label>
-        </div>
-
-        <ErpDataTable>
-          <thead>
-            <tr>
-              <th>Notification</th>
-              <th>Event</th>
-              <th>When</th>
-              <th>Status</th>
-              <th className="text-right">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {isLoading ? (
-              <tr><td colSpan={5} className="py-8 text-center text-erp-text-muted">Loading…</td></tr>
-            ) : items.map((n) => {
-              const link = notificationLink(n);
-              return (
-                <tr
-                  key={n._id}
-                  className={isUnread(n) ? 'bg-[var(--erp-accent-muted)]/30' : undefined}
-                >
-                  <td>
+            </ul>
+          ) : items.length === 0 ? (
+            hasFilters || statusTab !== 'all' ? (
+              <EmptyState
+                title={statusTab === 'UNREAD' && !hasFilters ? 'No unread notifications' : 'No notifications match these filters'}
+                description={statusTab === 'UNREAD' && !hasFilters ? 'You are all caught up.' : undefined}
+                action={hasFilters ? <Button size="sm" variant="secondary" onClick={clear}>Clear filters</Button> : undefined}
+              />
+            ) : (
+              <EmptyState icon={Bell} title="No notifications yet" description="Approvals, revision requests and status changes will show up here." />
+            )
+          ) : (
+            <ul className="divide-y divide-[var(--erp-border)]">
+              {items.map((n) => {
+                const link = notificationLink(n);
+                const unreadItem = isUnread(n);
+                return (
+                  <li key={n._id} className={`group flex items-start gap-3 px-4 py-3 transition-colors hover:bg-[var(--erp-row-hover)] ${unreadItem ? 'bg-[var(--erp-accent-subtle)]' : ''}`}>
+                    <span className="mt-1.5 flex h-2 w-2 shrink-0 items-center" aria-hidden="true">
+                      {unreadItem && <span className="h-2 w-2 rounded-full bg-[var(--erp-accent)]" />}
+                    </span>
                     <button
                       type="button"
-                      className={`text-left ${link ? 'hover:text-[var(--erp-accent)]' : ''}`}
+                      className="min-w-0 flex-1 text-left focus-visible:outline-none"
                       onClick={() => openNotification(n)}
+                      disabled={!link && !unreadItem}
                     >
-                      <p className="font-medium text-sm">{n.title}</p>
-                      {n.message && <p className="mt-0.5 text-xs text-erp-text-muted line-clamp-2">{n.message}</p>}
+                      <span className="flex flex-wrap items-center gap-2">
+                        <span className={`text-sm ${unreadItem ? 'font-semibold text-erp-text-primary' : 'font-medium text-erp-text-secondary'} group-hover:text-[var(--erp-accent)]`}>
+                          {n.title}
+                        </span>
+                        {(() => {
+                          const ev = catalog?.eventTypeLabels?.[n.eventType] || eventLabel(n.eventType);
+                          return ev.toLowerCase() !== n.title.toLowerCase() ? <Badge tone="neutral" dot={false}>{ev}</Badge> : null;
+                        })()}
+                        {unreadItem && <span className="sr-only">(unread)</span>}
+                      </span>
+                      {n.message && <span className="mt-0.5 line-clamp-2 block text-[13px] text-erp-text-muted">{n.message}</span>}
+                      <span className="mt-1 block text-xs text-erp-text-muted" title={formatDateTime(n.createdAt)}>{relativeTime(n.createdAt)}</span>
                     </button>
-                  </td>
-                  <td className="text-xs text-erp-text-muted">{eventLabel(n.eventType)}</td>
-                  <td className="text-xs text-erp-text-muted" title={new Date(n.createdAt).toLocaleString()}>
-                    {relativeTime(n.createdAt)}
-                  </td>
-                  <td>
-                    <ErpStatusBadge status={n.status} label={statusLabel(n.status)} />
-                  </td>
-                  <td className="text-right">
-                    {isUnread(n) && (
-                      <ErpButton variant="secondary" className={btnSm} onClick={() => markRead.mutate(n._id)}>
-                        Mark read
-                      </ErpButton>
-                    )}
-                    {link && (
-                      <ErpButton variant="secondary" className={`${btnSm} ml-1`} onClick={() => openNotification(n)}>
-                        Open
-                      </ErpButton>
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
-            {!isLoading && items.length === 0 && (
-              <tr>
-                <td colSpan={5} className="py-12 text-center">
-                  <Bell className="mx-auto mb-2 h-8 w-8 text-erp-text-muted opacity-50" />
-                  <p className="text-erp-text-muted">No notifications yet</p>
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </ErpDataTable>
-
-        {meta && meta.totalPages > 1 && (
-          <div className="mt-4 flex items-center justify-between text-xs text-erp-text-muted">
-            <span>Page {meta.page} of {meta.totalPages}</span>
-            <div className="flex gap-2">
-              <ErpButton variant="secondary" className={btnSm} disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>Previous</ErpButton>
-              <ErpButton variant="secondary" className={btnSm} disabled={page >= meta.totalPages} onClick={() => setPage((p) => p + 1)}>Next</ErpButton>
-            </div>
-          </div>
-        )}
-      </ErpCard>
-
-      <p className="mt-4 text-center text-xs text-erp-text-muted">
-        <Link to="/approvals" className="text-[var(--erp-accent)] hover:underline">View pending approvals</Link>
-      </p>
+                    <span className="flex shrink-0 items-center gap-1">
+                      {unreadItem && (
+                        <IconButton aria-label="Mark as read" size="sm" onClick={() => markRead.mutate(n._id)}>
+                          <CheckCheck size={16} />
+                        </IconButton>
+                      )}
+                      {link && (
+                        <IconButton aria-label="Open" size="sm" onClick={() => openNotification(n)}>
+                          <ChevronRight size={16} />
+                        </IconButton>
+                      )}
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+          {meta && (
+            <TablePager
+              page={page}
+              totalPages={meta.totalPages}
+              total={meta.total}
+              pageSize={PAGE_SIZE}
+              itemLabel="notifications"
+              onPrev={() => setPage((p) => p - 1)}
+              onNext={() => setPage((p) => p + 1)}
+            />
+          )}
+        </QueryState>
+      </Section>
     </div>
   );
 }

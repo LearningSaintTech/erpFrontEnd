@@ -25,8 +25,8 @@ export function ChatToastStack() {
               <MessageSquare className="h-4 w-4" />
             </div>
             <div className="min-w-0 flex-1">
-              <p className="text-[11px] font-semibold text-erp-text-primary">{t.title}</p>
-              <p className="mt-0.5 line-clamp-2 text-[10px] text-erp-text-muted">{t.body}</p>
+              <p className="text-[13px] font-semibold text-erp-text-primary">{t.title}</p>
+              <p className="mt-0.5 line-clamp-2 text-xs text-erp-text-muted">{t.body}</p>
             </div>
             <span
               role="button"

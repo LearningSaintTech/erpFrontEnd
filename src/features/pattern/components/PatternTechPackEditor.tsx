@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ErpButton, ErpCard, ErpSearchSelect } from '../../../components/erp';
-import { InventoryCodeChips, InventoryCodeSelect } from '../../../components/InventoryCodeSelect';
+import { ArrowRight, CheckCircle2, Circle, Plus, Save, Trash2 } from 'lucide-react';
+import {
+  Button, DescriptionList, ErpDataTable, ErpInput, ErpSearchSelect, ErpSelect, Field, IconButton, InfoBanner,
+  Section, Tooltip,
+} from '../../../components/erp';
+import { InventoryCodeSelect } from '../../../components/InventoryCodeSelect';
 import { StoreMaterialRequestPanel } from './StoreMaterialRequestPanel';
+import { TechPackMeasurementChart } from './TechPackMeasurementChart';
+import { StickyActionBar, SaveState } from '../../design/components/StickyActionBar';
 import type {
   PatternTechPack, FabricConsumption, DesignBomLine, SizeChartData, DesignAccessory,
   PatternFabricSpecs, PatternCosting, QualityNotes, ManufacturingNotes, ProductionInfo,
@@ -22,11 +28,6 @@ export type TechPackFormState = {
   costing: PatternCosting;
   productionInfo: ProductionInfo;
 };
-
-const label = 'mb-1 block text-[10px] font-medium text-erp-text-muted';
-const input = 'w-full rounded border border-[var(--erp-border)] bg-[var(--erp-surface)] px-2 py-1 text-[11px] disabled:opacity-60';
-
-const compactSelect = 'w-full !py-1 text-[11px]';
 
 const STORE_TO_PATTERN_UNIT: Record<string, string> = {
   METERS: 'M',
@@ -61,6 +62,23 @@ function toFormState(techPack: PatternTechPack): TechPackFormState {
   };
 }
 
+/** Fill missing quoted rates from the store catalogue (applied to form and baseline alike). */
+function fillRates(f: TechPackFormState, materials: MaterialOption[]): TechPackFormState {
+  return {
+    ...f,
+    fabrics: f.fabrics.map((fab) => {
+      if (fab.fabricCost) return fab;
+      const m = fab.materialId ? materials.find((x) => x._id === fab.materialId) : undefined;
+      return m?.unitCost ? { ...fab, fabricCost: m.unitCost } : fab;
+    }),
+    accessories: f.accessories.map((a) => {
+      if (a.unitCost) return a;
+      const m = a.materialId ? materials.find((x) => x._id === a.materialId) : undefined;
+      return m?.unitCost ? { ...a, unitCost: m.unitCost } : a;
+    }),
+  };
+}
+
 export type TechPackPayload = {
   sizeChartData: SizeChartData;
   fabricConsumption: FabricConsumption[];
@@ -73,24 +91,22 @@ export type TechPackPayload = {
   productionInfo: ProductionInfo;
 };
 
+/**
+ * Fabric lives only in fabricConsumption (consumption + wastage). bomLines carry trims only —
+ * older records that mirrored fabric into bomLines are de-duplicated server-side and the
+ * mirror is dropped on the next save because the form rebuilds bomLines from trims.
+ */
 export function techPackFormToPayload(form: TechPackFormState): TechPackPayload {
   const fabrics = form.fabrics.filter((f) => f.materialId);
   const accessories = form.accessories.filter((a) => a.materialId || a.accessoryType);
-  const sampleBom: DesignBomLine[] = [
-    ...fabrics.map((f) => ({
-      materialId: f.materialId,
-      quantity: f.consumption || 0,
-      unit: f.unit || 'M',
-      category: 'FABRIC',
-    })),
-    ...accessories.map((a) => ({
-      materialId: a.materialId,
-      materialName: a.accessoryType,
-      quantity: a.consumption || 0,
-      unit: a.unit || 'PC',
-      category: 'TRIM',
-    })),
-  ];
+  const sampleBom: DesignBomLine[] = accessories.map((a) => ({
+    materialId: a.materialId,
+    materialName: a.accessoryType,
+    quantity: a.consumption || 0,
+    unit: a.unit || 'PC',
+    category: 'TRIM',
+    color: a.variantColor || '',
+  }));
   return {
     sizeChartData: {
       unit: form.unit || 'CM',
@@ -128,6 +144,19 @@ export function techPackFormToPayload(form: TechPackFormState): TechPackPayload 
   };
 }
 
+function money(n: number) {
+  return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function Check({ ok, label }: { ok: boolean; label: string }) {
+  return (
+    <span className={`inline-flex items-center gap-1 ${ok ? 'text-erp-text-secondary' : 'font-medium text-[var(--erp-warning-text)]'}`}>
+      {ok ? <CheckCircle2 size={14} className="text-[var(--erp-success-solid)]" /> : <Circle size={14} />}
+      {label}
+    </span>
+  );
+}
+
 export function PatternTechPackEditor({
   techPack,
   materials,
@@ -135,17 +164,35 @@ export function PatternTechPackEditor({
   saving,
   onSave,
   designId,
+  canContinue,
+  onContinue,
 }: {
   techPack: PatternTechPack;
   materials: MaterialOption[];
   readOnly: boolean;
   saving: boolean;
-  onSave: (payload: ReturnType<typeof techPackFormToPayload>) => void;
+  /** Persist the tech pack; resolves when saved. */
+  onSave: (payload: TechPackPayload) => Promise<unknown>;
   designId: string;
+  /** Server says the tech pack is complete (POM chart, consumption, trims). */
+  canContinue: boolean;
+  onContinue: () => void;
 }) {
   const [form, setForm] = useState<TechPackFormState>(() => toFormState(techPack));
-  const [pendingMeas, setPendingMeas] = useState('');
+  const [baseline, setBaseline] = useState<TechPackFormState>(() => toFormState(techPack));
   const [extraMaterials, setExtraMaterials] = useState<MaterialOption[]>([]);
+  const colourOptions = useMemo(
+    () => (techPack.design.colorVariants ?? []).map((v) => v.name).filter(Boolean),
+    [techPack.design.colorVariants],
+  );
+
+  const colourSelect = (value: string | undefined, onChange: (v: string) => void, label: string) => (
+    <ErpSelect inputSize="sm" value={value || ''} onChange={(e) => onChange(e.target.value)} disabled={readOnly} aria-label={label}>
+      <option value="">All colours</option>
+      {value && !colourOptions.includes(value) && <option value={value}>{value}</option>}
+      {colourOptions.map((c) => <option key={c} value={c}>{c}</option>)}
+    </ErpSelect>
+  );
 
   const allMaterials = useMemo(() => {
     const map = new Map(materials.map((m) => [m._id, m]));
@@ -171,20 +218,11 @@ export function PatternTechPackEditor({
 
   useEffect(() => {
     if (!materials.length) return;
-    setForm((f) => ({
-      ...f,
-      fabrics: f.fabrics.map((fab) => {
-        if (fab.fabricCost) return fab;
-        const m = fab.materialId ? materials.find((x) => x._id === fab.materialId) : undefined;
-        return m?.unitCost ? { ...fab, fabricCost: m.unitCost } : fab;
-      }),
-      accessories: f.accessories.map((a) => {
-        if (a.unitCost) return a;
-        const m = a.materialId ? materials.find((x) => x._id === a.materialId) : undefined;
-        return m?.unitCost ? { ...a, unitCost: m.unitCost } : a;
-      }),
-    }));
+    setForm((f) => fillRates(f, materials));
+    setBaseline((b) => fillRates(b, materials));
   }, [materials]);
+
+  const dirty = !readOnly && JSON.stringify(form) !== JSON.stringify(baseline);
 
   const set = (patch: Partial<TechPackFormState>) => setForm((f) => ({ ...f, ...patch }));
 
@@ -267,161 +305,108 @@ export function PatternTechPackEditor({
   const trimsCost = form.accessories.reduce((s, a) => s + (a.consumption || 0) * (a.unitCost || 0), 0);
   const totalCost = fabricCost + trimsCost;
 
+  const hasChart = form.rows.some((r) => Object.values(r.values).some((v) => v !== ''));
+  // A line counts only once it is usable: a material and a quantity above zero.
+  const hasFabric = form.fabrics.some((f) => f.materialId && Number(f.consumption) > 0);
+  const hasTrims = form.accessories.some((a) => a.materialId && Number(a.consumption) > 0);
+
+  const save = async () => {
+    const snapshot = form;
+    try {
+      await onSave(techPackFormToPayload(snapshot));
+      setBaseline(snapshot);
+    } catch {
+      // error toast comes from the mutation
+    }
+  };
+
+  const continueButton = (
+    <Button
+      variant={dirty ? 'secondary' : 'primary'}
+      iconRight={<ArrowRight size={16} />}
+      disabled={dirty || !canContinue}
+      onClick={onContinue}
+    >
+      Continue to marker
+    </Button>
+  );
+
   return (
-    <div className="space-y-3">
+    <div className="space-y-4">
       {techPack.techPack?.source === 'design_legacy' && (
-        <p className="rounded border border-amber-500/30 bg-amber-500/5 px-2 py-1.5 text-[10px] text-amber-800">
-          Pre-filled from the designer&apos;s original brief. Confirm and adjust the production values, then save.
-        </p>
+        <InfoBanner inset={false} tone="info">
+          Pre-filled from the designer&apos;s original brief. Check and adjust the production values, then save.
+        </InfoBanner>
       )}
 
-      <ErpCard className="!p-3">
-        <div className="mb-2 flex items-center justify-between gap-2">
-          <h3 className="text-[11px] font-semibold text-erp-text-primary">Graded measurement chart</h3>
-          <div className="w-28">
-            <span className={label}>Unit</span>
-            <select
-              value={/^in/i.test(form.unit) ? 'IN' : 'CM'}
-              onChange={(e) => set({ unit: e.target.value })}
-              disabled={readOnly}
-              className={input}
-            >
-              <option value="CM">cm</option>
-              <option value="IN">in</option>
-            </select>
-          </div>
-        </div>
+      <TechPackMeasurementChart
+        unit={form.unit}
+        sizeLabels={form.sizeLabels}
+        rows={form.rows}
+        readOnly={readOnly}
+        onUnitChange={(unit) => set({ unit })}
+        onSizeLabelsChange={setSizeLabels}
+        onAddRow={addMeasurementNamed}
+        onRemoveRow={removeRow}
+        onCellChange={setCell}
+      />
 
-        <div className="mb-2">
-          <span className={label}>Size range</span>
-          {readOnly ? (
-            <div className="flex flex-wrap gap-1.5">
-              {form.sizeLabels.map((s) => (
-                <span key={s} className="rounded border border-[var(--erp-border)] px-2 py-0.5 font-mono text-[10px]">{s}</span>
-              ))}
-              {!form.sizeLabels.length && <span className="text-[10px] text-amber-700">No sizes on this chart.</span>}
-            </div>
-          ) : (
-            <InventoryCodeChips type="SIZE" values={form.sizeLabels} onChange={setSizeLabels} />
-          )}
-          {!form.sizeLabels.length && !readOnly && (
-            <p className="mt-1 text-[10px] text-amber-700">Pick the size range this style is graded to.</p>
-          )}
-        </div>
-
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[360px] text-left text-[10px]">
-            <thead>
-              <tr className="border-b border-[var(--erp-border)] text-erp-text-muted">
-                <th className="py-1 pr-2 font-medium">Measurement</th>
-                {form.sizeLabels.map((s) => (
-                  <th key={s} className="px-1 py-1 font-medium">{s}</th>
-                ))}
-                {!readOnly && <th className="w-6" />}
+      <Section
+        id="techpack-fabric"
+        title="Fabric consumption"
+        description="Store fabric and metres per garment before wastage. Pick a colour when a fabric is used by one colourway only."
+        actions={!readOnly ? <Button size="sm" variant="secondary" icon={<Plus size={14} />} onClick={addFabric}>Add fabric</Button> : undefined}
+        flush
+      >
+        {/* Fixed columns: picking a long fabric name must not shift the fields the user aims at next. */}
+        <ErpDataTable className="min-w-[760px] table-fixed">
+          <thead>
+            <tr>
+              <th className="w-[36%]">Fabric</th>
+              <th className="erp-num w-[12%]">Per piece</th>
+              <th className="w-[15%]">Unit</th>
+              <th className="w-[17%]">For colour</th>
+              <th className="erp-num w-[12%]">Quoted rate</th>
+              {!readOnly && <th className="erp-cell-actions"><span className="sr-only">Remove</span></th>}
+            </tr>
+          </thead>
+          <tbody>
+            {form.fabrics.map((f, i) => (
+              <tr key={i}>
+                <td className="!py-1.5">
+                  <ErpSearchSelect
+                    value={f.materialId || ''}
+                    options={materialOptions}
+                    disabled={readOnly}
+                    placeholder="Select fabric…"
+                    searchPlaceholder="Search fabric…"
+                    className="w-full"
+                    onChange={(id) => {
+                      const m = matLabel(id);
+                      setFabric(i, { materialId: id, unit: m?.unit || f.unit || 'M', fabricCost: m?.unitCost ?? f.fabricCost ?? 0 });
+                    }}
+                  />
+                </td>
+                <td className="erp-num !py-1.5">
+                  <ErpInput inputSize="sm" type="number" step="0.01" className="w-24 text-right tabular-nums" aria-label="Metres per piece" value={f.consumption ?? ''} onChange={(e) => setFabric(i, { consumption: Number(e.target.value) })} disabled={readOnly} />
+                </td>
+                <td className="w-32 !py-1.5">
+                  <InventoryCodeSelect type="UNIT" value={f.unit || ''} onChange={(code) => setFabric(i, { unit: code })} disabled={readOnly} placeholder="Unit" />
+                </td>
+                <td className="w-40 !py-1.5">{colourSelect(f.color, (v) => setFabric(i, { color: v }), 'Fabric colour')}</td>
+                <td className="erp-num">{money(f.fabricCost || 0)}</td>
+                {!readOnly && (
+                  <td className="erp-cell-actions !py-1.5">
+                    <IconButton size="sm" aria-label="Remove fabric line" onClick={() => removeFabric(i)}><Trash2 size={14} /></IconButton>
+                  </td>
+                )}
               </tr>
-            </thead>
-            <tbody>
-              {form.rows.map((row, i) => (
-                <tr key={row.measurementName} className="border-b border-[var(--erp-border)]/60">
-                  <td className="py-1 pr-2 font-medium">{row.measurementName}</td>
-                  {form.sizeLabels.map((s) => (
-                    <td key={s} className="px-1 py-1">
-                      <input
-                        type="number"
-                        step="0.1"
-                        value={row.values[s] ?? ''}
-                        onChange={(e) => setCell(i, s, e.target.value)}
-                        disabled={readOnly}
-                        className="w-14 rounded border border-[var(--erp-border)] bg-[var(--erp-surface)] px-1 py-0.5 font-mono disabled:opacity-60"
-                      />
-                    </td>
-                  ))}
-                  {!readOnly && (
-                    <td className="px-1 py-1">
-                      <button type="button" onClick={() => removeRow(i)} className="text-erp-text-muted hover:text-red-600" aria-label="Remove row">×</button>
-                    </td>
-                  )}
-                </tr>
-              ))}
-              {!form.rows.length && (
-                <tr><td colSpan={form.sizeLabels.length + 2} className="py-2 text-[10px] text-erp-text-muted">No measurement rows yet.</td></tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-        {!readOnly && (
-          <div className="mt-2 max-w-xs">
-            <span className={label}>Add measurement</span>
-            <InventoryCodeSelect
-              type="MEASUREMENT"
-              value={pendingMeas}
-              placeholder="e.g. Chest, Length…"
-              className={compactSelect}
-              onChange={(code, item) => {
-                addMeasurementNamed(item?.name || code);
-                setPendingMeas('');
-              }}
-            />
-          </div>
-        )}
-      </ErpCard>
-
-      <ErpCard className="!p-3">
-        <h3 className="mb-1 text-[11px] font-semibold text-erp-text-primary">Fabric consumption</h3>
-        <p className="mb-2 text-[10px] text-erp-text-muted">
-          Store fabric and meters per garment. Marker save writes meters here. Cutting wastage lives on the marker, not this line.
-        </p>
-        <div className="space-y-2">
-          {form.fabrics.map((f, i) => (
-            <div key={i} className="grid grid-cols-12 items-start gap-2">
-              <div className="col-span-5">
-                <span className={label}>Material</span>
-                <ErpSearchSelect
-                  value={f.materialId || ''}
-                  options={materialOptions}
-                  disabled={readOnly}
-                  placeholder="Select fabric…"
-                  searchPlaceholder="Search fabric…"
-                  className={compactSelect}
-                  onChange={(id) => {
-                    const m = matLabel(id);
-                    setFabric(i, {
-                      materialId: id,
-                      unit: m?.unit || f.unit || 'M',
-                      fabricCost: m?.unitCost ?? f.fabricCost ?? 0,
-                    });
-                  }}
-                />
-              </div>
-              <div className="col-span-3">
-                <span className={label}>Meters / pc</span>
-                <input type="number" step="0.01" value={f.consumption ?? ''} onChange={(e) => setFabric(i, { consumption: Number(e.target.value) })} disabled={readOnly} className={input} />
-              </div>
-              <div className="col-span-2">
-                <span className={label}>Unit</span>
-                <InventoryCodeSelect
-                  type="UNIT"
-                  value={f.unit || ''}
-                  onChange={(code) => setFabric(i, { unit: code })}
-                  disabled={readOnly}
-                  className={compactSelect}
-                  placeholder="Unit"
-                />
-              </div>
-              <div className="col-span-1">
-                <span className={label}>Quoted rate</span>
-                <p className="px-2 py-1 font-mono text-[11px] text-erp-text-muted">{(f.fabricCost || 0).toFixed(2)}</p>
-              </div>
-              {!readOnly && (
-                <div className="col-span-1 pt-5">
-                  <button type="button" onClick={() => removeFabric(i)} className="text-erp-text-muted hover:text-red-600" aria-label="Remove fabric">×</button>
-                </div>
-              )}
-            </div>
-          ))}
-          {!form.fabrics.length && <p className="text-[10px] text-amber-700">Add at least one fabric line.</p>}
-        </div>
-        {!readOnly && <button type="button" onClick={addFabric} className="mt-2 text-[10px] text-[var(--erp-accent)]">+ Add fabric</button>}
+            ))}
+            {!form.fabrics.length && (
+              <tr><td colSpan={6} className="py-6 text-center text-[13px] text-erp-text-muted">Add at least one fabric line.</td></tr>
+            )}
+          </tbody>
+        </ErpDataTable>
         {designId && (
           <StoreMaterialRequestPanel
             designId={designId}
@@ -431,189 +416,142 @@ export function PatternTechPackEditor({
             onApproved={attachApprovedFabrics}
           />
         )}
-      </ErpCard>
+      </Section>
 
-      <ErpCard className="!p-3">
-        <h3 className="mb-1 text-[11px] font-semibold text-erp-text-primary">Trims &amp; findings</h3>
-        <p className="mb-2 text-[10px] text-erp-text-muted">
-          Buttons, zippers, labels, thread. Together with fabric this is the sample BOM — costing freezes rates after proto.
-        </p>
-        <div className="space-y-2">
-          {form.accessories.map((a, i) => (
-            <div key={i} className="grid grid-cols-12 items-start gap-2">
-              <div className="col-span-3">
-                <span className={label}>Type</span>
-                <InventoryCodeSelect
-                  type="ACCESSORY"
-                  value={a.accessoryType || ''}
-                  onChange={(code) => setTrim(i, { accessoryType: code })}
-                  disabled={readOnly}
-                  className={compactSelect}
-                  placeholder="Type"
-                />
-              </div>
-              <div className="col-span-3">
-                <span className={label}>Material</span>
-                <ErpSearchSelect
-                  value={a.materialId || ''}
-                  options={materialOptions}
-                  disabled={readOnly}
-                  placeholder="Select material…"
-                  searchPlaceholder="Search material…"
-                  className={compactSelect}
-                  onChange={(id) => {
-                    const m = matLabel(id);
-                    setTrim(i, {
-                      materialId: id,
-                      unit: m?.unit || a.unit,
-                      unitCost: m?.unitCost ?? a.unitCost ?? 0,
-                    });
-                  }}
-                />
-              </div>
-              <div className="col-span-2">
-                <span className={label}>Qty / piece</span>
-                <input type="number" step="0.01" value={a.consumption ?? ''} onChange={(e) => setTrim(i, { consumption: Number(e.target.value) })} disabled={readOnly} className={input} />
-              </div>
-              <div className="col-span-2">
-                <span className={label}>Unit</span>
-                <InventoryCodeSelect
-                  type="UNIT"
-                  value={a.unit || ''}
-                  onChange={(code) => setTrim(i, { unit: code })}
-                  disabled={readOnly}
-                  className={compactSelect}
-                  placeholder="Unit"
-                />
-              </div>
-              <div className="col-span-1">
-                <span className={label}>Quoted rate</span>
-                <input type="number" step="0.01" value={a.unitCost ?? ''} onChange={(e) => setTrim(i, { unitCost: Number(e.target.value) })} disabled={readOnly} className={input} />
-              </div>
-              {!readOnly && (
-                <div className="col-span-1 pt-5">
-                  <button type="button" onClick={() => removeTrim(i)} className="text-erp-text-muted hover:text-red-600" aria-label="Remove trim">×</button>
-                </div>
-              )}
-            </div>
-          ))}
-          {!form.accessories.length && <p className="text-[10px] text-erp-text-muted">No trims added.</p>}
+      <Section
+        id="techpack-trims"
+        title="Trims and findings"
+        description="Buttons, zippers, labels, thread. With fabric this becomes the sample BOM."
+        actions={!readOnly ? <Button size="sm" variant="secondary" icon={<Plus size={14} />} onClick={addTrim}>Add trim</Button> : undefined}
+        flush
+      >
+        <ErpDataTable className="min-w-[860px] table-fixed">
+          <thead>
+            <tr>
+              <th className="w-[17%]">Type</th>
+              <th className="w-[29%]">Material</th>
+              <th className="erp-num w-[10%]">Qty / piece</th>
+              <th className="w-[13%]">Unit</th>
+              <th className="w-[15%]">For colour</th>
+              <th className="erp-num w-[10%]">Quoted rate</th>
+              {!readOnly && <th className="erp-cell-actions"><span className="sr-only">Remove</span></th>}
+            </tr>
+          </thead>
+          <tbody>
+            {form.accessories.map((a, i) => (
+              <tr key={i}>
+                <td className="w-36 !py-1.5">
+                  <InventoryCodeSelect type="ACCESSORY" value={a.accessoryType || ''} onChange={(code) => setTrim(i, { accessoryType: code })} disabled={readOnly} placeholder="Type" />
+                </td>
+                <td className="!py-1.5">
+                  <ErpSearchSelect
+                    value={a.materialId || ''}
+                    options={materialOptions}
+                    disabled={readOnly}
+                    placeholder="Select material…"
+                    searchPlaceholder="Search material…"
+                    className="w-full"
+                    onChange={(id) => {
+                      const m = matLabel(id);
+                      setTrim(i, { materialId: id, unit: m?.unit || a.unit, unitCost: m?.unitCost ?? a.unitCost ?? 0 });
+                    }}
+                  />
+                </td>
+                <td className="erp-num !py-1.5">
+                  <ErpInput inputSize="sm" type="number" step="0.01" className="w-20 text-right tabular-nums" aria-label="Quantity per piece" value={a.consumption ?? ''} onChange={(e) => setTrim(i, { consumption: Number(e.target.value) })} disabled={readOnly} />
+                </td>
+                <td className="w-32 !py-1.5">
+                  <InventoryCodeSelect type="UNIT" value={a.unit || ''} onChange={(code) => setTrim(i, { unit: code })} disabled={readOnly} placeholder="Unit" />
+                </td>
+                <td className="w-40 !py-1.5">{colourSelect(a.variantColor, (v) => setTrim(i, { variantColor: v }), 'Trim colour')}</td>
+                <td className="erp-num !py-1.5">
+                  <ErpInput inputSize="sm" type="number" step="0.01" className="w-24 text-right tabular-nums" aria-label="Quoted rate" value={a.unitCost ?? ''} onChange={(e) => setTrim(i, { unitCost: Number(e.target.value) })} disabled={readOnly} />
+                </td>
+                {!readOnly && (
+                  <td className="erp-cell-actions !py-1.5">
+                    <IconButton size="sm" aria-label="Remove trim" onClick={() => removeTrim(i)}><Trash2 size={14} /></IconButton>
+                  </td>
+                )}
+              </tr>
+            ))}
+            {!form.accessories.length && (
+              <tr><td colSpan={7} className="py-6 text-center text-[13px] text-erp-text-muted">No trims yet — add buttons, labels and thread.</td></tr>
+            )}
+          </tbody>
+        </ErpDataTable>
+      </Section>
+
+      <Section id="techpack-construction" title="Fabric technicals and construction">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <Field label="GSM">
+            <ErpInput type="number" className="tabular-nums" value={form.fabricSpecs.fabricGsm ?? ''} onChange={(e) => setSpecs({ fabricGsm: Number(e.target.value) })} disabled={readOnly} placeholder="180" />
+          </Field>
+          <Field label="Cuttable width">
+            <ErpInput value={form.fabricSpecs.fabricWidth || ''} onChange={(e) => setSpecs({ fabricWidth: e.target.value })} disabled={readOnly} placeholder={'58"'} />
+          </Field>
+          <Field label="Finish">
+            <InventoryCodeSelect type="FABRIC_FINISH" value={form.fabricSpecs.fabricFinish || ''} onChange={(code) => setSpecs({ fabricFinish: code })} disabled={readOnly} placeholder="Select finish…" />
+          </Field>
+          <Field label="Shrinkage %">
+            <ErpInput type="number" step="0.1" className="tabular-nums" value={form.fabricSpecs.shrinkagePercent ?? ''} onChange={(e) => setSpecs({ shrinkagePercent: Number(e.target.value) })} disabled={readOnly} />
+          </Field>
+          <Field label="Measurement tolerance" hint="Allowed deviation on each point">
+            <ErpInput value={form.qualityNotes.measurementTolerance || ''} onChange={(e) => setQuality({ measurementTolerance: e.target.value })} disabled={readOnly} placeholder="± 0.5 cm" />
+          </Field>
+          <Field label="Stitch">
+            <InventoryCodeSelect type="STITCH" value={form.manufacturingNotes.specialStitch || ''} onChange={(code) => setMfg({ specialStitch: code })} disabled={readOnly} />
+          </Field>
+          <Field label="Needle">
+            <InventoryCodeSelect type="NEEDLE" value={form.manufacturingNotes.needleType || ''} onChange={(code) => setMfg({ needleType: code })} disabled={readOnly} />
+          </Field>
+          <Field label="Machine">
+            <InventoryCodeSelect type="MACHINE" value={form.manufacturingNotes.machineType || ''} onChange={(code) => setMfg({ machineType: code })} disabled={readOnly} />
+          </Field>
+          <Field label="Thread colour">
+            <InventoryCodeSelect type="COLOR" value={form.manufacturingNotes.threadColor || ''} onChange={(code) => setMfg({ threadColor: code })} disabled={readOnly} />
+          </Field>
         </div>
-        {!readOnly && <button type="button" onClick={addTrim} className="mt-2 text-[10px] text-[var(--erp-accent)]">+ Add trim</button>}
-      </ErpCard>
+      </Section>
 
-      <ErpCard className="!p-3">
-        <h3 className="mb-2 text-[11px] font-semibold text-erp-text-primary">Fabric technicals</h3>
-        <div className="grid gap-2 sm:grid-cols-4">
-          <label className="block">
-            <span className={label}>GSM</span>
-            <input type="number" value={form.fabricSpecs.fabricGsm ?? ''} onChange={(e) => setSpecs({ fabricGsm: Number(e.target.value) })} disabled={readOnly} className={input} placeholder="180" />
-          </label>
-          <label className="block">
-            <span className={label}>Cuttable width</span>
-            <input value={form.fabricSpecs.fabricWidth || ''} onChange={(e) => setSpecs({ fabricWidth: e.target.value })} disabled={readOnly} className={input} placeholder={'58"'} />
-          </label>
-          <label className="block">
-            <span className={label}>Finish</span>
-            <InventoryCodeSelect
-              type="FABRIC_FINISH"
-              value={form.fabricSpecs.fabricFinish || ''}
-              onChange={(code) => setSpecs({ fabricFinish: code })}
-              disabled={readOnly}
-              className={compactSelect}
-              placeholder="Finish"
-            />
-          </label>
-          <label className="block">
-            <span className={label}>Shrinkage %</span>
-            <input type="number" step="0.1" value={form.fabricSpecs.shrinkagePercent ?? ''} onChange={(e) => setSpecs({ shrinkagePercent: Number(e.target.value) })} disabled={readOnly} className={input} />
-          </label>
-        </div>
-      </ErpCard>
-
-      <ErpCard className="!p-3">
-        <h3 className="mb-2 text-[11px] font-semibold text-erp-text-primary">Measurement tolerance</h3>
-        <label className="block max-w-xs">
-          <span className={label}>Allowed deviation on POM</span>
-          <input value={form.qualityNotes.measurementTolerance || ''} onChange={(e) => setQuality({ measurementTolerance: e.target.value })} disabled={readOnly} className={input} placeholder="± 0.5 cm" />
-        </label>
-      </ErpCard>
-
-      <ErpCard className="!p-3">
-        <h3 className="mb-2 text-[11px] font-semibold text-erp-text-primary">Construction</h3>
-        <div className="grid gap-2 sm:grid-cols-4">
-          <label className="block">
-            <span className={label}>Stitch</span>
-            <InventoryCodeSelect
-              type="STITCH"
-              value={form.manufacturingNotes.specialStitch || ''}
-              onChange={(code) => setMfg({ specialStitch: code })}
-              disabled={readOnly}
-              className={compactSelect}
-            />
-          </label>
-          <label className="block">
-            <span className={label}>Needle</span>
-            <InventoryCodeSelect
-              type="NEEDLE"
-              value={form.manufacturingNotes.needleType || ''}
-              onChange={(code) => setMfg({ needleType: code })}
-              disabled={readOnly}
-              className={compactSelect}
-            />
-          </label>
-          <label className="block">
-            <span className={label}>Machine</span>
-            <InventoryCodeSelect
-              type="MACHINE"
-              value={form.manufacturingNotes.machineType || ''}
-              onChange={(code) => setMfg({ machineType: code })}
-              disabled={readOnly}
-              className={compactSelect}
-            />
-          </label>
-          <label className="block">
-            <span className={label}>Thread colour</span>
-            <InventoryCodeSelect
-              type="COLOR"
-              value={form.manufacturingNotes.threadColor || ''}
-              onChange={(code) => setMfg({ threadColor: code })}
-              disabled={readOnly}
-              className={compactSelect}
-            />
-          </label>
-        </div>
-      </ErpCard>
-
-      <ErpCard className="!p-3">
-        <h3 className="mb-1 text-[11px] font-semibold text-erp-text-primary">Fabric + trim estimate</h3>
-        <p className="mb-2 text-[10px] text-erp-text-muted">
-          Quoted store rate × meters. Not mill rate (PO) and not CM. Costing freezes the standard after sample.
-        </p>
-        <div className="grid gap-2 sm:grid-cols-3">
-          <div>
-            <span className={label}>Fabric (estimate)</span>
-            <p className="px-2 py-1 font-mono text-[11px]">{fabricCost.toFixed(2)}</p>
-          </div>
-          <div>
-            <span className={label}>Trims (estimate)</span>
-            <p className="px-2 py-1 font-mono text-[11px]">{trimsCost.toFixed(2)}</p>
-          </div>
-          <div>
-            <span className={label}>Material / pc</span>
-            <p className="px-2 py-1 font-mono text-[11px] font-semibold">{totalCost.toFixed(2)}</p>
-          </div>
-        </div>
-      </ErpCard>
+      <Section title="Material estimate per piece" description="Quoted store rate × quantity. Not the mill rate and not CM — costing freezes the standard after the sample.">
+        <DescriptionList
+          columns={3}
+          items={[
+            { label: 'Fabric', value: <span className="tabular-nums">{money(fabricCost)}</span> },
+            { label: 'Trims', value: <span className="tabular-nums">{money(trimsCost)}</span> },
+            { label: 'Total material', value: <span className="font-semibold tabular-nums">{money(totalCost)}</span> },
+          ]}
+        />
+      </Section>
 
       {!readOnly && (
-        <ErpButton
-          className="!px-4 !py-1.5 text-[11px]"
-          disabled={saving}
-          onClick={() => onSave(techPackFormToPayload(form))}
+        <StickyActionBar
+          status={(
+            <span className="flex flex-wrap items-center gap-x-4 gap-y-1">
+              <SaveState dirty={dirty} saving={saving} />
+              <span className="flex flex-wrap items-center gap-3 text-[13px]">
+                <Check ok={hasChart} label="Measurements" />
+                <Check ok={hasFabric} label="Fabric" />
+                <Check ok={hasTrims} label="Trims" />
+              </span>
+            </span>
+          )}
         >
-          {saving ? 'Saving…' : 'Save tech pack'}
-        </ErpButton>
+          <Button
+            variant={dirty ? 'primary' : 'secondary'}
+            icon={<Save size={16} />}
+            loading={saving}
+            disabled={!dirty}
+            onClick={save}
+          >
+            Save tech pack
+          </Button>
+          {dirty || !canContinue ? (
+            <Tooltip content={dirty ? 'Save your changes first' : 'Measurements, fabric and trims must be saved first'}>
+              <span>{continueButton}</span>
+            </Tooltip>
+          ) : continueButton}
+        </StickyActionBar>
       )}
     </div>
   );

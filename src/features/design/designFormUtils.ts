@@ -12,36 +12,36 @@ export const DEFAULT_SIZE_LABELS = ['XS', 'S', 'M', 'L', 'XL'];
 export const TAB_GROUPS = [
   {
     id: 'overview',
-    label: 'Overview',
-    description: 'Style identity, specs, and images',
+    label: 'Style',
+    description: 'Identity, fabric intent and images',
     tabs: [
-      { id: 'basic', label: 'Basic details', hint: 'Name, category, collection' },
-      { id: 'specs', label: 'Product specs', hint: 'Fabric intent & print' },
-      { id: 'files', label: 'Files', hint: 'Front image or sketch' },
+      { id: 'basic', label: 'Basic details', hint: 'Name, style #, collection' },
+      { id: 'specs', label: 'Fabric intent', hint: 'Material and print' },
+      { id: 'files', label: 'Images', hint: 'Front image or sketch' },
     ],
   },
   {
     id: 'variants',
-    label: 'Variants & SKUs',
-    description: 'Colorways and size range for SKUs',
+    label: 'Variants',
+    description: 'Colourways and size range',
     tabs: [
-      { id: 'colors', label: 'Colors', hint: 'Colorways on the style' },
-      { id: 'skus', label: 'Sizes & SKUs', hint: 'Size range for this style' },
+      { id: 'colors', label: 'Colourways', hint: 'Colours and Pantone' },
+      { id: 'skus', label: 'Sizes & SKUs', hint: 'Size range and SKU codes' },
     ],
   },
   {
     id: 'submit',
-    label: 'Check & submit',
-    description: 'Review the pack, then send for approval',
-    tabs: [{ id: 'review', label: 'Review', hint: 'Confirm required fields' }],
+    label: 'Submit',
+    description: 'Check the pack and send for review',
+    tabs: [{ id: 'review', label: 'Review & submit', hint: 'Checklist and summary' }],
   },
   {
     id: 'history',
-    label: 'Track',
-    description: 'Pattern, sampling, and version history',
+    label: 'After release',
+    description: 'Pattern, sampling and history',
     tabs: [
-      { id: 'sampling', label: 'Pattern & sampling', hint: 'Downstream status' },
-      { id: 'versions', label: 'History', hint: 'What changed' },
+      { id: 'sampling', label: 'Pattern & sampling', hint: 'Downstream progress' },
+      { id: 'versions', label: 'History', hint: 'Saves and decisions' },
     ],
   },
 ] as const;
@@ -98,7 +98,7 @@ export const FILE_SLOTS: { type: string; label: string; accept?: string; hint?: 
 ];
 
 export function emptyColor(): ColorVariant {
-  return { name: '', hexCode: '#D30000', pantoneCode: '', code: '', status: 'PENDING' };
+  return { name: '', hexCode: '', pantoneCode: '', code: '', status: 'PENDING' };
 }
 
 /** Designers pick the size range only; the graded measurement chart belongs to the pattern master. */
@@ -170,10 +170,10 @@ export function isReadyForSubmit(gaps: DesignSubmitGaps): boolean {
 
 export function designSubmitHint(gaps: DesignSubmitGaps): string {
   const missing: string[] = [];
-  if (gaps.image) missing.push('an image in Files');
-  if (gaps.sizeRange) missing.push('a size range in Sizes & SKUs');
+  if (gaps.image) missing.push('a front image or sketch');
+  if (gaps.sizeRange) missing.push('a size range');
   if (!missing.length) return '';
-  return `Add ${missing.join(' and ')} before submit`;
+  return `Add ${missing.join(' and ')} before submitting.`;
 }
 
 export type DesignTabProgress = 'done' | 'needed' | 'optional';
@@ -300,4 +300,22 @@ export function inputClass(editable: boolean) {
 
 export function labelClass() {
   return 'erp-label';
+}
+
+/**
+ * Best-effort screen swatch from a catalogue colour name ("Navy Blue" → navy, "Off White" →
+ * white). Returns '' when the name is not a colour the browser knows. Screen only.
+ */
+export function swatchFromColourName(name?: string): string {
+  if (!name || typeof document === 'undefined') return '';
+  const words = name.toLowerCase().replace(/[^a-z ]/g, ' ').split(/\s+/).filter(Boolean);
+  const candidates = [words.join(''), ...words, ...words.map((_, i) => words.slice(i).join(''))];
+  for (const c of candidates) {
+    if (!c || !CSS.supports('color', c)) continue;
+    const ctx = document.createElement('canvas').getContext('2d');
+    if (!ctx) return '';
+    ctx.fillStyle = c;
+    return ctx.fillStyle; // normalised "#rrggbb"
+  }
+  return '';
 }

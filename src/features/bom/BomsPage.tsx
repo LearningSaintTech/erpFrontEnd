@@ -1,53 +1,46 @@
-import { useMemo, useState, Fragment } from 'react';
-import { Link } from 'react-router-dom';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import {
-  AlertTriangle, CheckCircle2, ClipboardList, FileStack, RefreshCw, Search, Wrench,
+  AlertTriangle, BarChart3, Ban, CheckCircle2, ClipboardCheck, Eye, FileStack, MessageSquareWarning, Pencil, Plus, Snowflake,
 } from 'lucide-react';
-import { bomApi, skuApi, inventoryApi } from '../../services/manufacturing';
-import { AlertBanner } from '../../components/AlertBanner';
+import { bomApi } from '../../services/manufacturing';
 import {
-  ErpPageHeader, ErpStatusBadge, ErpButton, ErpCard, ErpDataTable, ErpInput, ErpSelect, ErpTabs,
+  Badge, Button, ErpDataTable, ErpSelect, ErpTabs, FilterBar, KpiGrid, PageHeader, RowActionsMenu, SearchInput, Section,
+  StatTile, StatusBadge, TablePager, Tooltip,
 } from '../../components/erp';
-import type { Bom, BomLine, Material, MrpPreview, Sku } from '../../types/api';
+import { QueryState } from '../../components/QueryState';
+import type { Bom } from '../../types/api';
 import { useAuth } from '../../app/providers/AuthProvider';
-import { SuccessBanner } from '../users/SuccessBanner';
-import { ConfirmDialog } from '../users/ConfirmDialog';
-import {
-  formatCost, materialIdOf, materialLabel, mrpShortageCount, skuIdOf, skuLabel, statusLabel, workflowStep,
-} from './bomUtils';
+import './bomTypes';
+import { formatCost, isOwnSubmission, skuLabel } from './bomUtils';
+import { useBomActions } from './useBomActions';
+import { BomDetailDrawer, MrpModal, NewBomDrawer } from './BomOverlays';
 
 const PAGE_SIZE = 20;
-const fieldLabel = 'mb-0.5 block text-[10px] font-medium text-erp-text-muted';
 
 type TabId = 'active' | 'draft' | 'all';
-type EditLine = { materialId: string; quantityPerPiece: number; unit: string; wastagePercent: number };
 
 export function BomsPage() {
-  const qc = useQueryClient();
-  const { permissions } = useAuth();
+  const { permissions, user } = useAuth();
   const canCreate = permissions.includes('*') || permissions.includes('bom.create');
   const canUpdate = permissions.includes('*') || permissions.includes('bom.update');
   const canApprove = permissions.includes('*') || permissions.includes('bom.approve');
+  const [searchParams] = useSearchParams();
 
-  const [tab, setTab] = useState<TabId>('active');
+  const [tab, setTab] = useState<TabId>(canApprove && !canUpdate ? 'all' : 'active');
   const [page, setPage] = useState(1);
-  const [statusFilter, setStatusFilter] = useState('');
-  const [search, setSearch] = useState('');
-  const [searchInput, setSearchInput] = useState('');
-  const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
-  const [createSkuId, setCreateSkuId] = useState('');
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editLines, setEditLines] = useState<EditLine[]>([]);
-  const [confirmAction, setConfirmAction] = useState<{ id: string; step: 'approve' | 'finalize'; label: string } | null>(null);
-  const [mrpView, setMrpView] = useState<{ bomId: string; mrp: MrpPreview } | null>(null);
+  const [statusFilter, setStatusFilter] = useState(canApprove && !canUpdate ? 'PENDING_APPROVAL' : '');
+  const [searchInput, setSearchInput] = useState(searchParams.get('search') ?? '');
+  const [search, setSearch] = useState(searchParams.get('search') ?? '');
+  const [creating, setCreating] = useState(false);
+  const [selected, setSelected] = useState<{ bom: Bom; edit?: boolean } | null>(null);
+  const actions = useBomActions();
 
-  const showSuccess = (msg: string) => {
-    setSuccess(msg);
-    setError('');
-    setTimeout(() => setSuccess(''), 4000);
-  };
+  useEffect(() => {
+    const t = window.setTimeout(() => { setSearch(searchInput.trim()); setPage(1); }, 300);
+    return () => window.clearTimeout(t);
+  }, [searchInput]);
 
   const listParams = useMemo(() => {
     if (tab === 'active') return { status: 'ACTIVE' };
@@ -57,406 +50,199 @@ export function BomsPage() {
 
   const { data: stats } = useQuery({ queryKey: ['bom-stats'], queryFn: bomApi.stats });
 
-  const { data, isLoading, isFetching, refetch } = useQuery({
+  const list = useQuery({
     queryKey: ['boms', page, listParams, search, tab],
     queryFn: () => bomApi.listPage({ page, limit: PAGE_SIZE, search: search || undefined, ...listParams }),
   });
 
-  const boms = data?.items ?? [];
-  const meta = data?.meta;
+  const boms = list.data?.items ?? [];
+  const meta = list.data?.meta;
 
-  const { data: skus = [] } = useQuery({
-    queryKey: ['skus-active-bom'],
-    queryFn: () => skuApi.list({ status: 'ACTIVE', limit: 200 }),
-    enabled: canCreate,
-  });
 
-  const { data: materials = [] } = useQuery({
-    queryKey: ['materials'],
-    queryFn: () => inventoryApi.listMaterials(),
-    enabled: !!editingId || canCreate,
-  });
-
-  const { data: suggestion } = useQuery({
-    queryKey: ['bom-suggest', createSkuId],
-    queryFn: () => bomApi.suggestLines(createSkuId),
-    enabled: !!createSkuId,
-  });
-
-  const invalidate = () => {
-    qc.invalidateQueries({ queryKey: ['boms'] });
-    qc.invalidateQueries({ queryKey: ['bom-stats'] });
+  const hasFilters = !!(search || (tab === 'all' && statusFilter));
+  const clearFilters = () => { setSearchInput(''); setSearch(''); setStatusFilter(''); setPage(1); };
+  const showStatus = (s: string) => {
+    if (s === 'ACTIVE') { setTab('active'); setStatusFilter(''); } else if (s === 'DRAFT') { setTab('draft'); setStatusFilter(''); } else { setTab('all'); setStatusFilter((cur) => (cur === s && tab === 'all' ? '' : s)); }
+    setPage(1);
   };
 
-  const createMutation = useMutation({
-    mutationFn: () => bomApi.create({ skuId: createSkuId, fromDesign: true }),
-    onSuccess: () => {
-      setCreateSkuId('');
-      invalidate();
-      showSuccess('BOM created from design — review lines and approve');
-    },
-    onError: (e: Error) => setError(e.message),
-  });
+  const busy = actions.pending;
+  // Drafts, Ready to freeze, Active, Total + optional Awaiting approval / Needs review (Total dropped at 5 to keep the grid even).
+  const kpiCount = 4 + (stats?.pendingApproval != null ? 1 : 0) + (stats?.needsReview != null ? 1 : 0);
 
-  const saveLines = useMutation({
-    mutationFn: ({ id, lines }: { id: string; lines: EditLine[] }) =>
-      bomApi.update(id, lines.map((l) => ({
-        materialId: l.materialId,
-        quantityPerPiece: l.quantityPerPiece,
-        unit: l.unit,
-        wastagePercent: l.wastagePercent,
-      }))),
-    onSuccess: () => {
-      setEditingId(null);
-      invalidate();
-      showSuccess('BOM lines saved');
-    },
-    onError: (e: Error) => setError(e.message),
-  });
-
-  const workflow = useMutation({
-    mutationFn: async ({ id, step }: { id: string; step: 'approve' | 'finalize' }) => {
-      if (step === 'approve') return bomApi.approve(id);
-      return bomApi.finalize(id);
-    },
-    onSuccess: (result, vars) => {
-      setConfirmAction(null);
-      invalidate();
-      if (vars.step === 'finalize' && result && 'mrp' in result) {
-        setMrpView({ bomId: vars.id, mrp: result.mrp });
-        showSuccess('BOM activated — MRP preview generated');
-      } else {
-        showSuccess('BOM approved — ready to finalize');
-      }
-    },
-    onError: (e: Error) => setError(e.message),
-  });
-
-  const loadMrp = useMutation({
-    mutationFn: (id: string) => bomApi.mrpPreview(id),
-    onSuccess: (mrp, id) => setMrpView({ bomId: id, mrp }),
-    onError: (e: Error) => setError(e.message),
-  });
-
-  const startEdit = (b: Bom) => {
-    setEditingId(b._id);
-    setEditLines((b.lines || []).map((l) => ({
-      materialId: materialIdOf(l),
-      quantityPerPiece: l.quantityPerPiece,
-      unit: l.unit || 'PIECES',
-      wastagePercent: l.wastagePercent ?? 0,
-    })));
-  };
-
-  const addLine = () => {
-    const first = materials[0];
-    if (!first) return;
-    setEditLines((lines) => [...lines, {
-      materialId: first._id,
-      quantityPerPiece: 1,
-      unit: first.unit || 'PIECES',
-      wastagePercent: 0,
-    }]);
+  const primaryAction = (b: Bom) => {
+    const stop = (fn: () => void) => (e: React.MouseEvent) => { e.stopPropagation(); fn(); };
+    if (canApprove && b.status === 'PENDING_APPROVAL' && !isOwnSubmission(b, user)) {
+      return <Button size="sm" variant="secondary" icon={<CheckCircle2 size={14} />} disabled={busy} onClick={stop(() => actions.approve(b))}>Approve</Button>;
+    }
+    if (canUpdate && b.status === 'DRAFT') {
+      return <Button size="sm" variant="secondary" disabled={busy} onClick={stop(() => actions.submit(b))}>Submit</Button>;
+    }
+    if (canUpdate && b.status === 'APPROVED' && b.isLatestVersion !== false) {
+      return <Button size="sm" variant="secondary" icon={<Snowflake size={14} />} disabled={busy} onClick={stop(() => actions.finalize(b))}>Freeze</Button>;
+    }
+    if (b.status === 'ACTIVE') {
+      return <Button size="sm" variant="secondary" icon={<BarChart3 size={14} />} disabled={busy} onClick={stop(() => actions.showMrp(b))}>MRP</Button>;
+    }
+    return null;
   };
 
   return (
-    <div className="boms-page text-xs leading-snug [&_.erp-page-header]:mb-3 [&_.erp-page-title]:text-base [&_.erp-page-subtitle]:text-[10px]">
-      <AlertBanner message={error} onDismiss={() => setError('')} />
-      <SuccessBanner message={success} onDismiss={() => setSuccess('')} />
-
-      <ErpPageHeader
-        title="Bill of Materials"
-        subtitle={(
-          <>
-            Per-SKU material breakdown. Qty and waste freeze here as standard cost (store master rate).
-            Purchase books the mill rate; cutting shows actual issued cost.
-            <Link to="/skus" className="ml-2 text-[var(--erp-accent)]">SKUs →</Link>
-          </>
-        )}
-        actions={(
-          <ErpButton variant="secondary" className="!px-2 !py-1 text-[10px]" disabled={isFetching} onClick={() => refetch()}>
-            <RefreshCw size={12} className={isFetching ? 'animate-spin' : ''} />
-            <span className="ml-1">Refresh</span>
-          </ErpButton>
-        )}
+    <>
+      <PageHeader
+        title="Bills of materials"
+        description="Per-SKU materials and quantities, frozen as the standard cost before production."
+        primaryAction={canCreate ? <Button icon={<Plus size={16} />} onClick={() => setCreating(true)}>New BOM</Button> : undefined}
       />
 
-      <div className="mb-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-        <ErpCard className="!p-3">
-          <div className="flex items-center gap-2">
-            <FileStack size={16} className="text-[var(--erp-accent)]" />
-            <div>
-              <p className="text-[10px] uppercase tracking-wide text-erp-text-muted">Total</p>
-              <p className="text-lg font-semibold">{stats?.total ?? '—'}</p>
-            </div>
-          </div>
-        </ErpCard>
-        <ErpCard className="!p-3">
-          <div className="flex items-center gap-2">
-            <ClipboardList size={16} className="text-amber-500" />
-            <div>
-              <p className="text-[10px] uppercase tracking-wide text-erp-text-muted">Draft</p>
-              <p className="text-lg font-semibold">{stats?.draft ?? '—'}</p>
-            </div>
-          </div>
-        </ErpCard>
-        <ErpCard className="!p-3">
-          <div className="flex items-center gap-2">
-            <CheckCircle2 size={16} className="text-emerald-500" />
-            <div>
-              <p className="text-[10px] uppercase tracking-wide text-erp-text-muted">Active</p>
-              <p className="text-lg font-semibold">{stats?.active ?? '—'}</p>
-            </div>
-          </div>
-        </ErpCard>
-        <ErpCard className="!p-3">
-          <div className="flex items-center gap-2">
-            <Wrench size={16} className="text-erp-text-muted" />
-            <div>
-              <p className="text-[10px] uppercase tracking-wide text-erp-text-muted">Approved queue</p>
-              <p className="text-lg font-semibold">{stats?.approved ?? '—'}</p>
-            </div>
-          </div>
-        </ErpCard>
-      </div>
-
-      {canCreate && (
-        <ErpCard className="mb-3 !p-3">
-          <div className="flex items-center gap-2">
-            <FileStack size={14} className="text-[var(--erp-accent)]" />
-            <h3 className="text-[11px] font-semibold text-erp-text-primary">Create BOM</h3>
-          </div>
-          <p className="mt-1 text-[10px] text-erp-text-muted">
-            Lines auto-filled from design BOM tab (or sample materials as fallback). One draft per SKU.
-          </p>
-          <div className="mt-2 flex flex-wrap items-end gap-2">
-            <div className="min-w-[220px] flex-1">
-              <label className={fieldLabel}>Active SKU</label>
-              <ErpSelect className="w-full !py-1.5 text-[11px]" value={createSkuId} onChange={(e) => setCreateSkuId(e.target.value)}>
-                <option value="">Select SKU…</option>
-                {skus.map((s: Sku) => (
-                  <option key={s._id} value={s._id}>{s.skuCode} — {s.name}</option>
-                ))}
-              </ErpSelect>
-            </div>
-            <ErpButton className="!px-3 !py-1.5 text-[11px]" disabled={!createSkuId || createMutation.isPending} onClick={() => createMutation.mutate()}>
-              Create BOM
-            </ErpButton>
-          </div>
-          {suggestion && (suggestion.lines?.length ?? 0) > 0 && (
-            <p className="mt-2 text-[10px] text-erp-text-muted">
-              Preview ({suggestion.source}): {suggestion.lines!.length} line(s) — {suggestion.lines!.map((l) => l.materialCode || l.materialName).join(', ')}
-            </p>
-          )}
-        </ErpCard>
-      )}
+      <KpiGrid cols={kpiCount >= 5 ? 6 : 4} className="mb-4">
+        <StatTile icon={Pencil} label="Drafts" value={stats?.draft ?? '—'} active={tab === 'draft'} onClick={() => showStatus('DRAFT')} />
+        {stats?.pendingApproval != null && (
+          <StatTile
+            icon={ClipboardCheck}
+            label="Awaiting approval"
+            value={stats.pendingApproval}
+            highlight={canApprove && stats.pendingApproval > 0 ? 'warn' : undefined}
+            active={tab === 'all' && statusFilter === 'PENDING_APPROVAL'}
+            onClick={() => showStatus('PENDING_APPROVAL')}
+          />
+        )}
+        <StatTile icon={Snowflake} label="Ready to freeze" value={stats?.approved ?? '—'} active={tab === 'all' && statusFilter === 'APPROVED'} onClick={() => showStatus('APPROVED')} />
+        <StatTile icon={CheckCircle2} label="Active" value={stats?.active ?? '—'} active={tab === 'active'} onClick={() => showStatus('ACTIVE')} />
+        {stats?.needsReview != null && (
+          <StatTile icon={AlertTriangle} label="Needs review" value={stats.needsReview} highlight={stats.needsReview > 0 ? 'warn' : undefined} hint="Source pattern reopened" />
+        )}
+        {kpiCount !== 5 && (
+          <StatTile icon={FileStack} label="Total" value={stats?.total ?? '—'} active={tab === 'all' && !statusFilter} onClick={() => { setTab('all'); setStatusFilter(''); setPage(1); }} />
+        )}
+      </KpiGrid>
 
       <ErpTabs
+        className="mb-3"
+        ariaLabel="BOM lists"
         tabs={[
-          { id: 'active', label: `Active (${stats?.active ?? 0})` },
-          { id: 'draft', label: `Draft (${stats?.draft ?? 0})` },
-          { id: 'all', label: `All (${stats?.total ?? 0})` },
+          { id: 'active', label: 'Active', count: stats?.active },
+          { id: 'draft', label: 'Draft', count: stats?.draft },
+          { id: 'all', label: 'All', count: stats?.total },
         ]}
         active={tab}
         onChange={(id) => { setTab(id as TabId); setPage(1); setStatusFilter(''); }}
       />
 
-      <ErpCard className="mt-3 !p-0">
-        <div className="flex flex-wrap items-center gap-2 border-b border-[var(--erp-border)] p-3">
-          <div className="relative min-w-[180px] flex-1">
-            <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-erp-text-muted" />
-            <ErpInput
-              className="!py-1.5 pl-7 text-[11px]"
-              placeholder="Search BOM or SKU…"
-              value={searchInput}
-              onChange={(e) => setSearchInput(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') { setSearch(searchInput); setPage(1); } }}
-            />
-          </div>
-          {tab === 'all' && (
-            <ErpSelect className="!py-1.5 text-[11px]" value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}>
+      <Section flush>
+        <FilterBar
+          search={<SearchInput value={searchInput} onChange={setSearchInput} placeholder="Search BOM or SKU…" inputSize="sm" />}
+          filters={tab === 'all' ? (
+            <ErpSelect inputSize="sm" aria-label="Status" value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}>
               <option value="">All statuses</option>
               <option value="DRAFT">Draft</option>
+              <option value="PENDING_APPROVAL">Awaiting approval</option>
               <option value="APPROVED">Approved</option>
               <option value="ACTIVE">Active</option>
               <option value="OBSOLETE">Obsolete</option>
             </ErpSelect>
-          )}
-          <ErpButton variant="secondary" className="!px-2 !py-1.5 text-[11px]" onClick={() => { setSearch(searchInput); setPage(1); }}>Search</ErpButton>
-        </div>
-
-        {isLoading ? (
-          <p className="p-6 text-center text-[11px] text-erp-text-muted">Loading BOMs…</p>
-        ) : (
-          <div className="overflow-x-auto">
-            <ErpDataTable className="w-full min-w-[960px] text-[11px]">
-              <thead>
-                <tr>
-                  <th className="px-3 py-2 text-left">BOM</th>
-                  <th className="px-3 py-2 text-left">SKU</th>
-                  <th className="px-3 py-2 text-left">Lines</th>
-                  <th className="px-3 py-2 text-left">Std cost/pc</th>
-                  <th className="px-3 py-2 text-left">Status</th>
-                  <th className="px-3 py-2 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {boms.map((b: Bom) => {
-                  const step = workflowStep(b.status);
-                  const isEditing = editingId === b._id;
-                  return (
-                    <Fragment key={b._id}>
-                      <tr className="border-t border-[var(--erp-border)]">
-                        <td className="px-3 py-2">
-                          <span className="font-mono text-[10px]">{b.bomCode}</span>
-                          <p className="text-[10px] text-erp-text-muted">v{b.version} · {step.label}</p>
-                        </td>
-                        <td className="px-3 py-2">{skuLabel(b.skuId)}</td>
-                        <td className="px-3 py-2">{b.lines?.length ?? 0}</td>
-                        <td className="px-3 py-2">{formatCost(b.totalCostPerPiece)}</td>
-                        <td className="px-3 py-2"><ErpStatusBadge status={b.status} label={statusLabel(b.status)} /></td>
-                        <td className="px-3 py-2 text-right">
-                          <div className="flex flex-wrap justify-end gap-1">
-                            {canUpdate && b.status === 'DRAFT' && !isEditing && (
-                              <ErpButton variant="secondary" className="!px-2 !py-1 text-[10px]" onClick={() => startEdit(b)}>Edit</ErpButton>
-                            )}
-                            {canApprove && b.status === 'DRAFT' && (
-                              <ErpButton className="!px-2 !py-1 text-[10px]" onClick={() => setConfirmAction({ id: b._id, step: 'approve', label: 'Approve this BOM?' })}>Approve</ErpButton>
-                            )}
-                            {canUpdate && b.status === 'APPROVED' && (
-                              <ErpButton className="!px-2 !py-1 text-[10px]" onClick={() => setConfirmAction({ id: b._id, step: 'finalize', label: 'Freeze this BOM as standard cost and run MRP?' })}>Freeze & MRP</ErpButton>
-                            )}
-                            {b.status === 'ACTIVE' && (
-                              <ErpButton variant="secondary" className="!px-2 !py-1 text-[10px]" onClick={() => loadMrp.mutate(b._id)}>MRP</ErpButton>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                      {isEditing && (
-                        <tr className="bg-[var(--erp-surface-muted)]">
-                          <td colSpan={6} className="px-3 py-3">
-                            <p className="mb-2 text-[10px] font-semibold">Edit lines — {b.bomCode}</p>
-                            <div className="space-y-2">
-                              {editLines.map((l, i) => (
-                                <div key={i} className="flex flex-wrap items-center gap-2">
-                                  <ErpSelect className="min-w-[140px] !py-1 text-[10px]" value={l.materialId} onChange={(e) => {
-                                    const mat = materials.find((m: Material) => m._id === e.target.value);
-                                    setEditLines((lines) => lines.map((x, j) => j === i ? { ...x, materialId: e.target.value, unit: mat?.unit || x.unit } : x));
-                                  }}>
-                                    {materials.map((m: Material) => (
-                                      <option key={m._id} value={m._id}>{m.materialCode}</option>
-                                    ))}
-                                  </ErpSelect>
-                                  <ErpInput type="number" min={0} step="0.01" className="w-20 !py-1 text-[10px]" value={l.quantityPerPiece} onChange={(e) => setEditLines((lines) => lines.map((x, j) => j === i ? { ...x, quantityPerPiece: Number(e.target.value) } : x))} />
-                                  <span className="text-[10px] text-erp-text-muted">{l.unit}/pc</span>
-                                  <ErpInput type="number" min={0} max={100} className="w-16 !py-1 text-[10px]" value={l.wastagePercent} onChange={(e) => setEditLines((lines) => lines.map((x, j) => j === i ? { ...x, wastagePercent: Number(e.target.value) } : x))} />
-                                  <span className="text-[10px] text-erp-text-muted">% waste</span>
-                                  <span className="text-[10px] text-erp-text-muted">
-                                    std {formatCost(materials.find((m: Material) => m._id === l.materialId)?.unitCost)}
-                                  </span>
-                                  <ErpButton variant="secondary" className="!px-2 !py-0.5 text-[10px]" onClick={() => setEditLines((lines) => lines.filter((_, j) => j !== i))}>Remove</ErpButton>
-                                </div>
-                              ))}
-                            </div>
-                            <div className="mt-2 flex gap-2">
-                              <ErpButton className="!px-2 !py-1 text-[10px]" disabled={!editLines.length || saveLines.isPending} onClick={() => saveLines.mutate({ id: b._id, lines: editLines })}>Save</ErpButton>
-                              <ErpButton variant="secondary" className="!px-2 !py-1 text-[10px]" onClick={() => setEditingId(null)}>Cancel</ErpButton>
-                              <ErpButton variant="secondary" className="!px-2 !py-1 text-[10px]" onClick={addLine}>Add line</ErpButton>
-                            </div>
-                          </td>
-                        </tr>
-                      )}
-                      {!isEditing && b.lines && b.lines.length > 0 && (
-                        <tr className="text-[10px] text-erp-text-muted">
-                          <td colSpan={6} className="border-t border-[var(--erp-border)]/50 px-3 py-1.5">
-                            {b.lines.map((l: BomLine, i) => (
-                              <span key={i}>
-                                {i > 0 && ' · '}
-                                {materialLabel(l.materialId)} {l.quantityPerPiece} {l.unit}/pc
-                                {(l.wastagePercent ?? 0) > 0 && ` (+${l.wastagePercent}% waste)`}
-                                {l.unitCost != null && l.unitCost > 0 && ` · std ${formatCost(l.unitCost)}`}
-                              </span>
-                            ))}
-                          </td>
-                        </tr>
-                      )}
-                    </Fragment>
-                  );
-                })}
-                {boms.length === 0 && (
-                  <tr>
-                    <td colSpan={6} className="px-4 py-8 text-center text-[11px] text-erp-text-muted">
-                      No BOMs — create active SKUs first, then build a BOM from the design tech pack
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </ErpDataTable>
-          </div>
-        )}
-        {meta && meta.totalPages > 0 && (
-          <div className="flex items-center justify-between border-t border-[var(--erp-border)] px-3 py-2 sm:pr-24">
-            <p className="text-[10px] text-erp-text-muted">{meta.page}/{meta.totalPages} · {meta.total} total</p>
-            <div className="flex items-center gap-1 sm:mr-16">
-              <ErpButton variant="secondary" className="!px-2 !py-1 text-[10px]" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>Prev</ErpButton>
-              <ErpButton variant="secondary" className="!px-2 !py-1 text-[10px]" disabled={page >= meta.totalPages} onClick={() => setPage((p) => p + 1)}>Next</ErpButton>
-            </div>
-          </div>
-        )}
-      </ErpCard>
-
-      {mrpView && (
-        <ErpCard className="mt-3 !p-3">
-          <div className="mb-2 flex items-center justify-between">
-            <h3 className="text-[11px] font-semibold">MRP preview</h3>
-            <ErpButton variant="secondary" className="!px-2 !py-1 text-[10px]" onClick={() => setMrpView(null)}>Close</ErpButton>
-          </div>
-          {mrpView.mrp.hasShortage && (
-            <div className="mb-2 flex items-center gap-2 rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-[10px] text-amber-700">
-              <AlertTriangle size={12} />
-              {mrpShortageCount(mrpView.mrp)} material(s) short — check inventory before production
-            </div>
-          )}
-          <p className="mb-2 text-[10px] text-erp-text-muted">
-            Qty {mrpView.mrp.orderQuantity} · Standard {formatCost(mrpView.mrp.totalCost)}
-          </p>
-          <ErpDataTable className="w-full text-[10px]">
+          ) : undefined}
+          onClear={hasFilters ? clearFilters : undefined}
+        />
+        <QueryState
+          skeleton="table"
+          skeletonColumns={6}
+          isLoading={list.isLoading}
+          isError={list.isError}
+          error={list.error}
+          onRetry={list.refetch}
+          isEmpty={!boms.length}
+          emptyIcon={FileStack}
+          emptyMessage={hasFilters ? 'No BOMs match these filters' : tab === 'active' ? 'No active BOMs yet' : 'No BOMs yet'}
+          emptyDescription={hasFilters ? 'Try a different status or search.' : 'Build a BOM for each active SKU, then approve and freeze it.'}
+          emptyAction={hasFilters
+            ? <Button size="sm" variant="secondary" onClick={clearFilters}>Clear filters</Button>
+            : canCreate ? <Button size="sm" icon={<Plus size={14} />} onClick={() => setCreating(true)}>New BOM</Button> : undefined}
+        >
+          <ErpDataTable className="min-w-[820px]">
             <thead>
               <tr>
-                <th className="px-2 py-1 text-left">Material</th>
-                <th className="px-2 py-1 text-right">Required</th>
-                <th className="px-2 py-1 text-right">Available</th>
-                <th className="px-2 py-1 text-right">Short</th>
-                <th className="px-2 py-1 text-right">Std cost</th>
+                <th>BOM</th>
+                <th>SKU</th>
+                <th className="erp-num">Lines</th>
+                <th className="erp-num">Std cost / piece</th>
+                <th>Status</th>
+                <th className="erp-cell-actions"><span className="sr-only">Actions</span></th>
               </tr>
             </thead>
             <tbody>
-              {(mrpView.mrp.lines || []).map((l, i) => (
-                <tr key={i} className="border-t border-[var(--erp-border)]">
-                  <td className="px-2 py-1">{materialLabel(l.materialId)}</td>
-                  <td className="px-2 py-1 text-right">{l.requiredQty} {l.unit}</td>
-                  <td className="px-2 py-1 text-right">{l.availableQty}</td>
-                  <td className={`px-2 py-1 text-right ${(l.shortageQty ?? 0) > 0 ? 'text-amber-600 font-medium' : ''}`}>{l.shortageQty ?? 0}</td>
-                  <td className="px-2 py-1 text-right">{formatCost(l.extendedCost)}</td>
+              {boms.map((b: Bom) => (
+                <tr key={b._id} className={`erp-row-clickable${selected?.bom._id === b._id ? ' erp-row-selected' : ''}`} onClick={() => setSelected({ bom: b })}>
+                  <td>
+                    <p className="erp-cell-primary font-mono">{b.bomCode}</p>
+                    <p className="text-xs text-erp-text-muted">Version {b.version}{b.isLatestVersion === false ? ' · older' : ''}</p>
+                  </td>
+                  <td>{skuLabel(b.skuId)}</td>
+                  <td className="erp-num">{b.lines?.length ?? 0}</td>
+                  <td className="erp-num">{formatCost(b.totalCostPerPiece)}</td>
+                  <td>
+                    <span className="flex flex-wrap items-center gap-1.5">
+                      <StatusBadge status={b.status} />
+                      {b.status === 'ACTIVE' && b.needsReview && (
+                        <Tooltip content={b.reviewReason || 'Source pattern was reopened — build and freeze a new version'}>
+                          <span><Badge tone="warning" dot>Needs review</Badge></span>
+                        </Tooltip>
+                      )}
+                      {b.status === 'DRAFT' && (b.revisionComments || b.rejectionComments) && (
+                        <Tooltip content={b.revisionComments || b.rejectionComments}>
+                          <span><Badge tone="warning" dot>{b.revisionComments ? 'Changes requested' : 'Rejected'}</Badge></span>
+                        </Tooltip>
+                      )}
+                    </span>
+                  </td>
+                  <td className="erp-cell-actions">
+                    <div className="flex items-center justify-end gap-1">
+                      {primaryAction(b)}
+                      <RowActionsMenu
+                        label={`More actions for ${b.bomCode}`}
+                        items={[
+                          { label: 'View details', icon: Eye, onSelect: () => setSelected({ bom: b }) },
+                          { label: 'Edit lines', icon: Pencil, hidden: !(canUpdate && b.status === 'DRAFT'), onSelect: () => setSelected({ bom: b, edit: true }) },
+                          { label: 'Approve', icon: CheckCircle2, hidden: !(canApprove && b.status === 'DRAFT'), onSelect: () => actions.approve(b) },
+                          { type: 'separator', hidden: !(canApprove && b.status === 'PENDING_APPROVAL') },
+                          { label: 'Request changes', icon: MessageSquareWarning, hidden: !(canApprove && b.status === 'PENDING_APPROVAL'), onSelect: () => actions.requestChanges(b) },
+                          { label: 'Reject', icon: Ban, danger: true, hidden: !(canApprove && b.status === 'PENDING_APPROVAL'), onSelect: () => actions.reject(b) },
+                        ]}
+                      />
+                    </div>
+                  </td>
                 </tr>
               ))}
             </tbody>
           </ErpDataTable>
-        </ErpCard>
-      )}
+          <TablePager
+            page={page}
+            totalPages={meta?.totalPages ?? 0}
+            total={meta?.total ?? 0}
+            pageSize={PAGE_SIZE}
+            itemLabel="BOMs"
+            onPrev={() => setPage((p) => Math.max(1, p - 1))}
+            onNext={() => setPage((p) => p + 1)}
+          />
+        </QueryState>
+      </Section>
 
-      <ConfirmDialog
-        open={!!confirmAction}
-        title={confirmAction?.label ?? 'Confirm'}
-        message="This advances the BOM lifecycle."
-        confirmLabel="Continue"
-        loading={workflow.isPending}
-        onCancel={() => setConfirmAction(null)}
-        onConfirm={() => {
-          if (!confirmAction) return;
-          workflow.mutate({ id: confirmAction.id, step: confirmAction.step });
-        }}
+      {canCreate && (
+        <NewBomDrawer
+          open={creating}
+          onClose={() => setCreating(false)}
+          onCreated={(bom) => { setCreating(false); setSelected({ bom }); }}
+        />
+      )}
+      <BomDetailDrawer
+        bom={selected?.bom ?? null}
+        startEditing={selected?.edit}
+        onClose={() => setSelected(null)}
+        actions={actions}
+        canUpdate={canUpdate}
+        canApprove={canApprove}
       />
-    </div>
+      <MrpModal view={actions.mrpView} onClose={actions.closeMrp} />
+    </>
   );
 }

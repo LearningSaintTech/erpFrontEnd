@@ -1,3 +1,6 @@
+import { useQueryClient } from '@tanstack/react-query';
+import { Badge, type ErpTone } from '../../components/erp';
+import { useAuth } from '../../app/providers/AuthProvider';
 import { materialParts, transactionLabel } from './inventoryUtils';
 
 export {
@@ -13,6 +16,35 @@ export {
   fieldLabel,
 } from '../../components/erp/erpLayout';
 
+export const INVENTORY_PAGE_SIZE = 20;
+
+export function useInventoryPerms() {
+  const { permissions } = useAuth();
+  const has = (p: string) => permissions.includes('*') || permissions.includes(p);
+  return {
+    canCreate: has('inventory.create'),
+    canUpdate: has('inventory.update'),
+    canExport: has('inventory.export'),
+    canRequestPurchase: has('purchase.create'),
+    canPutAway: has('warehouse.update'),
+    canReadSkus: has('sku.read') || has('inventory.read'),
+  };
+}
+export type InventoryPerms = ReturnType<typeof useInventoryPerms>;
+
+/** Everything an inventory mutation can affect. */
+export function useInvalidateInventory() {
+  const qc = useQueryClient();
+  return () => {
+    [
+      'materials-page', 'materials', 'materials-reserve', 'inventory-balances', 'inventory-balances-page',
+      'inventory-stats', 'inventory-transactions', 'inventory-availability', 'inventory-manual-reservations',
+      'warehouse-stats', 'purchase-list', 'purchase-stats', 'prs-open-for-alerts', 'qc-queue', 'quality-stats',
+      'material-master-requests',
+    ].forEach((key) => qc.invalidateQueries({ queryKey: [key] }));
+  };
+}
+
 export function MaterialCell({
   materialId,
 }: {
@@ -21,38 +53,28 @@ export function MaterialCell({
   const { code, name } = materialParts(materialId);
   return (
     <div className="min-w-[140px]">
-      <p className="font-mono text-[12px] font-medium text-erp-text-primary">{code}</p>
-      {name ? <p className="text-[12px] text-erp-text-muted">{name}</p> : null}
+      <p className="font-mono text-[13px] font-medium text-erp-text-primary">{code}</p>
+      {name ? <p className="text-[13px] text-erp-text-muted">{name}</p> : null}
     </div>
   );
 }
 
 export function LocationPill({ label, onDock }: { label: string; onDock: boolean }) {
   return (
-    <span
-      className={`inline-flex max-w-[180px] truncate rounded-md px-2 py-0.5 text-[11px] font-medium ${
-        onDock
-          ? 'bg-sky-500/10 text-sky-800'
-          : 'bg-[var(--erp-surface-muted)] text-erp-text-secondary'
-      }`}
-      title={label}
-    >
+    <Badge tone={onDock ? 'info' : 'neutral'} dot={onDock} className="max-w-[180px]" title={label}>
       {label}
-    </span>
+    </Badge>
   );
 }
 
+const TX_TONE: Record<string, ErpTone> = {
+  RECEIPT: 'success',
+  ISSUE: 'danger',
+  RESERVATION: 'warning',
+  RESERVATION_RELEASE: 'info',
+  TRANSFER: 'info',
+};
+
 export function TxTypeBadge({ type }: { type: string }) {
-  const tone =
-    type === 'RECEIPT' ? 'bg-emerald-500/10 text-emerald-800'
-      : type === 'ISSUE' ? 'bg-red-500/10 text-red-800'
-        : type === 'RESERVATION' ? 'bg-amber-500/10 text-amber-800'
-          : type === 'RESERVATION_RELEASE' ? 'bg-sky-500/10 text-sky-800'
-            : type === 'TRANSFER' ? 'bg-indigo-500/10 text-indigo-800'
-              : 'bg-[var(--erp-surface-muted)] text-erp-text-secondary';
-  return (
-    <span className={`inline-flex rounded-md px-2 py-0.5 text-[11px] font-medium ${tone}`}>
-      {transactionLabel(type)}
-    </span>
-  );
+  return <Badge tone={TX_TONE[type] ?? 'neutral'}>{transactionLabel(type)}</Badge>;
 }

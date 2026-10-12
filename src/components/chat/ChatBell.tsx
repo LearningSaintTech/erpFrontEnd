@@ -16,7 +16,7 @@ export function ChatBell() {
     >
       <MessageSquare className="h-5 w-5" />
       {unreadTotal > 0 && (
-        <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-[var(--erp-accent)] px-1 text-[10px] font-bold text-white">
+        <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-[var(--erp-accent-hover)] px-1 text-xs font-bold text-white">
           {unreadTotal > 9 ? '9+' : unreadTotal}
         </span>
       )}

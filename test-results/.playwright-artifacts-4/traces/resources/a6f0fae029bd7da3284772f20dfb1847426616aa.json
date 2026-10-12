@@ -1,0 +1,1 @@
+{"organizationId":"6acb8c33f0d9467ae068535a","factoryId":"6acb8c33f0d9467ae068535e","documentType":"PURCHASE_REQUISITION","name":"E2E PR L1 admin L2 general-MV3VR39H","levels":[{"level":1,"approverRoles":["purchase.authorize"],"approvalType":"ANY","slaHours":24},{"level":2,"approverRoles":["approval.approve"],"approvalType":"ANY","slaHours":24}],"isActive":true}

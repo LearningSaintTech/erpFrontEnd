@@ -1,0 +1,1 @@
+{"success":true,"data":{"totalRecords":2,"recordedCount":2,"recoveredCount":0,"totalCost":704,"recoveredCost":0,"byType":{"REJECTED_PIECES":2,"ACCESSORY_WASTE":25},"costByType":{"REJECTED_PIECES":654,"ACCESSORY_WASTE":50},"byStatus":{"RECORDED":2},"topType":"ACCESSORY_WASTE","periodCost7d":704}}

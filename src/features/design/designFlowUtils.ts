@@ -36,6 +36,9 @@ export function buildDesignPipeline(
     canApprove?: boolean;
     canPattern?: boolean;
     canSample?: boolean;
+    /** SKUs generated for this design and how many of them have a frozen (ACTIVE) BOM. */
+    skuCount?: number;
+    activeBomSkuCount?: number;
   } = {},
 ): PipelineStep[] {
   const status = design?.status ?? 'DRAFT';
@@ -43,6 +46,9 @@ export function buildDesignPipeline(
   const sampleApproved = hasApprovedSample(samples);
   const sampleActive = hasActiveSample(samples);
   const released = status === 'RELEASED' || patternComplete || sampleActive || sampleApproved;
+
+  const skuCount = opts.skuCount ?? 0;
+  const bomReady = skuCount > 0 && (opts.activeBomSkuCount ?? 0) > 0;
 
   const approvalDone = !['DRAFT', 'REVISION_REQUESTED', 'IN_REVIEW'].includes(status) || released;
 
@@ -117,20 +123,26 @@ export function buildDesignPipeline(
     {
       id: 'sku',
       label: 'SKU matrix',
-      description: sampleApproved
-        ? 'Generate SKU codes from the approved sample'
-        : 'Requires an approved sample',
-      state: sampleApproved ? 'current' : 'blocked',
-      href: sampleApproved ? '/products/skus' : undefined,
-      actionLabel: sampleApproved ? 'Open SKU matrix' : undefined,
+      description: !sampleApproved
+        ? 'Requires an approved sample'
+        : bomReady
+          ? `${skuCount} SKU${skuCount === 1 ? '' : 's'} · BOM frozen`
+          : skuCount > 0
+            ? `${skuCount} SKU${skuCount === 1 ? '' : 's'} — build and freeze a BOM`
+            : 'Generate SKU codes from the approved sample',
+      state: bomReady ? 'done' : sampleApproved ? 'current' : 'blocked',
+      href: !sampleApproved ? undefined : skuCount > 0 ? '/products/boms' : '/products/skus',
+      actionLabel: !sampleApproved ? undefined : skuCount > 0 ? 'Open BOMs' : 'Open SKU matrix',
     },
     {
       id: 'production',
       label: 'Production orders',
-      description: sampleApproved
-        ? 'Create orders after SKUs and active BOM are ready'
-        : 'Requires SKUs and active BOM',
-      state: sampleApproved ? 'upcoming' : 'blocked',
+      description: bomReady
+        ? 'Ready — plan production orders'
+        : sampleApproved
+          ? 'Create orders after SKUs and active BOM are ready'
+          : 'Requires SKUs and active BOM',
+      state: bomReady ? 'current' : sampleApproved ? 'upcoming' : 'blocked',
       href: sampleApproved ? '/production/orders' : undefined,
       actionLabel: sampleApproved ? 'Open production' : undefined,
     },

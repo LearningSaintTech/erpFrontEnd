@@ -1,28 +1,57 @@
-import { useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { AlertTriangle, CheckCircle2, Clock, Inbox, Link2 } from 'lucide-react';
+import {
+  AlertTriangle, CheckCircle2, Inbox, Plus, Send, Users,
+} from 'lucide-react';
 import { useAuth } from '../../app/providers/AuthProvider';
 import { approvalApi } from '../../services/approvals';
-import { ErpPageHeader, ErpCard, ErpTabs } from '../../components/erp';
-import { AlertBanner } from '../../components/AlertBanner';
-import { SuccessBanner } from '../users/SuccessBanner';
+import {
+  Button, InfoBanner, KpiGrid, PageHeader, StatTile, Tabs,
+} from '../../components/erp';
 import { InboxTab } from './tabs/InboxTab';
+import { canActOnApproval } from './approvalUtils';
 import { HistoryTab } from './tabs/HistoryTab';
 import { WorkflowsTab } from './tabs/WorkflowsTab';
 
 type TabId = 'inbox' | 'history' | 'workflows';
 
+function parseTab(t: string | null): TabId {
+  return t === 'history' || t === 'workflows' ? t : 'inbox';
+}
+
 export function ApprovalsPage() {
   const { user, factoryId, permissions } = useAuth();
-  const [tab, setTab] = useState<TabId>('inbox');
-  const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tabParam = searchParams.get('tab');
+  const [tab, setTab] = useState<TabId>(parseTab(tabParam));
+  const [creatingWorkflow, setCreatingWorkflow] = useState(false);
+
+  // Deep link from the sidebar / dashboard (e.g. ?tab=workflows).
+  useEffect(() => { setTab(parseTab(tabParam)); }, [tabParam]);
+
+  const selectTab = (id: TabId) => {
+    setTab(id);
+    setSearchParams(id === 'inbox' ? {} : { tab: id }, { replace: true });
+  };
 
   const { data: stats } = useQuery({
     queryKey: ['approvals-stats'],
     queryFn: approvalApi.stats,
   });
+
+  // Same source as the sidebar badge and the dashboard's "Approvals for you": only what this
+  // user can decide (their own submissions and later levels they already approved don't count).
+  const { data: myPending } = useQuery({
+    queryKey: ['approvals-pending', 'dashboard-mine'],
+    queryFn: () => approvalApi.pending({ page: 1, limit: 50 }),
+    staleTime: 60_000,
+  });
+  const forMe = myPending
+    ? myPending.items.filter((a) => canActOnApproval(a, permissions, user?._id)).length
+    : undefined;
+  const factoryWide = stats?.pending;
 
   const { data: catalog } = useQuery({
     queryKey: ['approvals-catalog'],
@@ -30,7 +59,7 @@ export function ApprovalsPage() {
   });
 
   const documentTypes = catalog?.documentTypes ?? [
-    'DESIGN', 'SAMPLE', 'SAMPLE_MATERIAL', 'PRODUCTION_ORDER', 'PURCHASE_REQUISITION', 'PURCHASE_ORDER', 'BOM',
+    'DESIGN', 'SAMPLE', 'SAMPLE_MATERIAL', 'PRODUCTION_ORDER', 'PURCHASE_REQUISITION', 'BOM',
   ];
   const approverOptions = catalog?.approverPermissions ?? [];
 
@@ -38,114 +67,79 @@ export function ApprovalsPage() {
     || permissions.includes('approval.approve')
     || approverOptions.some((o) => permissions.includes(o.permission));
   const canConfigure = permissions.includes('*') || permissions.includes('approval.configure');
-
-  const tabs = useMemo(() => [
-    { id: 'inbox', label: `Inbox${stats?.pending != null ? ` (${stats.pending})` : ''}` },
-    { id: 'history', label: 'History' },
-    { id: 'workflows', label: 'Workflows' },
-  ], [stats?.pending]);
-
-  const showSuccess = (msg: string) => {
-    setSuccess(msg);
-    setError('');
-    setTimeout(() => setSuccess(''), 4000);
-  };
+  const canSeeUsers = permissions.includes('*') || permissions.includes('user.read');
+  const overdue = stats?.overdue ?? 0;
 
   return (
-    <div className="approvals-page text-xs leading-snug [&_.erp-page-header]:mb-3 [&_.erp-page-title]:text-base [&_.erp-page-subtitle]:text-[10px]">
-      <AlertBanner message={error} onDismiss={() => setError('')} />
-      <SuccessBanner message={success} onDismiss={() => setSuccess('')} />
-
-      <ErpPageHeader
+    <div className="space-y-4">
+      <PageHeader
         title="Approvals"
-        subtitle={(
-          <>
-            Central inbox. Purchase requisitions are approved by Factory Admin or Super Admin only.
-            <Link to="/users" className="ml-2 inline-flex items-center gap-0.5 text-[var(--erp-accent)]">
-              <Link2 size={10} /> Delegations in Users
-            </Link>
-          </>
-        )}
+        description="Decide on documents waiting for you and set up approval chains."
+        secondaryActions={canSeeUsers ? (
+          <Button variant="secondary" size="sm" icon={<Users size={16} />} onClick={() => navigate('/users?tab=delegations')}>
+            Delegations
+          </Button>
+        ) : undefined}
+        primaryAction={tab === 'workflows' && canConfigure ? (
+          <Button size="sm" icon={<Plus size={16} />} onClick={() => setCreatingWorkflow(true)}>New workflow</Button>
+        ) : undefined}
       />
 
-      <div className="mb-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-        <ErpCard className="!p-3">
-          <div className="flex items-center gap-2">
-            <Inbox size={16} className="text-[var(--erp-accent)]" />
-            <div>
-              <p className="text-[10px] uppercase tracking-wide text-erp-text-muted">Pending</p>
-              <p className="text-lg font-semibold">{stats?.pending ?? '—'}</p>
-            </div>
-          </div>
-        </ErpCard>
-        <ErpCard className="!p-3">
-          <div className="flex items-center gap-2">
-            <AlertTriangle size={16} className="text-amber-500" />
-            <div>
-              <p className="text-[10px] uppercase tracking-wide text-erp-text-muted">Over SLA (24h)</p>
-              <p className={`text-lg font-semibold ${(stats?.overdue ?? 0) > 0 ? 'text-amber-600' : ''}`}>
-                {stats?.overdue ?? '—'}
-              </p>
-            </div>
-          </div>
-        </ErpCard>
-        <ErpCard className="!p-3">
-          <div className="flex items-center gap-2">
-            <Clock size={16} className="text-[var(--erp-accent)]" />
-            <div>
-              <p className="text-[10px] uppercase tracking-wide text-erp-text-muted">My submissions</p>
-              <p className="text-lg font-semibold">{stats?.submittedByMe ?? '—'}</p>
-            </div>
-          </div>
-        </ErpCard>
-        <ErpCard className="!p-3">
-          <div className="flex items-center gap-2">
-            <CheckCircle2 size={16} className="text-emerald-500" />
-            <div>
-              <p className="text-[10px] uppercase tracking-wide text-erp-text-muted">Completed today</p>
-              <p className="text-lg font-semibold">{stats?.completedToday ?? '—'}</p>
-            </div>
-          </div>
-        </ErpCard>
-      </div>
+      <KpiGrid cols={4}>
+        <StatTile
+          icon={Inbox}
+          label="Waiting for you"
+          value={forMe ?? '—'}
+          hint={factoryWide != null && forMe != null && factoryWide !== forMe ? `${factoryWide} in total` : undefined}
+        />
+        <StatTile
+          icon={AlertTriangle}
+          label="Over SLA"
+          value={stats?.overdue ?? '—'}
+          hint="Past target time"
+          highlight={overdue > 0 ? 'warn' : undefined}
+        />
+        <StatTile icon={Send} label="My requests" value={stats?.submittedByMe ?? "—"} hint="Still in approval" />
+        <StatTile icon={CheckCircle2} label="Decided today" value={stats?.completedToday ?? '—'} />
+      </KpiGrid>
 
-      {!canApprove && (
-        <ErpCard className="mb-3 !border-amber-500/30 !bg-amber-500/5 !p-3">
-          <p className="text-[11px]" style={{ color: 'var(--erp-warning-text)' }}>
-            You have read-only access. Approval actions require a document-specific approve permission
-            (e.g. <code className="text-[10px]">sampling.approve</code> for sample materials).
-          </p>
-        </ErpCard>
+      {!canApprove && tab === 'inbox' && (
+        <InfoBanner inset={false} tone="muted">
+          You can follow approvals here, but deciding needs an approve permission for that document type.
+        </InfoBanner>
       )}
 
-      <ErpTabs tabs={tabs} active={tab} onChange={(id) => setTab(id as TabId)} />
+      <Tabs
+        tabs={[
+          { id: 'inbox', label: 'Inbox', count: forMe ?? null },
+          { id: 'history', label: 'History' },
+          { id: 'workflows', label: 'Workflows' },
+        ]}
+        active={tab}
+        onChange={(id) => selectTab(id as TabId)}
+        ariaLabel="Approvals views"
+      />
 
-      <div className="mt-3">
-        {tab === 'inbox' && (
-          <InboxTab
-            canApprove={canApprove}
-            permissions={permissions}
-            userId={user?._id}
-            documentTypes={documentTypes}
-            onError={setError}
-            onSuccess={showSuccess}
-          />
-        )}
-        {tab === 'history' && (
-          <HistoryTab documentTypes={documentTypes} />
-        )}
-        {tab === 'workflows' && (
-          <WorkflowsTab
-            canConfigure={canConfigure}
-            documentTypes={documentTypes}
-            approverOptions={approverOptions}
-            organizationId={user?.organizationId}
-            factoryId={factoryId ?? undefined}
-            onError={setError}
-            onSuccess={showSuccess}
-          />
-        )}
-      </div>
+      {tab === 'inbox' && (
+        <InboxTab
+          canApprove={canApprove}
+          permissions={permissions}
+          userId={user?._id}
+          documentTypes={documentTypes}
+        />
+      )}
+      {tab === 'history' && <HistoryTab documentTypes={documentTypes} />}
+      {tab === 'workflows' && (
+        <WorkflowsTab
+          canConfigure={canConfigure}
+          documentTypes={documentTypes}
+          approverOptions={approverOptions}
+          organizationId={user?.organizationId}
+          factoryId={factoryId ?? undefined}
+          createOpen={creatingWorkflow}
+          onCreateOpenChange={setCreatingWorkflow}
+        />
+      )}
     </div>
   );
 }

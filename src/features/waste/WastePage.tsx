@@ -1,408 +1,413 @@
-import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useEffect, useState, type FormEvent } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Download, Plus, Recycle, RefreshCw, Search, Trash2 } from 'lucide-react';
+import { BarChart3, Clock, Download, Eye, Plus, Recycle, RefreshCw, Trash2, TrendingUp, Wallet } from 'lucide-react';
 import { Bar, BarChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { wasteApi, productionApi } from '../../services/operations';
-import { inventoryApi, skuApi } from '../../services/manufacturing';
+import { wasteApi } from '../../services/operations';
+import apiClient from '../../services/api';
 import type { WasteRecord } from '../../types/api';
 import {
-  ErpPageHeader, ErpButton, ErpCard, ErpDataTable, ErpInput, ErpSelect, ErpStatusBadge,
+  Button, DescriptionList, Drawer, EmptyRow, ErpDataTable, ErpInput, ErpSearchSelect, ErpSelect, Field, FilterBar, IconButton,
+  KpiGrid, Modal, PageHeader, RowActionsMenu, SearchInput, Section, StatTile, StatusBadge, TablePager, TableSkeleton, toast,
 } from '../../components/erp';
-import { AlertBanner } from '../../components/AlertBanner';
-import { SuccessBanner } from '../users/SuccessBanner';
 import { useAuth } from '../../app/providers/AuthProvider';
 import {
-  batchLabel, formatCurrency, materialLabel, recordToChartData,
-  recoveryLabel, skuLabel, statusLabel, typeLabel,
+  batchLabel, formatCurrency, formatDateTime, materialLabel, recordToChartData, recoveryLabel, skuLabel, statusLabel, typeLabel,
 } from './wasteUtils';
+import { useDebouncedValue } from '../production/useProductionActions';
+import { QueryErrorRow } from '../production/QueryErrorRow';
+import { MATERIAL_UNITS, unitLabel } from '../inventory/inventoryUtils';
 
 const PAGE_SIZE = 15;
-const fieldLabel = 'mb-0.5 block text-[10px] font-medium text-erp-text-muted';
-const btnSm = '!px-2 !py-1 text-[10px]';
+type Errors = Record<string, string>;
+type WasteRow = WasteRecord & { reasonCode?: string; unitCost?: number; createdAt?: string; recoveredAt?: string };
+
+function useInvalidateWaste() {
+  const qc = useQueryClient();
+  return () => ['waste-stats', 'waste-records', 'waste-summary'].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
+}
+
+interface WasteFormOptions {
+  materials: { _id: string; materialCode: string; name: string; unit?: string; unitCost?: number }[];
+  skus: { _id: string; skuCode: string; name?: string }[];
+  batches: { _id: string; batchNumber: string; status?: string }[];
+}
+
+function fetchWasteFormOptions(): Promise<WasteFormOptions> {
+  return apiClient.get<{ data: WasteFormOptions }>('/waste/form-options').then((r) => r.data.data);
+}
+
+const statusTone = (s: string) => (s === 'RECORDED' ? 'warning' as const : undefined);
+
+/* ─────────────────────────── Record waste ─────────────────────────── */
+
+function RecordWasteDrawer({ open, onClose, wasteTypes, reasonCodes }: {
+  open: boolean; onClose: () => void; wasteTypes: string[]; reasonCodes: string[];
+}) {
+  const invalidate = useInvalidateWaste();
+  const empty = { wasteType: 'FABRIC_SCRAP', batchId: '', materialId: '', skuId: '', quantity: '1', unit: 'METERS', reasonCode: 'MANUAL', unitCost: '' };
+  const [form, setForm] = useState(empty);
+  const [errors, setErrors] = useState<Errors>({});
+  useEffect(() => { if (open) { setForm(empty); setErrors({}); } }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // One waste-scoped lookup: recorders (production manager, QC) can't read the inventory / SKU lists.
+  const { data: options } = useQuery({ queryKey: ['waste-form-options'], queryFn: fetchWasteFormOptions, enabled: open });
+  const batches = options?.batches ?? [];
+  const materials = options?.materials ?? [];
+  const skus = options?.skus ?? [];
+
+  const save = useMutation({
+    mutationFn: () => wasteApi.create({
+      wasteType: form.wasteType,
+      batchId: form.batchId || undefined,
+      materialId: form.materialId || undefined,
+      skuId: form.skuId || undefined,
+      quantity: Number(form.quantity),
+      unit: form.unit.trim(),
+      reasonCode: form.reasonCode,
+      unitCost: form.unitCost ? Number(form.unitCost) : undefined,
+    }),
+    onSuccess: (r) => { toast.success(`Waste ${r.wasteCode} recorded`); invalidate(); onClose(); },
+  });
+
+  const qty = Number(form.quantity) || 0;
+  const cost = form.unitCost ? qty * Number(form.unitCost) : undefined;
+
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    const next: Errors = {};
+    if (!(Number(form.quantity) > 0)) next.quantity = 'Enter a quantity greater than 0.';
+    if (!form.unit.trim()) next.unit = 'Enter the unit, e.g. METERS or PIECES.';
+    if (form.unitCost && !(Number(form.unitCost) >= 0)) next.unitCost = 'Unit cost cannot be negative.';
+    setErrors(next);
+    if (!Object.keys(next).length) save.mutate();
+  };
+
+  return (
+    <Drawer
+      open={open}
+      onClose={onClose}
+      size="md"
+      closeOnOverlayClick={false}
+      title="Record waste"
+      description="Log scrap or rejects so cost and recovery can be tracked."
+      footer={(
+        <>
+          {cost != null && <span className="mr-auto text-[13px] text-erp-text-muted">Estimated cost <strong className="erp-tabular text-erp-text-primary">{formatCurrency(cost)}</strong></span>}
+          <Button variant="secondary" onClick={onClose}>Cancel</Button>
+          <Button type="submit" form="waste-form" loading={save.isPending}>Record waste</Button>
+        </>
+      )}
+    >
+      <form id="waste-form" onSubmit={submit} className="space-y-4" noValidate>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Type" required>
+            <ErpSelect value={form.wasteType} onChange={(e) => setForm({ ...form, wasteType: e.target.value })}>
+              {wasteTypes.map((t) => <option key={t} value={t}>{typeLabel(t)}</option>)}
+            </ErpSelect>
+          </Field>
+          <Field label="Reason">
+            <ErpSelect value={form.reasonCode} onChange={(e) => setForm({ ...form, reasonCode: e.target.value })}>
+              {reasonCodes.map((c) => <option key={c} value={c}>{typeLabel(c)}</option>)}
+            </ErpSelect>
+          </Field>
+        </div>
+        <Field label="Material" hint="Picking a material fills in its unit and cost.">
+          <ErpSearchSelect
+            value={form.materialId}
+            allowClear
+            placeholder="None"
+            options={materials.map((m) => ({ value: m._id, label: `${m.materialCode} — ${m.name}` }))}
+            onChange={(v) => {
+              const mat = materials.find((m) => m._id === v);
+              setForm((f) => ({ ...f, materialId: v, unit: mat?.unit || f.unit, unitCost: mat?.unitCost != null ? String(mat.unitCost) : f.unitCost }));
+            }}
+          />
+        </Field>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Batch">
+            <ErpSelect value={form.batchId} onChange={(e) => setForm({ ...form, batchId: e.target.value })}>
+              <option value="">None</option>
+              {batches.map((b) => <option key={b._id} value={b._id}>{b.batchNumber}</option>)}
+            </ErpSelect>
+          </Field>
+          <Field label="SKU">
+            <ErpSelect value={form.skuId} onChange={(e) => setForm({ ...form, skuId: e.target.value })}>
+              <option value="">None</option>
+              {skus.map((s) => <option key={s._id} value={s._id}>{s.skuCode}</option>)}
+            </ErpSelect>
+          </Field>
+        </div>
+        <div className="grid gap-4 grid-cols-3">
+          <Field label="Quantity" required error={errors.quantity}>
+            <ErpInput type="number" inputMode="decimal" min={0.01} step={0.01} value={form.quantity} onChange={(e) => setForm({ ...form, quantity: e.target.value })} />
+          </Field>
+          <Field label="Unit" required error={errors.unit}>
+            <ErpSelect value={form.unit} onChange={(e) => setForm({ ...form, unit: e.target.value })}>
+              {MATERIAL_UNITS.map((u) => <option key={u.value} value={u.value}>{u.label}</option>)}
+            </ErpSelect>
+          </Field>
+          <Field label="Unit cost" error={errors.unitCost}>
+            <ErpInput type="number" inputMode="decimal" min={0} value={form.unitCost} onChange={(e) => setForm({ ...form, unitCost: e.target.value })} placeholder="Auto" />
+          </Field>
+        </div>
+      </form>
+    </Drawer>
+  );
+}
+
+/* ─────────────────────────── Recovery ─────────────────────────── */
+
+function RecoveryModal({ record, onClose, actions }: { record: WasteRow | null; onClose: () => void; actions: string[] }) {
+  const invalidate = useInvalidateWaste();
+  const [action, setAction] = useState('RECYCLE');
+  useEffect(() => { if (record) setAction(actions[0] ?? 'RECYCLE'); }, [record, actions]);
+  const save = useMutation({
+    mutationFn: () => wasteApi.recordRecovery(record!._id, { recoveryAction: action }),
+    meta: { successMessage: 'Recovery recorded' },
+    onSuccess: () => { invalidate(); onClose(); },
+  });
+  return (
+    <Modal
+      open={!!record}
+      onClose={onClose}
+      size="sm"
+      title={`Recover ${record?.wasteCode ?? ''}`}
+      description={record ? `${record.quantity} ${unitLabel(record.unit).toLowerCase()} of ${typeLabel(record.wasteType).toLowerCase()}` : undefined}
+      footer={(
+        <>
+          <Button variant="secondary" onClick={onClose}>Cancel</Button>
+          <Button loading={save.isPending} onClick={() => save.mutate()}>Record recovery</Button>
+        </>
+      )}
+    >
+      <fieldset>
+        <legend className="mb-2 text-sm font-medium">What happened to it?</legend>
+        <div className="grid gap-2" role="radiogroup">
+          {actions.map((a) => (
+            <label key={a} className={`flex min-h-11 cursor-pointer items-center gap-3 rounded-md border px-3 text-sm ${action === a ? 'border-[var(--erp-accent)] bg-[var(--erp-accent-subtle)]' : 'border-[var(--erp-border)]'}`}>
+              <input type="radio" name="recovery" className="h-4 w-4" checked={action === a} onChange={() => setAction(a)} />
+              {recoveryLabel(a)}
+            </label>
+          ))}
+        </div>
+      </fieldset>
+    </Modal>
+  );
+}
+
+/* ─────────────────────────── Page ─────────────────────────── */
 
 export function WastePage() {
-  const qc = useQueryClient();
+  const navigate = useNavigate();
   const { permissions } = useAuth();
   const canCreate = permissions.includes('*') || permissions.includes('waste.create');
   const canUpdate = permissions.includes('*') || permissions.includes('waste.update');
   const canExport = permissions.includes('*') || permissions.includes('waste.export');
 
   const [page, setPage] = useState(1);
-  const [search, setSearch] = useState('');
   const [searchInput, setSearchInput] = useState('');
+  const search = useDebouncedValue(searchInput.trim());
   const [typeFilter, setTypeFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
-  const [showForm, setShowForm] = useState(false);
-  const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
-  const [recoverId, setRecoverId] = useState<string | null>(null);
-  const [recoveryAction, setRecoveryAction] = useState('RECYCLE');
+  const [creating, setCreating] = useState(false);
+  const [recovering, setRecovering] = useState<WasteRow | null>(null);
+  const [selected, setSelected] = useState<WasteRow | null>(null);
+  const [exporting, setExporting] = useState(false);
 
-  const [form, setForm] = useState({
-    wasteType: 'FABRIC_SCRAP',
-    batchId: '',
-    materialId: '',
-    skuId: '',
-    quantity: '1',
-    unit: 'METERS',
-    reasonCode: 'MANUAL',
-    unitCost: '',
-  });
-
-  const showSuccess = (msg: string) => {
-    setSuccess(msg);
-    setError('');
-    setTimeout(() => setSuccess(''), 4000);
-  };
-
-  const invalidate = () => {
-    qc.invalidateQueries({ queryKey: ['waste-stats'] });
-    qc.invalidateQueries({ queryKey: ['waste-records'] });
-    qc.invalidateQueries({ queryKey: ['waste-summary'] });
-  };
-
-  const { data: stats } = useQuery({ queryKey: ['waste-stats'], queryFn: () => wasteApi.stats() });
+  const statsQ = useQuery({ queryKey: ['waste-stats'], queryFn: () => wasteApi.stats() });
+  const stats = statsQ.data;
   const { data: catalog } = useQuery({ queryKey: ['waste-catalog'], queryFn: () => wasteApi.catalog() });
-
-  const { data: pageData, isLoading, isFetching, refetch } = useQuery({
+  const listQ = useQuery({
     queryKey: ['waste-records', page, search, typeFilter, statusFilter],
-    queryFn: () => wasteApi.listPage({
-      page,
-      limit: PAGE_SIZE,
-      search: search || undefined,
-      wasteType: typeFilter || undefined,
-      status: statusFilter || undefined,
-    }),
+    queryFn: () => wasteApi.listPage({ page, limit: PAGE_SIZE, search: search || undefined, wasteType: typeFilter || undefined, status: statusFilter || undefined }),
+    placeholderData: (prev) => prev,
   });
-  const records = pageData?.items ?? [];
-  const meta = pageData?.meta;
-
-  const { data: batches = [] } = useQuery({
-    queryKey: ['batches-waste'],
-    queryFn: () => productionApi.listBatchesPage({ limit: 100 }).then((r) => r.items),
-    enabled: showForm,
-  });
-  const { data: materials = [] } = useQuery({
-    queryKey: ['materials-waste'],
-    queryFn: () => inventoryApi.listMaterialsPage({ limit: 200 }).then((r) => r.items),
-    enabled: showForm,
-  });
-  const { data: skus = [] } = useQuery({
-    queryKey: ['skus-waste'],
-    queryFn: () => skuApi.listPage({ limit: 200 }).then((r) => r.items),
-    enabled: showForm,
-  });
-
-  const createMut = useMutation({
-    mutationFn: () => wasteApi.create({
-      wasteType: form.wasteType,
-      batchId: form.batchId || undefined,
-      materialId: form.materialId || undefined,
-      skuId: form.skuId || undefined,
-      quantity: Number(form.quantity) || 1,
-      unit: form.unit,
-      reasonCode: form.reasonCode,
-      unitCost: form.unitCost ? Number(form.unitCost) : undefined,
-    }),
-    onSuccess: (r) => {
-      setShowForm(false);
-      showSuccess(`Waste record ${r.wasteCode} created`);
-      invalidate();
-    },
-    onError: (e: Error) => setError(e.message),
-  });
-
-  const recoveryMut = useMutation({
-    mutationFn: () => wasteApi.recordRecovery(recoverId!, { recoveryAction }),
-    onSuccess: () => {
-      setRecoverId(null);
-      showSuccess('Recovery recorded');
-      invalidate();
-    },
-    onError: (e: Error) => setError(e.message),
-  });
+  const records = (listQ.data?.items ?? []) as WasteRow[];
+  const meta = listQ.data?.meta;
 
   const handleExport = async () => {
+    setExporting(true);
     try {
-      const blob = await wasteApi.exportCsv({
-        search: search || undefined,
-        wasteType: typeFilter || undefined,
-        status: statusFilter || undefined,
-      });
+      // Only set keys: wasteApi.exportCsv feeds the object to URLSearchParams, which turns an undefined
+      // value into the literal "undefined" (search=undefined matched no waste code → empty export).
+      const params: Record<string, string> = {};
+      if (search) params.search = search;
+      if (typeFilter) params.wasteType = typeFilter;
+      if (statusFilter) params.status = statusFilter;
+      const blob = await wasteApi.exportCsv(params);
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
       a.download = 'waste-records.csv';
+      document.body.appendChild(a);
       a.click();
-      URL.revokeObjectURL(url);
-      showSuccess('Export downloaded');
+      a.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      toast.success('Export downloaded');
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Export failed');
+      toast.error(e instanceof Error ? e.message : 'Export failed');
+    } finally {
+      setExporting(false);
     }
   };
 
-  const chartData = recordToChartData(stats?.byType);
-  const wasteTypes = (catalog?.wasteTypes as string[] | undefined) ?? [
-    'FABRIC_SCRAP', 'THREAD_WASTE', 'REJECTED_PIECES', 'PRODUCTION_SCRAP',
-  ];
-  const recoveryActions = ((catalog?.recoveryActions as string[] | undefined) ?? ['RECYCLE', 'REUSE', 'DISPOSE'])
-    .filter((a) => a !== 'NONE');
+  // By cost: quantities mix metres, pieces and kg, so only value is comparable across types.
+  const chartData = recordToChartData(stats?.costByType ?? stats?.byType);
+  const wasteTypes = (catalog?.wasteTypes as string[] | undefined) ?? ['FABRIC_SCRAP', 'THREAD_WASTE', 'REJECTED_PIECES', 'PRODUCTION_SCRAP'];
+  const reasonCodes = (catalog?.reasonCodes as string[] | undefined) ?? ['MANUAL', 'CUTTING', 'QC_REJECT'];
+  const recoveryActions = ((catalog?.recoveryActions as string[] | undefined) ?? ['RECYCLE', 'REUSE', 'DISPOSE']).filter((a) => a !== 'NONE');
+
+  const filtersActive = !!(searchInput || typeFilter || statusFilter);
+  const clear = () => { setSearchInput(''); setTypeFilter(''); setStatusFilter(''); setPage(1); };
+  const toggleStatus = (s: string) => { setStatusFilter((cur) => (cur === s ? '' : s)); setPage(1); };
 
   return (
-    <div>
-      <AlertBanner message={error} onDismiss={() => setError('')} />
-      <SuccessBanner message={success} onDismiss={() => setSuccess('')} />
-
-      <ErpPageHeader
-        title="Waste Management"
-        subtitle="Track scrap, rejects, and recovery actions across production"
-        actions={(
-          <div className="flex flex-wrap gap-2">
-            <ErpButton variant="secondary" onClick={() => refetch()} disabled={isFetching}>
-              <RefreshCw className={`mr-1 inline h-3.5 w-3.5 ${isFetching ? 'animate-spin' : ''}`} />
-              Refresh
-            </ErpButton>
-            {canExport && (
-              <ErpButton variant="secondary" onClick={handleExport}>
-                <Download className="mr-1 inline h-3.5 w-3.5" />
-                Export
-              </ErpButton>
-            )}
-            {canCreate && (
-              <ErpButton onClick={() => setShowForm((v) => !v)}>
-                <Plus className="mr-1 inline h-3.5 w-3.5" />
-                Record waste
-              </ErpButton>
-            )}
-          </div>
+    <>
+      <PageHeader
+        title="Waste"
+        description="Track scrap and rejects from production, and what was recovered."
+        secondaryActions={(
+          <>
+            <IconButton aria-label="Refresh" loading={listQ.isFetching} onClick={() => { listQ.refetch(); statsQ.refetch(); }}><RefreshCw size={16} /></IconButton>
+            <Button variant="secondary" icon={<BarChart3 size={16} />} onClick={() => navigate('/reports/waste')}>Report</Button>
+            {canExport && <Button variant="secondary" icon={<Download size={16} />} loading={exporting} onClick={handleExport}>Export</Button>}
+          </>
         )}
+        primaryAction={canCreate ? <Button icon={<Plus size={16} />} onClick={() => setCreating(true)}>Record waste</Button> : undefined}
       />
 
-      <div className="mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
-        <ErpCard className="p-3">
-          <span className="text-[10px] text-erp-text-muted">Total cost</span>
-          <p className="mt-1 text-lg font-semibold">{formatCurrency(stats?.totalCost)}</p>
-        </ErpCard>
-        <ErpCard className="p-3">
-          <span className="text-[10px] text-erp-text-muted">Records</span>
-          <p className="mt-1 text-lg font-semibold">{stats?.totalRecords ?? '—'}</p>
-        </ErpCard>
-        <ErpCard className="p-3">
-          <span className="text-[10px] text-erp-text-muted">Awaiting recovery</span>
-          <p className="mt-1 text-lg font-semibold">{stats?.recordedCount ?? '—'}</p>
-        </ErpCard>
-        <ErpCard className="p-3">
-          <span className="text-[10px] text-erp-text-muted">Recovered</span>
-          <p className="mt-1 text-lg font-semibold">{stats?.recoveredCount ?? '—'}</p>
-        </ErpCard>
-        <ErpCard className="p-3">
-          <span className="text-[10px] text-erp-text-muted">Last 7 days</span>
-          <p className="mt-1 text-lg font-semibold">{formatCurrency(stats?.periodCost7d)}</p>
-        </ErpCard>
-        <ErpCard className="p-3">
-          <Link to="/reports/waste" className="block hover:opacity-90">
-            <span className="text-[10px] text-erp-text-muted">Top type</span>
-            <p className="mt-1 text-sm font-semibold">{stats?.topType ? typeLabel(stats.topType) : '—'}</p>
-          </Link>
-        </ErpCard>
-      </div>
+      <KpiGrid cols={6} className="mb-4">
+        <StatTile icon={Wallet} label="Total cost" value={formatCurrency(stats?.totalCost)} hint={`${stats?.totalRecords ?? 0} records`} />
+        <StatTile icon={Clock} label="Last 7 days" value={formatCurrency(stats?.periodCost7d)} />
+        <StatTile
+          icon={Trash2} label="Awaiting recovery" value={stats?.recordedCount ?? '—'}
+          highlight={(stats?.recordedCount ?? 0) > 0 ? 'warn' : undefined}
+          onClick={() => toggleStatus('RECORDED')} active={statusFilter === 'RECORDED'}
+        />
+        <StatTile icon={Recycle} label="Recovered" value={stats?.recoveredCount ?? '—'} onClick={() => toggleStatus('RECOVERED')} active={statusFilter === 'RECOVERED'} />
+        <StatTile icon={Wallet} label="Recovered value" value={formatCurrency(stats?.recoveredCost)} />
+        <StatTile
+          icon={TrendingUp} label="Top type" value={stats?.topType ? typeLabel(stats.topType) : '—'}
+          onClick={stats?.topType ? () => { setTypeFilter(typeFilter === stats.topType ? '' : stats.topType!); setPage(1); } : undefined}
+          active={!!stats?.topType && typeFilter === stats.topType}
+        />
+      </KpiGrid>
 
       {chartData.length > 0 && (
-        <ErpCard className="mb-6 p-4">
-          <p className="mb-3 text-sm font-medium">Waste by type (quantity)</p>
-          <div className="h-40">
+        <Section title="Waste by type" description="Cost of waste recorded, by type." className="mb-4">
+          <div className="h-44">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={chartData} margin={{ top: 4, right: 4, left: -16, bottom: 0 }}>
-                <XAxis dataKey="name" tick={{ fontSize: 9, fill: 'var(--erp-text-muted)' }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fontSize: 9, fill: 'var(--erp-text-muted)' }} axisLine={false} tickLine={false} />
-                <Tooltip contentStyle={{ background: 'var(--erp-glass-elevated)', border: '1px solid var(--erp-border)', borderRadius: 8, fontSize: 11 }} />
-                <Bar dataKey="value" fill="var(--erp-accent)" radius={[4, 4, 0, 0]} />
+              <BarChart data={chartData} margin={{ top: 4, right: 4, left: -12, bottom: 0 }}>
+                <XAxis dataKey="name" tick={{ fontSize: 12, fill: 'var(--erp-text-muted)' }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fontSize: 12, fill: 'var(--erp-text-muted)' }} axisLine={false} tickLine={false} />
+                <Tooltip formatter={(v) => [formatCurrency(Number(v)), 'Cost']} cursor={{ fill: 'var(--erp-surface-muted)' }} contentStyle={{ background: 'var(--erp-surface)', border: '1px solid var(--erp-border)', borderRadius: 8, fontSize: 13 }} />
+                <Bar dataKey="value" name="Quantity" fill="var(--erp-accent)" radius={[4, 4, 0, 0]} maxBarSize={48} />
               </BarChart>
             </ResponsiveContainer>
           </div>
-        </ErpCard>
+        </Section>
       )}
 
-      {showForm && canCreate && (
-        <ErpCard className="mb-6 p-4">
-          <h3 className="mb-3 text-sm font-medium">New waste record</h3>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            <label>
-              <span className={fieldLabel}>Type</span>
-              <ErpSelect value={form.wasteType} onChange={(e) => setForm((f) => ({ ...f, wasteType: e.target.value }))}>
+      <Section flush>
+        <FilterBar
+          search={<SearchInput inputSize="sm" value={searchInput} onChange={(v) => { setSearchInput(v); setPage(1); }} placeholder="Search waste code…" />}
+          filters={(
+            <>
+              <ErpSelect inputSize="sm" aria-label="Type" value={typeFilter} onChange={(e) => { setTypeFilter(e.target.value); setPage(1); }}>
+                <option value="">All types</option>
                 {wasteTypes.map((t) => <option key={t} value={t}>{typeLabel(t)}</option>)}
               </ErpSelect>
-            </label>
-            <label>
-              <span className={fieldLabel}>Batch</span>
-              <ErpSelect value={form.batchId} onChange={(e) => setForm((f) => ({ ...f, batchId: e.target.value }))}>
-                <option value="">None</option>
-                {batches.map((b) => <option key={b._id} value={b._id}>{b.batchNumber}</option>)}
+              <ErpSelect inputSize="sm" aria-label="Status" value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}>
+                <option value="">All statuses</option>
+                <option value="RECORDED">Awaiting recovery</option>
+                <option value="RECOVERED">Recovered</option>
               </ErpSelect>
-            </label>
-            <label>
-              <span className={fieldLabel}>Material</span>
-              <ErpSelect value={form.materialId} onChange={(e) => {
-                const mat = materials.find((m) => m._id === e.target.value);
-                setForm((f) => ({
-                  ...f,
-                  materialId: e.target.value,
-                  unit: mat?.unit || f.unit,
-                  unitCost: mat?.unitCost != null ? String(mat.unitCost) : f.unitCost,
-                }));
-              }}>
-                <option value="">None</option>
-                {materials.map((m) => <option key={m._id} value={m._id}>{m.materialCode} — {m.name}</option>)}
-              </ErpSelect>
-            </label>
-            <label>
-              <span className={fieldLabel}>SKU</span>
-              <ErpSelect value={form.skuId} onChange={(e) => setForm((f) => ({ ...f, skuId: e.target.value }))}>
-                <option value="">None</option>
-                {skus.map((s) => <option key={s._id} value={s._id}>{s.skuCode}</option>)}
-              </ErpSelect>
-            </label>
-            <label>
-              <span className={fieldLabel}>Quantity</span>
-              <ErpInput type="number" min={0.01} step={0.01} value={form.quantity} onChange={(e) => setForm((f) => ({ ...f, quantity: e.target.value }))} />
-            </label>
-            <label>
-              <span className={fieldLabel}>Unit</span>
-              <ErpInput value={form.unit} onChange={(e) => setForm((f) => ({ ...f, unit: e.target.value }))} />
-            </label>
-            <label>
-              <span className={fieldLabel}>Unit cost</span>
-              <ErpInput type="number" min={0} value={form.unitCost} onChange={(e) => setForm((f) => ({ ...f, unitCost: e.target.value }))} placeholder="Auto from material" />
-            </label>
-            <label>
-              <span className={fieldLabel}>Reason</span>
-              <ErpSelect value={form.reasonCode} onChange={(e) => setForm((f) => ({ ...f, reasonCode: e.target.value }))}>
-                {((catalog?.reasonCodes as string[]) ?? ['MANUAL', 'CUTTING', 'QC_REJECT']).map((c) => (
-                  <option key={c} value={c}>{c.replace(/_/g, ' ')}</option>
-                ))}
-              </ErpSelect>
-            </label>
-          </div>
-          <div className="mt-4 flex gap-2">
-            <ErpButton disabled={createMut.isPending} onClick={() => createMut.mutate()}>Save record</ErpButton>
-            <ErpButton variant="secondary" onClick={() => setShowForm(false)}>Cancel</ErpButton>
-          </div>
-        </ErpCard>
-      )}
-
-      <ErpCard className="p-4">
-        <div className="mb-4 flex flex-wrap items-end gap-3">
-          <div className="min-w-[180px] flex-1">
-            <span className={fieldLabel}>Search code</span>
-            <div className="flex gap-2">
-              <ErpInput
-                value={searchInput}
-                onChange={(e) => setSearchInput(e.target.value)}
-                placeholder="WST-…"
-                onKeyDown={(e) => e.key === 'Enter' && (setSearch(searchInput), setPage(1))}
-              />
-              <ErpButton variant="secondary" onClick={() => { setSearch(searchInput); setPage(1); }}>
-                <Search className="h-3.5 w-3.5" />
-              </ErpButton>
-            </div>
-          </div>
-          <label>
-            <span className={fieldLabel}>Type</span>
-            <ErpSelect value={typeFilter} onChange={(e) => { setTypeFilter(e.target.value); setPage(1); }}>
-              <option value="">All</option>
-              {wasteTypes.map((t) => <option key={t} value={t}>{typeLabel(t)}</option>)}
-            </ErpSelect>
-          </label>
-          <label>
-            <span className={fieldLabel}>Status</span>
-            <ErpSelect value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}>
-              <option value="">All</option>
-              <option value="RECORDED">Recorded</option>
-              <option value="RECOVERED">Recovered</option>
-            </ErpSelect>
-          </label>
-        </div>
-
-        <ErpDataTable>
+            </>
+          )}
+          onClear={filtersActive ? clear : undefined}
+        />
+        <ErpDataTable className="min-w-[820px]">
           <thead>
             <tr>
-              <th>Code</th>
-              <th>Type</th>
-              <th>Batch / Material</th>
-              <th>Qty</th>
-              <th>Cost</th>
-              <th>Status</th>
-              <th className="text-right">Actions</th>
+              <th>Code</th><th>Type</th><th>Source</th><th className="erp-num">Quantity</th><th className="erp-num">Cost</th><th>Status</th>
+              <th className="erp-cell-actions"><span className="sr-only">Actions</span></th>
             </tr>
           </thead>
           <tbody>
-            {isLoading ? (
-              <tr><td colSpan={7} className="py-8 text-center text-erp-text-muted">Loading…</td></tr>
-            ) : records.map((r: WasteRecord) => (
-              <tr key={r._id}>
-                <td className="font-mono text-xs">{r.wasteCode}</td>
+            {listQ.isLoading ? <TableSkeleton asRows rows={6} columns={7} /> : listQ.isError ? <QueryErrorRow colSpan={7} error={listQ.error} onRetry={() => listQ.refetch()} /> : records.length === 0 ? (
+              <EmptyRow
+                colSpan={7}
+                icon={Trash2}
+                title={filtersActive ? 'No waste records match these filters' : 'No waste recorded yet'}
+                action={filtersActive
+                  ? <Button size="sm" variant="secondary" onClick={clear}>Clear filters</Button>
+                  : canCreate ? <Button size="sm" icon={<Plus size={14} />} onClick={() => setCreating(true)}>Record waste</Button> : undefined}
+              >
+                {filtersActive ? undefined : 'Scrap recorded when completing batch stages also appears here.'}
+              </EmptyRow>
+            ) : records.map((r) => (
+              <tr key={r._id} className={`erp-row-clickable${selected?._id === r._id ? ' erp-row-selected' : ''}`} onClick={() => setSelected(r)}>
+                <td className="erp-cell-primary whitespace-nowrap font-mono">{r.wasteCode}</td>
                 <td>{typeLabel(r.wasteType)}</td>
-                <td className="text-xs text-erp-text-muted">
-                  {batchLabel(r.batchId)}
-                  {r.materialId && <span className="block">{materialLabel(r.materialId)}</span>}
-                  {r.skuId && <span className="block">{skuLabel(r.skuId)}</span>}
+                <td className="max-w-[260px]">
+                  <span className="block truncate">{r.materialId ? materialLabel(r.materialId) : r.skuId ? skuLabel(r.skuId) : '—'}</span>
+                  {r.batchId && <span className="block truncate text-xs text-erp-text-muted">Batch {batchLabel(r.batchId)}</span>}
                 </td>
-                <td>{r.quantity} {r.unit}</td>
-                <td>{formatCurrency(r.totalCost)}</td>
+                <td className="erp-num whitespace-nowrap">{r.quantity.toLocaleString()} <span className="text-erp-text-muted">{unitLabel(r.unit).toLowerCase()}</span></td>
+                <td className="erp-num">{formatCurrency(r.totalCost)}</td>
                 <td>
-                  <ErpStatusBadge status={r.status} label={statusLabel(r.status)} />
-                  {r.recoveryAction && r.status === 'RECOVERED' && (
-                    <span className="ml-1 text-[10px] text-erp-text-muted">({recoveryLabel(r.recoveryAction)})</span>
-                  )}
+                  <StatusBadge status={r.status} tone={statusTone(r.status)} label={r.status === 'RECORDED' ? 'Awaiting recovery' : r.recoveryAction ? `${statusLabel(r.status)} · ${recoveryLabel(r.recoveryAction)}` : undefined} />
                 </td>
-                <td className="text-right">
-                  {canUpdate && r.status === 'RECORDED' && (
-                    <ErpButton variant="secondary" className={btnSm} onClick={() => setRecoverId(r._id)}>
-                      <Recycle className="mr-0.5 inline h-3 w-3" />
-                      Recover
-                    </ErpButton>
-                  )}
+                <td className="erp-cell-actions">
+                  <div className="flex items-center justify-end gap-1">
+                    {canUpdate && r.status === 'RECORDED' && (
+                      <Button size="sm" variant="secondary" icon={<Recycle size={14} />} onClick={(e) => { e.stopPropagation(); setRecovering(r); }}>Recover</Button>
+                    )}
+                    <RowActionsMenu label={`Actions for ${r.wasteCode}`} items={[{ label: 'View details', icon: Eye, onSelect: () => setSelected(r) }]} />
+                  </div>
                 </td>
               </tr>
             ))}
-            {!isLoading && records.length === 0 && (
-              <tr><td colSpan={7} className="py-8 text-center text-erp-text-muted">No waste records</td></tr>
-            )}
           </tbody>
         </ErpDataTable>
+        {meta && <TablePager page={page} totalPages={meta.totalPages} total={meta.total} pageSize={PAGE_SIZE} itemLabel="records" onPrev={() => setPage((p) => p - 1)} onNext={() => setPage((p) => p + 1)} />}
+      </Section>
 
-        {meta && meta.totalPages > 1 && (
-          <div className="mt-4 flex items-center justify-between text-xs text-erp-text-muted">
-            <span>Page {meta.page} of {meta.totalPages} · {meta.total} total</span>
-            <div className="flex gap-2">
-              <ErpButton variant="secondary" className={btnSm} disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>Previous</ErpButton>
-              <ErpButton variant="secondary" className={btnSm} disabled={page >= meta.totalPages} onClick={() => setPage((p) => p + 1)}>Next</ErpButton>
-            </div>
-          </div>
-        )}
-      </ErpCard>
-
-      {recoverId && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <ErpCard className="w-full max-w-sm p-5">
-            <h3 className="mb-3 flex items-center gap-2 text-base font-semibold">
-              <Trash2 className="h-4 w-4" />
-              Record recovery
-            </h3>
-            <label className="block">
-              <span className={fieldLabel}>Recovery action</span>
-              <ErpSelect value={recoveryAction} onChange={(e) => setRecoveryAction(e.target.value)}>
-                {recoveryActions.map((a) => <option key={a} value={a}>{recoveryLabel(a)}</option>)}
-              </ErpSelect>
-            </label>
-            <div className="mt-4 flex justify-end gap-2">
-              <ErpButton variant="secondary" onClick={() => setRecoverId(null)}>Cancel</ErpButton>
-              <ErpButton disabled={recoveryMut.isPending} onClick={() => recoveryMut.mutate()}>Confirm</ErpButton>
-            </div>
-          </ErpCard>
-        </div>
+      <RecordWasteDrawer open={creating} onClose={() => setCreating(false)} wasteTypes={wasteTypes} reasonCodes={reasonCodes} />
+      <RecoveryModal record={recovering} onClose={() => setRecovering(null)} actions={recoveryActions} />
+      {selected && (
+        <Drawer
+          open
+          onClose={() => setSelected(null)}
+          size="sm"
+          title={selected.wasteCode}
+          description={typeLabel(selected.wasteType)}
+          headerExtra={<div className="mt-2"><StatusBadge status={selected.status} tone={statusTone(selected.status)} label={selected.status === 'RECORDED' ? 'Awaiting recovery' : undefined} /></div>}
+          footer={(
+            <>
+              <Button variant="secondary" onClick={() => setSelected(null)}>Close</Button>
+              {canUpdate && selected.status === 'RECORDED' && (
+                <Button icon={<Recycle size={16} />} onClick={() => { setRecovering(selected); setSelected(null); }}>Record recovery</Button>
+              )}
+            </>
+          )}
+        >
+          <DescriptionList
+            columns={2}
+            items={[
+              { label: 'Quantity', value: `${selected.quantity} ${unitLabel(selected.unit).toLowerCase()}` },
+              { label: 'Cost', value: formatCurrency(selected.totalCost) },
+              { label: 'Material', value: materialLabel(selected.materialId), full: true },
+              { label: 'SKU', value: skuLabel(selected.skuId) },
+              { label: 'Batch', value: batchLabel(selected.batchId) },
+              { label: 'Reason', value: selected.reasonCode ? typeLabel(selected.reasonCode) : '—' },
+              { label: 'Recovery', value: recoveryLabel(selected.recoveryAction) },
+              { label: 'Recorded', value: formatDateTime(selected.createdAt), full: true },
+            ]}
+          />
+        </Drawer>
       )}
-    </div>
+    </>
   );
 }

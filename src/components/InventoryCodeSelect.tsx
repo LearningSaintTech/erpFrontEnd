@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Plus, Search, X } from 'lucide-react';
+import { Check, Plus, Search, X } from 'lucide-react';
 import { ErpButton, ErpInput, ErpSearchSelect } from './erp';
 import { useAuth } from '../app/providers/AuthProvider';
 import { hasAnyPermission } from '../utils/permissions';
@@ -9,6 +9,10 @@ import { codeTypeNoun } from '../features/settings/inventoryCodeUtils';
 import type { InventoryCode } from '../types/api';
 
 function optionLabel(code: InventoryCode) {
+  // "PIECES — Pieces" / "M — m" say the same thing twice: show the name alone then.
+  const c = code.code.toLowerCase();
+  const n = code.name.toLowerCase();
+  if (c === n || n.startsWith(c) || c.startsWith(n)) return code.name;
   return `${code.code} — ${code.name}`;
 }
 
@@ -63,7 +67,7 @@ function InventoryCodeAddForm({
   return (
     <div className="rounded border border-[var(--erp-border)] bg-[var(--erp-surface-muted)] p-2">
       <div className="mb-1.5 flex items-center justify-between">
-        <p className="text-[10px] font-medium text-erp-text-primary">New {noun} code</p>
+        <p className="text-xs font-medium text-erp-text-primary">New {noun} code</p>
         {allowCancel && (
           <button type="button" onClick={onCancel} className="text-erp-text-muted" aria-label="Close">
             <X size={12} />
@@ -72,13 +76,13 @@ function InventoryCodeAddForm({
       </div>
       <div className="grid grid-cols-2 gap-1.5">
         <ErpInput
-          className="w-full !py-1 font-mono text-[11px]"
+          className="w-full !py-1 font-mono text-[13px]"
           placeholder="Code"
           value={newCode}
           onChange={(e) => setNewCode(e.target.value)}
         />
         <ErpInput
-          className="w-full !py-1 text-[11px]"
+          className="w-full !py-1 text-[13px]"
           placeholder="Name"
           value={newName}
           onChange={(e) => setNewName(e.target.value)}
@@ -90,17 +94,17 @@ function InventoryCodeAddForm({
           }}
         />
       </div>
-      {error && <p className="mt-1 text-[10px] text-red-600">{error}</p>}
+      {error && <p className="mt-1 text-xs text-red-600">{error}</p>}
       <div className="mt-1.5 flex gap-1.5">
         <ErpButton
-          className="!px-2 !py-1 text-[10px]"
+          className="!px-2 !py-1 text-xs"
           disabled={!newCode.trim() || !newName.trim() || createMut.isPending}
           onClick={() => void submit()}
         >
           {createMut.isPending ? 'Saving…' : 'Save & select'}
         </ErpButton>
         {allowCancel && (
-          <ErpButton variant="secondary" className="!px-2 !py-1 text-[10px]" onClick={onCancel}>
+          <ErpButton variant="secondary" className="!px-2 !py-1 text-xs" onClick={onCancel}>
             Cancel
           </ErpButton>
         )}
@@ -116,7 +120,7 @@ export function InventoryCodeSelect({
   disabled = false,
   allowAdd,
   placeholder = '— Select —',
-  className = 'w-full !py-1.5 text-[11px]',
+  className = 'w-full !py-1.5 text-[13px]',
   autoOpenAdd = false,
 }: {
   type: string;
@@ -158,7 +162,7 @@ export function InventoryCodeSelect({
   }, [codes, orphan, value]);
 
   return (
-    <div className="space-y-1.5">
+    <div className="group space-y-1.5">
       <ErpSearchSelect
         value={selectValue}
         options={options}
@@ -178,9 +182,9 @@ export function InventoryCodeSelect({
         }}
       />
 
-      {isError && <p className="text-[10px] text-red-600">Could not load {noun} codes</p>}
+      {isError && <p className="text-xs text-red-600">Could not load {noun} codes</p>}
       {empty && !showAdd && (
-        <p className="text-[10px] text-erp-text-muted">
+        <p className="text-xs text-erp-text-muted">
           No {noun} codes yet. Add them in Settings → Inventory Codes.
         </p>
       )}
@@ -188,7 +192,9 @@ export function InventoryCodeSelect({
         <button
           type="button"
           onClick={() => setAdding(true)}
-          className="inline-flex items-center gap-0.5 text-[10px] text-[var(--erp-accent)] hover:underline"
+          className={`inline-flex items-center gap-0.5 text-xs text-[var(--erp-accent)] hover:underline ${
+            empty ? '' : 'opacity-0 transition-opacity focus:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100'
+          }`}
         >
           <Plus size={11} />
           {empty ? `Add a ${noun} code` : `Add ${noun} code`}
@@ -247,7 +253,7 @@ export function InventoryCodeChips({
     : orphans;
 
   return (
-    <div className="space-y-1.5">
+    <div className="group space-y-1.5">
       {codes.length > 8 && (
         <div className="relative max-w-xs">
           <Search size={12} className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-erp-text-muted" />
@@ -255,13 +261,13 @@ export function InventoryCodeChips({
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
             placeholder={`Search ${noun}…`}
-            className="w-full !py-1 !pl-7 text-[11px]"
+            className="w-full !py-1 !pl-7 text-[13px]"
             disabled={disabled}
           />
         </div>
       )}
       <div className="flex flex-wrap gap-1.5">
-        {isLoading && <p className="text-[10px] text-erp-text-muted">Loading {noun} codes…</p>}
+        {isLoading && <p className="text-xs text-erp-text-muted">Loading {noun} codes…</p>}
         {visible.map((c) => {
           const on = selected.has(c.code.toLowerCase()) || selected.has(c.name.toLowerCase());
           return (
@@ -269,9 +275,11 @@ export function InventoryCodeChips({
               key={c._id}
               type="button"
               disabled={disabled}
+              aria-pressed={on}
               onClick={() => toggle(c.code)}
-              className={`erp-tab rounded-full px-2.5 py-0.5 text-[10px]${on ? ' erp-tab-active' : ''}`}
+              className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-medium transition-colors disabled:opacity-60 ${on ? 'border-[var(--erp-accent)] bg-[var(--erp-accent)] text-white' : 'border-[var(--erp-border)] bg-[var(--erp-surface)] text-erp-text-secondary hover:border-[var(--erp-border-strong)]'}`}
             >
+              {on && <Check size={12} aria-hidden />}
               {c.name}
             </button>
           );
@@ -281,19 +289,21 @@ export function InventoryCodeChips({
             key={v}
             type="button"
             disabled={disabled}
+            aria-pressed
             onClick={() => toggle(v)}
-            className="erp-tab erp-tab-active rounded-full px-2.5 py-0.5 text-[10px]"
+            className="inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-medium transition-colors disabled:opacity-60 border-[var(--erp-accent)] bg-[var(--erp-accent)] text-white"
           >
+            <Check size={12} aria-hidden />
             {v}
           </button>
         ))}
         {!isLoading && q && visible.length === 0 && visibleOrphans.length === 0 && (
-          <p className="text-[10px] text-erp-text-muted">No {noun} codes match “{filter.trim()}”.</p>
+          <p className="text-xs text-erp-text-muted">No {noun} codes match “{filter.trim()}”.</p>
         )}
       </div>
-      {isError && <p className="text-[10px] text-red-600">Could not load {noun} codes</p>}
+      {isError && <p className="text-xs text-red-600">Could not load {noun} codes</p>}
       {empty && !showAdd && (
-        <p className="text-[10px] text-erp-text-muted">
+        <p className="text-xs text-erp-text-muted">
           No {noun} codes yet. Add them in Settings → Inventory Codes.
         </p>
       )}
@@ -301,7 +311,9 @@ export function InventoryCodeChips({
         <button
           type="button"
           onClick={() => setAdding(true)}
-          className="inline-flex items-center gap-0.5 text-[10px] text-[var(--erp-accent)] hover:underline"
+          className={`inline-flex items-center gap-0.5 text-xs text-[var(--erp-accent)] hover:underline ${
+            empty ? '' : 'opacity-0 transition-opacity focus:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100'
+          }`}
         >
           <Plus size={11} />
           {empty ? `Add a ${noun} code` : `Add ${noun} code`}

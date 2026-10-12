@@ -33,7 +33,12 @@ export interface DesignFormContextValue {
   versions: DesignVersion[];
   samples: Sample[];
   onDeleteAsset: (assetId: string) => void;
+  /** Inline validation messages for required fields (shown after a save attempt). */
+  errors?: DesignFieldErrors;
+  clearError?: (key: keyof DesignFieldErrors) => void;
 }
+
+export type DesignFieldErrors = Partial<Record<'title' | 'styleNumber' | 'collectionCode', string>>;
 
 const DesignFormContext = createContext<DesignFormContextValue | null>(null);
 

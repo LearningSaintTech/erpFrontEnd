@@ -1,48 +1,50 @@
-import { Link } from 'react-router-dom';
-import { ErpCard } from '../../../components/erp';
+import { useNavigate } from 'react-router-dom';
+import { ExternalLink, Paperclip } from 'lucide-react';
+import {
+  Button, DescriptionList, EmptyState, ErpDataTable, Section,
+} from '../../../components/erp';
 import type { PatternTechPack } from '../../../types/api';
+import { useInventoryCodes } from '../../../hooks/useInventoryCodes';
 
-const label = 'mb-1 block text-[10px] font-medium text-erp-text-muted';
+/** "SLIM" → "Slim", "HALF_SLEEVE" → "Half sleeve"; mixed-case text is left alone. */
+function readable(v?: string) {
+  if (!v) return '';
+  if (v !== v.toUpperCase() || /\d/.test(v)) return v;
+  const t = v.replace(/_/g, ' ').toLowerCase();
+  return t.charAt(0).toUpperCase() + t.slice(1);
+}
 
+/** Designer brief the pattern master works from (read-only). */
 export function PatternDesignBrief({ techPack, designId }: { techPack: PatternTechPack; designId: string }) {
+  const navigate = useNavigate();
   const { design } = techPack;
+  // Category is stored as a catalogue code ("TW-SH") — show its name ("Shirt").
+  const { data: categories = [] } = useInventoryCodes('CATEGORY', !!design.category);
+  const categoryName = categories.find((c) => c.code === design.category)?.name;
+  const spec = design.productSpecs;
+  const intended = [spec?.material, spec?.printingType, spec?.embroidery ? 'embroidery' : ''].filter(Boolean).join(' · ');
   return (
-    <ErpCard className="!p-3">
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <div>
-          <h3 className="text-[11px] font-semibold text-erp-text-primary">Designer brief</h3>
-          <p className="mt-0.5 text-[10px] text-erp-text-muted">
-            {design.designCode} · {design.title}
-            {design.styleNumber && <span className="ml-1 font-mono">({design.styleNumber})</span>}
-          </p>
-        </div>
-        <Link to={`/designs/${designId}/edit`} className="text-[10px] text-[var(--erp-accent)] hover:underline">
-          Open designer brief →
-        </Link>
-      </div>
-      <dl className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-        {[
-          ['Category', design.category],
-          ['Fit', design.fit],
-          ['Sleeve', design.sleeveType],
-          ['Neck', design.neckType],
-          ['Gender', design.gender],
-          ['Print / pattern', design.pattern],
-        ].map(([k, v]) => (
-          <div key={k}>
-            <dt className={label}>{k}</dt>
-            <dd className="text-[11px] text-erp-text-primary">{v || '—'}</dd>
-          </div>
-        ))}
-      </dl>
-      {design.productSpecs?.material && (
-        <p className="mt-2 rounded border border-[var(--erp-border)] bg-[var(--erp-surface)] px-2 py-1.5 text-[10px] text-erp-text-muted">
-          Intended material: {design.productSpecs.material}
-          {design.productSpecs.printingType && ` · ${design.productSpecs.printingType}`}
-          {design.productSpecs.embroidery && ' · embroidery'}
-        </p>
+    <Section
+      title="Designer brief"
+      description={`${design.designCode} · ${design.title}${design.styleNumber ? ` (${design.styleNumber})` : ''}`}
+      actions={(
+        <Button size="sm" variant="ghost" iconRight={<ExternalLink size={14} />} onClick={() => navigate(`/designs/${designId}/edit`)}>
+          Open design
+        </Button>
       )}
-    </ErpCard>
+    >
+      <DescriptionList
+        columns={3}
+        items={[
+          { label: 'Category', value: categoryName || readable(design.category) || '—' },
+          { label: 'Fit', value: readable(design.fit) || '—' },
+          { label: 'Sleeve / neck', value: [design.sleeveType, design.neckType].filter(Boolean).map((v) => readable(v)).join(' · ') || '—' },
+          { label: 'Gender', value: readable(design.gender) || '—' },
+          { label: 'Print / pattern', value: readable(design.pattern) || '—' },
+          { label: 'Intended fabric', value: intended || '—' },
+        ]}
+      />
+    </Section>
   );
 }
 
@@ -52,174 +54,104 @@ export function PatternTechPackPanel({ techPack, designId }: { techPack: Pattern
   const sizeSrc = tp?.sizeChartData ?? design.sizeChartData;
   const sizes = sizeSrc?.sizeLabels ?? [];
   const rows = sizeSrc?.rows ?? [];
-  const fabricLines = tp?.fabricConsumption ?? design.fabricConsumption;
-  const bomLines = tp?.bomLines ?? design.bomLines;
-  const trims = tp?.accessories ?? [];
+  const fabricLines = tp?.fabricConsumption ?? design.fabricConsumption ?? [];
+  const bomLines = tp?.bomLines ?? design.bomLines ?? [];
   const specs = tp?.fabricSpecs;
   const quality = tp?.qualityNotes;
   const mfg = tp?.manufacturingNotes;
   const costing = tp?.costing;
 
-  const detailGroups: { title: string; items: [string, unknown][] }[] = [
-    {
-      title: 'Fabric technicals',
-      items: [
-        ['GSM', specs?.fabricGsm],
-        ['Cuttable width', specs?.fabricWidth],
-        ['Finish', specs?.fabricFinish],
-        ['Shrinkage %', specs?.shrinkagePercent],
-      ],
-    },
-    {
-      title: 'Spec',
-      items: [
-        ['Measurement tolerance', quality?.measurementTolerance],
-      ],
-    },
-    {
-      title: 'Construction',
-      items: [
-        ['Stitch', mfg?.specialStitch],
-        ['Needle', mfg?.needleType],
-        ['Machine', mfg?.machineType],
-        ['Thread', mfg?.threadColor],
-      ],
-    },
-    {
-      title: 'Material estimate',
-      items: [
-        ['Fabric (est.)', costing?.fabricCost],
-        ['Trims (est.)', costing?.accessoriesCost],
-        ['Material / piece', costing?.actualCost],
-      ],
-    },
-  ].map((g) => ({ ...g, items: g.items.filter(([, v]) => v != null && v !== '') as [string, unknown][] }))
-    .filter((g) => g.items.length > 0);
+  const details = [
+    { label: 'GSM', value: specs?.fabricGsm },
+    { label: 'Cuttable width', value: specs?.fabricWidth },
+    { label: 'Finish', value: specs?.fabricFinish },
+    { label: 'Shrinkage %', value: specs?.shrinkagePercent },
+    { label: 'Measurement tolerance', value: quality?.measurementTolerance },
+    { label: 'Stitch', value: mfg?.specialStitch },
+    { label: 'Needle', value: mfg?.needleType },
+    { label: 'Machine', value: mfg?.machineType },
+    { label: 'Thread colour', value: mfg?.threadColor },
+    { label: 'Fabric estimate', value: costing?.fabricCost },
+    { label: 'Trims estimate', value: costing?.accessoriesCost },
+    { label: 'Material / piece', value: costing?.actualCost },
+  ].filter((d) => d.value != null && d.value !== '').map((d) => ({ label: d.label, value: String(d.value) }));
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-4">
       <PatternDesignBrief techPack={techPack} designId={designId} />
 
-      <ErpCard className="!p-3">
-        <h3 className="mb-2 text-[11px] font-semibold text-erp-text-primary">
-          Measurement chart
-          {!evidence.hasSizeChart && (
-            <span className="ml-2 font-normal text-amber-600">Missing — enter in the tech pack step</span>
-          )}
-        </h3>
+      <Section title="Graded measurement chart" description={!evidence.hasSizeChart ? 'Not filled in yet.' : `${sizeSrc?.unit || 'CM'} · ${rows.length} points`} flush={rows.length > 0}>
         {rows.length > 0 ? (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[400px] text-left text-[10px]">
-              <thead>
-                <tr className="border-b border-[var(--erp-border)]">
-                  <th className="px-2 py-1.5 font-medium text-erp-text-muted">Measurement</th>
-                  {sizes.map((s) => (
-                    <th key={s} className="px-2 py-1.5 font-medium text-erp-text-muted">{s}</th>
-                  ))}
+          <ErpDataTable>
+            <thead>
+              <tr>
+                <th>Measurement</th>
+                {sizes.map((s) => <th key={s} className="erp-num">{s}</th>)}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row) => (
+                <tr key={row.measurementName}>
+                  <td className="erp-cell-primary">{row.measurementName}</td>
+                  {sizes.map((s) => <td key={s} className="erp-num">{row.values?.[s] ?? '—'}</td>)}
                 </tr>
-              </thead>
-              <tbody>
-                {rows.map((row) => (
-                  <tr key={row.measurementName} className="border-b border-[var(--erp-border)]/60">
-                    <td className="px-2 py-1.5 font-medium">{row.measurementName}</td>
-                    {sizes.map((s) => (
-                      <td key={s} className="px-2 py-1.5 font-mono">{row.values?.[s] ?? '—'}</td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+              ))}
+            </tbody>
+          </ErpDataTable>
         ) : (
-          <p className="text-[10px] text-erp-text-muted">No measurement rows yet.</p>
+          <EmptyState compact title="No measurement rows yet" />
         )}
-      </ErpCard>
+      </Section>
 
-      <div className="grid gap-3 lg:grid-cols-2">
-        <ErpCard className="!p-3">
-          <h3 className="mb-2 text-[11px] font-semibold text-erp-text-primary">Fabric consumption</h3>
-          {(fabricLines?.length ?? 0) > 0 ? (
-            <ul className="space-y-2">
-              {fabricLines!.map((line, i) => {
-                const mat = (line as { material?: { name?: string; materialCode?: string } }).material;
-                return (
-                <li key={i} className="rounded border border-[var(--erp-border)] px-2 py-1.5 text-[10px]">
-                  <span className="font-medium">
-                    {mat?.name || mat?.materialCode || 'Fabric'}
-                  </span>
-                  <span className="ml-2 text-erp-text-muted">
-                    {line.consumption ?? '—'} {line.unit || 'm'}
-                    {line.wastagePercent != null && ` + ${line.wastagePercent}% wastage`}
-                  </span>
-                </li>
-                );
-              })}
-            </ul>
-          ) : (
-            <p className="text-[10px] text-amber-600">No consumption lines yet.</p>
-          )}
-        </ErpCard>
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Section title="Fabric consumption" flush={fabricLines.length > 0}>
+          {fabricLines.length > 0 ? (
+            <ErpDataTable>
+              <thead><tr><th>Fabric</th><th className="erp-num">Per piece</th><th className="erp-num">Wastage</th></tr></thead>
+              <tbody>
+                {fabricLines.map((line, i) => {
+                  const mat = (line as { material?: { name?: string; materialCode?: string } }).material;
+                  return (
+                    <tr key={i}>
+                      <td>{mat?.name || mat?.materialCode || 'Fabric'}</td>
+                      <td className="erp-num">{line.consumption ?? '—'} {line.unit || 'm'}</td>
+                      <td className="erp-num">{line.wastagePercent != null ? `${line.wastagePercent}%` : '—'}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </ErpDataTable>
+          ) : <EmptyState compact title="No fabric lines yet" />}
+        </Section>
 
-        <ErpCard className="!p-3">
-          <h3 className="mb-2 text-[11px] font-semibold text-erp-text-primary">Sample BOM</h3>
-          {(bomLines?.length ?? 0) > 0 ? (
-            <ul className="max-h-48 space-y-1 overflow-y-auto">
-              {bomLines!.map((line, i) => {
-                const mat = (line as { material?: { name?: string }; materialName?: string }).material;
-                return (
-                <li key={i} className="flex justify-between gap-2 text-[10px]">
-                  <span>{mat?.name || line.materialName || 'Item'}</span>
-                  <span className="shrink-0 font-mono text-erp-text-muted">
-                    {line.quantity ?? '—'} {line.unit || ''}
-                  </span>
-                </li>
-                );
-              })}
-            </ul>
-          ) : (
-            <p className="text-[10px] text-amber-600">No BOM lines yet.</p>
-          )}
-        </ErpCard>
+        <Section title="Sample BOM (trims)" flush={bomLines.length > 0}>
+          {bomLines.length > 0 ? (
+            <ErpDataTable>
+              <thead><tr><th>Item</th><th className="erp-num">Qty / piece</th></tr></thead>
+              <tbody>
+                {bomLines.map((line, i) => {
+                  const mat = (line as { material?: { name?: string } }).material;
+                  return (
+                    <tr key={i}>
+                      <td>{mat?.name || line.materialName || 'Item'}</td>
+                      <td className="erp-num">{line.quantity ?? '—'} {line.unit || ''}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </ErpDataTable>
+          ) : <EmptyState compact title="No trims yet" />}
+        </Section>
       </div>
 
-      {trims.length > 0 && (
-        <ErpCard className="!p-3">
-          <h3 className="mb-2 text-[11px] font-semibold text-erp-text-primary">Trims &amp; accessories</h3>
-          <ul className="space-y-1">
-            {trims.map((t, i) => (
-              <li key={i} className="flex justify-between gap-2 text-[10px]">
-                <span>{t.material?.name || t.accessoryType || 'Trim'}</span>
-                <span className="shrink-0 font-mono text-erp-text-muted">
-                  {t.consumption ?? '—'} {t.unit || ''}
-                  {t.unitCost ? ` @ ${t.unitCost}` : ''}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </ErpCard>
-      )}
-
-      {detailGroups.length > 0 && (
-        <div className="grid gap-3 lg:grid-cols-2">
-          {detailGroups.map((g) => (
-            <ErpCard key={g.title} className="!p-3">
-              <h3 className="mb-2 text-[11px] font-semibold text-erp-text-primary">{g.title}</h3>
-              <dl className="grid gap-2 sm:grid-cols-2">
-                {g.items.map(([k, v]) => (
-                  <div key={k}>
-                    <dt className={label}>{k}</dt>
-                    <dd className="text-[11px] text-erp-text-primary">{String(v)}</dd>
-                  </div>
-                ))}
-              </dl>
-            </ErpCard>
-          ))}
-        </div>
+      {details.length > 0 && (
+        <Section title="Fabric, construction and estimate">
+          <DescriptionList columns={3} items={details} />
+        </Section>
       )}
 
       {cadAssets.length > 0 && (
-        <ErpCard className="!p-3">
-          <h3 className="mb-2 text-[11px] font-semibold text-erp-text-primary">CAD & pattern files (on design)</h3>
+        <Section title="CAD and pattern files">
           <ul className="flex flex-wrap gap-2">
             {cadAssets.map((a) => (
               <li key={a._id}>
@@ -227,14 +159,15 @@ export function PatternTechPackPanel({ techPack, designId }: { techPack: Pattern
                   href={a.url}
                   target="_blank"
                   rel="noreferrer"
-                  className="inline-flex items-center rounded border border-[var(--erp-border)] px-2 py-1 text-[10px] text-[var(--erp-accent)] hover:underline"
+                  className="inline-flex items-center gap-1.5 rounded-md border border-[var(--erp-border)] px-2.5 py-1 text-[13px] text-[var(--erp-accent)] hover:underline"
                 >
-                  {a.assetType}: {a.fileName}
+                  <Paperclip size={13} />
+                  {a.fileName}
                 </a>
               </li>
             ))}
           </ul>
-        </ErpCard>
+        </Section>
       )}
     </div>
   );

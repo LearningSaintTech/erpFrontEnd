@@ -110,10 +110,19 @@ export const SAMPLE_TYPE_GUIDE: Record<string, string> = {
   SHIPMENT: 'Reference sample retained for what was shipped to customer',
 };
 
+/** Legacy statuses the backend no longer sets — labels stay for old records, filters skip them. */
+const LEGACY_SAMPLE_STATUSES = new Set(['QC_PASSED', 'COMPLETED']);
+
 export const ALL_SAMPLE_STATUSES = [
-  ...WORKFLOW_STEPS.flatMap((s) => s.statuses),
+  ...WORKFLOW_STEPS.flatMap((s) => s.statuses).filter((s) => !LEGACY_SAMPLE_STATUSES.has(s)),
   'APPROVED',
   'REJECTED',
 ];
 
 export { sampleNeedsFitTrial };
+
+/** "Design manager" → "design manager" for mid-sentence use, but keep acronyms: "QC inspector". */
+export function lowerFirst(text: string): string {
+  if (!text || /^[A-Z]{2}/.test(text)) return text;
+  return text.charAt(0).toLowerCase() + text.slice(1);
+}

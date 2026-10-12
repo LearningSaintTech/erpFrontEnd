@@ -1,8 +1,16 @@
-import { CheckCircle2, Circle } from 'lucide-react';
+import { StepFlow, type Step } from '../../../components/erp';
 import type { WorkflowStepId } from '../patternWorkflowUtils';
-import { WORKFLOW_STEPS, stepStatus, canAccessStep } from '../patternWorkflowUtils';
+import { WORKFLOW_STEPS, stepStatus, canAccessStep, isStepComplete } from '../patternWorkflowUtils';
 import type { PatternDevelopment, PatternTechPack } from '../../../types/api';
 
+const SHORT_HINT: Record<WorkflowStepId, string> = {
+  techpack: 'Measurements, fabric, trims',
+  marker: 'Length, pieces, consumption',
+  grading: 'Mother pattern size',
+  verify: 'Checks and completion',
+};
+
+/** Pattern workflow: Tech pack → Marker → Base size → Sign-off. Reachable steps are clickable. */
 export function PatternWorkflowStepper({
   current,
   pd,
@@ -14,41 +22,17 @@ export function PatternWorkflowStepper({
   techPack?: PatternTechPack;
   onSelect: (step: WorkflowStepId) => void;
 }) {
-  return (
-    <nav className="mb-4 flex flex-wrap gap-1" aria-label="Pattern workflow">
-      {WORKFLOW_STEPS.map((step, i) => {
-        const state = stepStatus(step.id, current, pd, techPack);
-        const accessible = canAccessStep(step.id, pd, techPack);
-        return (
-          <button
-            key={step.id}
-            type="button"
-            disabled={!accessible && state === 'upcoming'}
-            onClick={() => accessible && onSelect(step.id)}
-            className={`flex min-w-[120px] flex-1 items-start gap-2 rounded-lg border px-2.5 py-2 text-left transition-colors ${
-              !accessible && state === 'upcoming' ? 'cursor-not-allowed opacity-50 ' : ''
-            }${
-              state === 'current'
-                ? 'border-[var(--erp-accent)] bg-[var(--erp-accent-muted)]/20'
-                : state === 'done'
-                  ? 'border-emerald-500/30 bg-emerald-500/5'
-                  : 'border-[var(--erp-border)] bg-[var(--erp-surface)]'
-            }`}
-          >
-            {state === 'done' ? (
-              <CheckCircle2 size={14} className="mt-0.5 shrink-0 text-emerald-600" />
-            ) : (
-              <Circle size={14} className={`mt-0.5 shrink-0 ${state === 'current' ? 'text-[var(--erp-accent)]' : 'text-erp-text-muted'}`} />
-            )}
-            <span>
-              <span className="block text-[10px] font-semibold text-erp-text-primary">
-                {i + 1}. {step.label}
-              </span>
-              <span className="mt-0.5 block text-[9px] leading-tight text-erp-text-muted">{step.hint}</span>
-            </span>
-          </button>
-        );
-      })}
-    </nav>
-  );
+  const steps: Step[] = WORKFLOW_STEPS.map((s) => {
+    const state = stepStatus(s.id, current, pd, techPack);
+    const accessible = canAccessStep(s.id, pd, techPack);
+    const done = isStepComplete(s.id, pd, techPack);
+    return {
+      id: s.id,
+      label: s.label,
+      description: state === 'current' ? (done ? 'Done · viewing' : SHORT_HINT[s.id]) : done ? 'Done' : accessible ? SHORT_HINT[s.id] : 'Locked',
+      state: s.id === current ? 'current' : done ? 'done' : state === 'done' ? 'done' : 'upcoming',
+      onClick: accessible && s.id !== current ? () => onSelect(s.id) : undefined,
+    };
+  });
+  return <StepFlow steps={steps} size="sm" />;
 }

@@ -1,6 +1,10 @@
 import { useEffect, useState } from 'react';
-import { ErpButton } from '../../../components/erp';
+import { Button, Field, Modal, Textarea } from '../../../components/erp';
 
+/**
+ * Legacy controlled comment dialog (still used by design, BOM, production and purchase pages).
+ * Now built on the shared Modal. New code should prefer `usePrompt()` from components/erp.
+ */
 export function CommentPrompt({
   open,
   title,
@@ -23,45 +27,50 @@ export function CommentPrompt({
   onCancel: () => void;
 }) {
   const [comments, setComments] = useState('');
+  const [touched, setTouched] = useState(false);
 
   useEffect(() => {
-    if (open) setComments('');
+    if (open) { setComments(''); setTouched(false); }
   }, [open]);
-
-  if (!open) return null;
 
   const trimmed = comments.trim();
   const valid = required ? trimmed.length >= minLength : true;
+  const submit = () => {
+    setTouched(true);
+    if (valid) onConfirm(trimmed);
+  };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onCancel}>
-      <div
-        className="w-full max-w-md rounded-lg border border-[var(--erp-border)] bg-[var(--erp-surface)] p-4 shadow-xl"
-        onClick={(e) => e.stopPropagation()}
+    <Modal
+      open={open}
+      onClose={() => { if (!loading) onCancel(); }}
+      title={title}
+      description={message}
+      size="sm"
+      closeOnOverlayClick={false}
+      footer={(
+        <>
+          <Button variant="secondary" onClick={onCancel} disabled={loading}>Cancel</Button>
+          <Button onClick={submit} loading={loading}>{confirmLabel}</Button>
+        </>
+      )}
+    >
+      <Field
+        label={required ? 'Comment' : 'Comment (optional)'}
+        required={required}
+        error={touched && !valid ? `Enter at least ${minLength} characters so the submitter knows what to fix.` : undefined}
       >
-        <h3 className="text-sm font-semibold text-erp-text-primary">{title}</h3>
-        {message && <p className="mt-1 text-[11px] text-erp-text-muted">{message}</p>}
-        <textarea
+        <Textarea
           autoFocus
           rows={4}
           value={comments}
           onChange={(e) => setComments(e.target.value)}
-          placeholder={required ? 'Reason required (min 3 characters)' : 'Optional comments'}
-          className="erp-input mt-3 w-full resize-y !py-2 text-[11px]"
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); submit(); }
+          }}
+          placeholder={required ? 'Reason' : 'Optional'}
         />
-        <div className="mt-4 flex justify-end gap-2">
-          <ErpButton variant="secondary" className="!px-3 !py-1.5 text-[11px]" onClick={onCancel} disabled={loading}>
-            Cancel
-          </ErpButton>
-          <ErpButton
-            className="!px-3 !py-1.5 text-[11px]"
-            disabled={!valid || loading}
-            onClick={() => onConfirm(trimmed)}
-          >
-            {loading ? 'Working…' : confirmLabel}
-          </ErpButton>
-        </div>
-      </div>
-    </div>
+      </Field>
+    </Modal>
   );
 }

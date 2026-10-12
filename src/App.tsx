@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useParams } from 'react-router-dom';
 import { AuthProvider } from './app/providers/AuthProvider';
 import { ProtectedRoute } from './app/ProtectedRoute';
 import { PermissionRoute } from './app/PermissionRoute';
@@ -35,7 +35,9 @@ import { ChatProvider } from './app/providers/ChatProvider';
 import { NotificationProvider } from './app/providers/NotificationProvider';
 import { ChatGlobalUi } from './components/chat/ChatGlobalUi';
 
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClientProvider } from '@tanstack/react-query';
+import { queryClient } from './lib/queryClient';
+import { ConfirmProvider, ToastProvider } from './components/erp';
 
 function P({ perm, anyOf, superAdminOnly, children }: {
   perm?: string;
@@ -50,11 +52,18 @@ function P({ perm, anyOf, superAdminOnly, children }: {
   );
 }
 
-const queryClient = new QueryClient();
+
+/** Old/short links (e.g. notifications) to a design open its detail page. */
+function DesignRedirect() {
+  const { id } = useParams();
+  return <Navigate to={`/designs/${id}/edit`} replace />;
+}
 
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
+      <ToastProvider>
+      <ConfirmProvider>
       <AuthProvider>
         <BrowserRouter>
           <ChatProvider>
@@ -79,12 +88,15 @@ export default function App() {
               <Route path="/users" element={<P perm="user.read"><UsersPage /></P>} />
               <Route path="/settings" element={<Navigate to="/settings/general" replace />} />
               <Route path="/settings/inventory-codes" element={<P perm="inventory.configure"><InventoryCodesPage /></P>} />
+              {/* Change password needs only a login — not settings.configure. */}
+              <Route path="/settings/account" element={<SettingsPage />} />
               <Route path="/settings/:section" element={<P anyOf={['settings.configure', 'factory.configure']}><SettingsPage /></P>} />
               <Route path="/approvals" element={<P perm="approval.read"><ApprovalsPage /></P>} />
 
               <Route path="/design" element={<Navigate to="/designs" replace />} />
               <Route path="/designs" element={<P perm="design.read"><DesignsPage /></P>} />
               <Route path="/designs/new" element={<P perm="design.create"><DesignFormPage /></P>} />
+              <Route path="/designs/:id" element={<DesignRedirect />} />
               <Route path="/designs/:id/edit" element={<P anyOf={['design.read', 'design.update']}><DesignFormPage /></P>} />
 
               <Route path="/sampling" element={<Navigate to="/samples" replace />} />
@@ -135,6 +147,8 @@ export default function App() {
           </ChatProvider>
         </BrowserRouter>
       </AuthProvider>
+      </ConfirmProvider>
+      </ToastProvider>
     </QueryClientProvider>
   );
 }

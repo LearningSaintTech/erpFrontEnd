@@ -1,8 +1,12 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { MapPin, Search } from 'lucide-react';
-import { ErpButton, ErpCard, ErpDataTable, ErpInput, ErpSelect, ErpStatusBadge } from '../../components/erp';
+import { ArrowUpFromLine, Eye, MapPin, PackagePlus, Search, Truck } from 'lucide-react';
+import {
+  Button, EmptyRow, ErpDataTable, ErpInput, ErpSearchSelect, ErpSelect, Field, IconButton, RowActionsMenu, Section, StatusBadge,
+  TableSkeleton, type DropdownMenuItem,
+} from '../../components/erp';
+import { RefreshCw } from 'lucide-react';
 import { inventoryApi, skuApi } from '../../services/manufacturing';
 import { warehouseApi } from '../../services/operations';
 import type { Material, StockLocatorRow } from '../../types/api';
@@ -10,9 +14,6 @@ import { putAwayPath } from '../inventory/inventoryUtils';
 import {
   dispatchPath, materialLabel, materialRowId, pickPath, skuLabel, statusLabel, warehouseTypeLabel,
 } from './warehouseUtils';
-
-const btnSm = '!px-2 !py-1 text-[10px]';
-const fieldLabel = 'mb-0.5 block text-[9px] uppercase tracking-wide text-erp-text-muted';
 
 type LocatorType = 'RAW_MATERIAL' | 'FINISHED_GOODS';
 
@@ -37,10 +38,9 @@ function binDeepLink(row: StockLocatorRow): string | null {
 }
 
 export function StockLocatorSection() {
+  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const initialType = (searchParams.get('inventoryType') === 'FINISHED_GOODS'
-    ? 'FINISHED_GOODS'
-    : 'RAW_MATERIAL') as LocatorType;
+  const initialType = (searchParams.get('inventoryType') === 'FINISHED_GOODS' ? 'FINISHED_GOODS' : 'RAW_MATERIAL') as LocatorType;
 
   const [invType, setInvType] = useState<LocatorType>(initialType);
   const [searchInput, setSearchInput] = useState(searchParams.get('search') || searchParams.get('q') || '');
@@ -53,7 +53,6 @@ export function StockLocatorSection() {
     queryFn: () => inventoryApi.listMaterials(),
     enabled: invType === 'RAW_MATERIAL',
   });
-
   const { data: skusPage } = useQuery({
     queryKey: ['skus-locator'],
     queryFn: () => skuApi.listPage({ limit: 200 }),
@@ -61,17 +60,13 @@ export function StockLocatorSection() {
   });
   const skus = skusPage?.items ?? [];
 
-  const queryKey = invType === 'RAW_MATERIAL'
-    ? ['stock-locator', invType, search, selectedMaterialId]
-    : ['stock-locator', invType, search, selectedSkuId];
-
   const canQuery = Boolean(
     (invType === 'RAW_MATERIAL' && (selectedMaterialId || search.trim()))
     || (invType === 'FINISHED_GOODS' && (selectedSkuId || search.trim())),
   );
 
   const { data, isFetching, refetch } = useQuery({
-    queryKey,
+    queryKey: invType === 'RAW_MATERIAL' ? ['stock-locator', invType, search, selectedMaterialId] : ['stock-locator', invType, search, selectedSkuId],
     queryFn: () => warehouseApi.stockLocator({
       inventoryType: invType,
       materialId: invType === 'RAW_MATERIAL' && selectedMaterialId ? selectedMaterialId : undefined,
@@ -85,6 +80,8 @@ export function StockLocatorSection() {
   const totals = data?.totals;
 
   useEffect(() => {
+    // Only while still on this page — a late replace must not hijack a navigation away.
+    if (!window.location.pathname.startsWith('/warehouse/stock-locator')) return;
     const params = new URLSearchParams();
     params.set('inventoryType', invType);
     if (invType === 'RAW_MATERIAL' && selectedMaterialId) params.set('materialId', selectedMaterialId);
@@ -93,31 +90,36 @@ export function StockLocatorSection() {
     setSearchParams(params, { replace: true });
   }, [invType, selectedMaterialId, selectedSkuId, search, setSearchParams]);
 
-  const runSearch = () => {
+  const runSearch = (e?: FormEvent) => {
+    e?.preventDefault();
     setSearch(searchInput.trim());
     if (invType === 'RAW_MATERIAL') setSelectedMaterialId('');
     else setSelectedSkuId('');
   };
 
-  const groupedHint = useMemo(() => {
-    if (!rows.length) return null;
-    const dock = rows.filter((r) => r.location.isDock);
-    const bins = rows.filter((r) => !r.location.isDock);
-    return { dock: dock.length, bins: bins.length };
-  }, [rows]);
+  const counts = useMemo(() => ({ dock: rows.filter((r) => r.location.isDock).length, bins: rows.filter((r) => !r.location.isDock).length }), [rows]);
+
+  const rowActions = (row: StockLocatorRow): { primary?: { label: string; to: string }; menu: DropdownMenuItem[] } => {
+    const id = itemId(row);
+    const deepLink = binDeepLink(row);
+    const menu: DropdownMenuItem[] = [{ label: 'View bin', icon: Eye, hidden: !deepLink, onSelect: () => deepLink && navigate(deepLink) }];
+    if (!id) return { menu };
+    if (invType === 'RAW_MATERIAL') {
+      return row.location.isDock
+        ? { primary: { label: 'Put away', to: putAwayPath(id) }, menu }
+        : { primary: { label: 'Pick', to: pickPath(id) }, menu };
+    }
+    menu.push({ label: 'Dispatch', icon: Truck, onSelect: () => navigate(dispatchPath(id)) });
+    return row.location.binId
+      ? { primary: { label: 'Pick', to: pickPath(undefined, id) }, menu }
+      : { primary: { label: 'Put away', to: `/warehouse/operations/put-away?inventoryType=FINISHED_GOODS&skuId=${id}` }, menu };
+  };
 
   return (
-    <>
-      <ErpCard className="mb-4 p-4">
-        <div className="mb-3 flex items-start gap-2 text-[11px] text-erp-text-muted">
-          <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-[var(--erp-accent)]" />
-          <p>
-            Search a raw material or finished SKU to see every location — unallocated dock, zone, rack, shelf, and bin — in one table.
-          </p>
-        </div>
-        <div className="flex flex-wrap items-end gap-3">
-          <div>
-            <label className={fieldLabel}>Stock type</label>
+    <div className="space-y-4">
+      <Section>
+        <form className="flex flex-wrap items-end gap-4" onSubmit={runSearch}>
+          <Field label="Stock type" className="w-44">
             <ErpSelect
               value={invType}
               onChange={(e) => {
@@ -127,182 +129,102 @@ export function StockLocatorSection() {
                 setSearch('');
                 setSearchInput('');
               }}
-              className="w-40"
             >
               <option value="RAW_MATERIAL">Raw material</option>
               <option value="FINISHED_GOODS">Finished goods</option>
             </ErpSelect>
-          </div>
-          {invType === 'RAW_MATERIAL' ? (
-            <div>
-              <label className={fieldLabel}>Material</label>
-              <ErpSelect
-                value={selectedMaterialId}
-                onChange={(e) => {
-                  setSelectedMaterialId(e.target.value);
-                  setSearch('');
-                  setSearchInput('');
-                }}
-                className="min-w-[200px]"
-              >
-                <option value="">Search or pick…</option>
-                {materials.map((m: Material) => (
-                  <option key={m._id} value={m._id}>{m.materialCode} — {m.name}</option>
-                ))}
-              </ErpSelect>
-            </div>
-          ) : (
-            <div>
-              <label className={fieldLabel}>SKU</label>
-              <ErpSelect
-                value={selectedSkuId}
-                onChange={(e) => {
-                  setSelectedSkuId(e.target.value);
-                  setSearch('');
-                  setSearchInput('');
-                }}
-                className="min-w-[200px]"
-              >
-                <option value="">Search or pick…</option>
-                {skus.map((s) => (
-                  <option key={s._id} value={s._id}>{s.skuCode} — {s.name}</option>
-                ))}
-              </ErpSelect>
-            </div>
-          )}
-          <div className="flex-1 min-w-[180px]">
-            <label className={fieldLabel}>Search code or name</label>
-            <ErpInput
-              placeholder={invType === 'RAW_MATERIAL' ? 'e.g. FAB-ALKA' : 'e.g. SKU code'}
-              value={searchInput}
-              onChange={(e) => setSearchInput(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') runSearch(); }}
+          </Field>
+          <Field label={invType === 'RAW_MATERIAL' ? 'Material' : 'SKU'} className="min-w-[240px] flex-1">
+            <ErpSearchSelect
+              value={invType === 'RAW_MATERIAL' ? selectedMaterialId : selectedSkuId}
+              allowClear
+              placeholder={invType === 'RAW_MATERIAL' ? 'Pick a material…' : 'Pick a SKU…'}
+              options={invType === 'RAW_MATERIAL'
+                ? materials.map((m: Material) => ({ value: m._id, label: `${m.materialCode} — ${m.name}` }))
+                : skus.map((s) => ({ value: s._id, label: `${s.skuCode} — ${s.name}` }))}
+              onChange={(v) => {
+                if (invType === 'RAW_MATERIAL') setSelectedMaterialId(v); else setSelectedSkuId(v);
+                setSearch('');
+                setSearchInput('');
+              }}
             />
-          </div>
-          <ErpButton className={btnSm} onClick={runSearch} disabled={!searchInput.trim() && !selectedMaterialId && !selectedSkuId}>
-            <Search className="mr-1 inline h-3 w-3" />Locate
-          </ErpButton>
-        </div>
-      </ErpCard>
+          </Field>
+          <span className="pb-2.5 text-[13px] text-erp-text-muted">or</span>
+          <Field label="Search code or name" className="min-w-[200px] flex-1">
+            <ErpInput placeholder={invType === 'RAW_MATERIAL' ? 'e.g. FAB-ALKA' : 'e.g. SKU code'} value={searchInput} onChange={(e) => setSearchInput(e.target.value)} />
+          </Field>
+          <Button type="submit" icon={<Search size={16} />} disabled={!searchInput.trim()}>Locate</Button>
+        </form>
+      </Section>
 
-      {totals && canQuery && (
-        <div className="mb-3 flex flex-wrap gap-4 text-[11px]">
-          <span><strong>On hand:</strong> {totals.onHand}</span>
-          <span><strong>Reserved:</strong> {totals.reserved}</span>
-          <span><strong>Available:</strong> {totals.available}</span>
-          {groupedHint && (
-            <span className="text-erp-text-muted">
-              {groupedHint.dock > 0 && `${groupedHint.dock} dock`}
-              {groupedHint.dock > 0 && groupedHint.bins > 0 && ' · '}
-              {groupedHint.bins > 0 && `${groupedHint.bins} bin${groupedHint.bins > 1 ? 's' : ''}`}
-            </span>
-          )}
-        </div>
-      )}
-
-      <ErpCard className="overflow-hidden p-0">
-        <ErpDataTable className="w-full text-[11px]">
+      <Section
+        flush
+        title={canQuery && totals ? `${rows.length} location${rows.length === 1 ? '' : 's'}` : 'Locations'}
+        description={canQuery && totals ? `${totals.onHand} on hand · ${totals.reserved} reserved · ${totals.available} available${counts.dock ? ` · ${counts.dock} on dock` : ''}` : undefined}
+        actions={canQuery ? <IconButton aria-label="Refresh results" size="sm" loading={isFetching} onClick={() => refetch()}><RefreshCw size={14} /></IconButton> : undefined}
+      >
+        <ErpDataTable className="min-w-[960px]">
           <thead>
             <tr>
-              <th className="px-3 py-2 text-left">Item</th>
-              <th className="px-3 py-2 text-left">Warehouse</th>
-              <th className="px-3 py-2 text-left">Zone</th>
-              <th className="px-3 py-2 text-left">Rack</th>
-              <th className="px-3 py-2 text-left">Shelf</th>
-              <th className="px-3 py-2 text-left">Location</th>
-              <th className="px-3 py-2 text-right">On hand</th>
-              <th className="px-3 py-2 text-right">Reserved</th>
-              <th className="px-3 py-2 text-right">Available</th>
-              <th className="px-3 py-2 text-left">Status</th>
-              <th className="px-3 py-2 text-right">Actions</th>
+              <th>Item</th>
+              <th>Warehouse</th>
+              <th>Location</th>
+              <th className="erp-num">On hand</th>
+              <th className="erp-num">Reserved</th>
+              <th className="erp-num">Available</th>
+              <th>Status</th>
+              <th className="erp-cell-actions"><span className="sr-only">Actions</span></th>
             </tr>
           </thead>
           <tbody>
-            {isFetching && (
-              <tr><td colSpan={11} className="px-3 py-8 text-center text-erp-text-muted">Searching locations…</td></tr>
-            )}
-            {!isFetching && !canQuery && (
-              <tr>
-                <td colSpan={11} className="px-3 py-8 text-center text-erp-text-muted">
-                  Pick a material/SKU or enter a search term, then click Locate.
-                </td>
-              </tr>
-            )}
-            {!isFetching && canQuery && rows.length === 0 && (
-              <tr>
-                <td colSpan={11} className="px-3 py-8 text-center text-erp-text-muted">
-                  No stock found for this search.
-                </td>
-              </tr>
-            )}
-            {!isFetching && rows.map((row) => {
-              const deepLink = binDeepLink(row);
-              const mid = itemId(row);
+            {isFetching && canQuery ? <TableSkeleton asRows rows={4} columns={8} /> : !canQuery ? (
+              <EmptyRow colSpan={8} icon={MapPin} title="Find where stock is kept">Pick a material or SKU, or search by code, to list every location holding it.</EmptyRow>
+            ) : rows.length === 0 ? (
+              <EmptyRow colSpan={8} title="No stock found" icon={MapPin}>Nothing is on hand for this search.</EmptyRow>
+            ) : rows.map((row) => {
+              const { primary, menu } = rowActions(row);
+              const loc = row.location;
+              const path = [loc.zoneCode, loc.rackCode, loc.shelfCode].filter((x) => x && x !== '—').join(' / ');
               return (
-                <tr key={row.balanceId} className="border-t border-[var(--erp-border)]">
-                  <td className="px-3 py-2">{itemLabel(row)}</td>
-                  <td className="px-3 py-2 text-erp-text-muted">
-                    {row.location.warehouse
-                      ? `${row.location.warehouse.warehouseCode || row.location.warehouse.warehouseName || '—'} (${warehouseTypeLabel(row.location.warehouse.warehouseType || '')})`
-                      : '—'}
+                <tr key={row.balanceId}>
+                  <td className="erp-cell-primary">{itemLabel(row)}</td>
+                  <td className="text-erp-text-muted">
+                    {loc.warehouse ? `${loc.warehouse.warehouseCode || loc.warehouse.warehouseName || '—'}` : '—'}
+                    {loc.warehouse?.warehouseType && <span className="block text-xs">{warehouseTypeLabel(loc.warehouse.warehouseType)}</span>}
                   </td>
-                  <td className="px-3 py-2 font-mono">{row.location.zoneCode}</td>
-                  <td className="px-3 py-2 font-mono">{row.location.rackCode}</td>
-                  <td className="px-3 py-2 font-mono">{row.location.shelfCode}</td>
-                  <td className="px-3 py-2 font-mono">{row.location.binLabel}</td>
-                  <td className="px-3 py-2 text-right">{row.onHand} {row.unit || ''}</td>
-                  <td className="px-3 py-2 text-right text-erp-text-muted">{row.reserved}</td>
-                  <td className="px-3 py-2 text-right font-medium">{row.available}</td>
-                  <td className="px-3 py-2">
-                    {row.location.isDock ? (
-                      <ErpStatusBadge status="STAGED" label="Dock" />
-                    ) : row.dispatchStatus ? (
-                      <ErpStatusBadge status={row.dispatchStatus} label={statusLabel(row.dispatchStatus)} />
-                    ) : (
-                      <ErpStatusBadge status="ACTIVE" label="In bin" />
-                    )}
+                  <td>
+                    <span className="font-mono">{loc.binLabel}</span>
+                    {path && <span className="block font-mono text-xs text-erp-text-muted">{path}</span>}
                   </td>
-                  <td className="px-3 py-2 text-right text-[10px]">
-                    {deepLink && (
-                      <Link to={deepLink} className="text-[var(--erp-accent)]">View bin</Link>
-                    )}
-                    {row.location.isDock && invType === 'RAW_MATERIAL' && mid && (
-                      <Link to={putAwayPath(mid)} className={deepLink ? 'ml-2 text-[var(--erp-accent)]' : 'text-[var(--erp-accent)]'}>
-                        Put away
-                      </Link>
-                    )}
-                    {!row.location.isDock && invType === 'RAW_MATERIAL' && mid && (
-                      <Link to={pickPath(mid)} className="ml-2 text-[var(--erp-accent)]">Pick</Link>
-                    )}
-                    {invType === 'FINISHED_GOODS' && (() => {
-                      const sid = typeof row.skuId === 'string' ? row.skuId : row.skuId?._id;
-                      if (!sid) return null;
-                      return (
-                        <>
-                          {!row.location.binId && (
-                            <Link to={`/warehouse/operations/put-away?inventoryType=FINISHED_GOODS&skuId=${sid}`} className="ml-2 text-[var(--erp-accent)]">
-                              Put away
-                            </Link>
-                          )}
-                          {row.location.binId && (
-                            <Link to={pickPath(undefined, sid)} className="ml-2 text-[var(--erp-accent)]">Pick</Link>
-                          )}
-                          <Link to={dispatchPath(sid)} className="ml-2 text-[var(--erp-accent)]">Dispatch</Link>
-                        </>
-                      );
-                    })()}
+                  <td className="erp-num">{row.onHand}{row.unit ? <span className="text-erp-text-muted"> {row.unit}</span> : ''}</td>
+                  <td className="erp-num text-erp-text-muted">{row.reserved}</td>
+                  <td className="erp-num font-medium">{row.available}</td>
+                  <td>
+                    {loc.isDock ? <StatusBadge status="STAGED" tone="warning" label="On dock" />
+                      : row.dispatchStatus ? <StatusBadge status={row.dispatchStatus} label={statusLabel(row.dispatchStatus)} />
+                        : <StatusBadge status="ACTIVE" label="In bin" />}
+                  </td>
+                  <td className="erp-cell-actions">
+                    <div className="flex items-center justify-end gap-1">
+                      {primary && (
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          icon={primary.label === 'Pick' ? <ArrowUpFromLine size={14} /> : <PackagePlus size={14} />}
+                          onClick={() => navigate(primary.to)}
+                        >
+                          {primary.label}
+                        </Button>
+                      )}
+                      <RowActionsMenu items={menu} label={`More for ${itemLabel(row)}`} />
+                    </div>
                   </td>
                 </tr>
               );
             })}
           </tbody>
         </ErpDataTable>
-        {canQuery && (
-          <div className="border-t px-3 py-2 text-right">
-            <ErpButton variant="secondary" className={btnSm} onClick={() => refetch()}>Refresh</ErpButton>
-          </div>
-        )}
-      </ErpCard>
-    </>
+      </Section>
+    </div>
   );
 }

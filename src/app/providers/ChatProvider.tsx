@@ -67,10 +67,14 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   const selectRoom = useCallback((roomId: string | null) => {
     setSelectedRoomId(roomId);
     if (roomId) {
-      chatApi.markRead(roomId).catch(() => {});
       emitMarkRead(roomId);
-      qc.invalidateQueries({ queryKey: ['chat-stats'] });
-      qc.invalidateQueries({ queryKey: ['chat-rooms'] });
+      // Refetch the unread badge only once the read is stored — invalidating right away raced the
+      // PATCH and left the old count on the bell until the next 30s poll.
+      const refresh = () => {
+        qc.invalidateQueries({ queryKey: ['chat-stats'] });
+        qc.invalidateQueries({ queryKey: ['chat-rooms'] });
+      };
+      chatApi.markRead(roomId).then(refresh, refresh);
     }
   }, [qc]);
 
@@ -107,6 +111,17 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     const onMessage = (msg: ChatMessage) => {
       const roomId = typeof msg.roomId === 'string' ? msg.roomId : String(msg.roomId);
       const isMine = senderIdOf(msg.senderId) === user._id;
+      // Messages also arrive on the personal user channel, which spans factories — only this factory's count here.
+      const msgFactory = (msg as ChatMessage & { factoryId?: unknown }).factoryId;
+      if (msgFactory && String(msgFactory) !== String(factoryId)) return;
+
+      const viewingRoom = roomId === selectedRoomId && (panelOpen || location.pathname === '/chat');
+      if (viewingRoom && !isMine) {
+        // The reader is looking at this room: keep it read so the badge does not count what is on screen.
+        chatApi.markRead(roomId)
+          .then(() => qc.invalidateQueries({ queryKey: ['chat-stats'] }))
+          .catch(() => {});
+      }
 
       qc.invalidateQueries({ queryKey: ['chat-rooms'] });
       qc.invalidateQueries({ queryKey: ['chat-stats'] });
@@ -142,6 +157,12 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       socket.off('chat:message', onMessage);
     };
   }, [canChat, canNotify, factoryId, user, selectedRoomId, panelOpen, location.pathname, qc, openToast]);
+
+  // Opening a conversation clears its pending toasts — they would repeat what is now on screen.
+  useEffect(() => {
+    if (!selectedRoomId || !(panelOpen || location.pathname === '/chat')) return;
+    setToasts((t) => (t.some((x) => x.roomId === selectedRoomId) ? t.filter((x) => x.roomId !== selectedRoomId) : t));
+  }, [selectedRoomId, panelOpen, location.pathname]);
 
   // Reconnect when factory changes
   useEffect(() => {

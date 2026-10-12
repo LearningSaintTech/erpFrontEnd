@@ -1,938 +1,627 @@
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
-  AlertTriangle, ArrowRight, CheckCircle2, ClipboardCheck, FlaskConical, RefreshCw, Search, ShieldCheck, Shirt, X,
+  AlertTriangle, BookTemplate, CheckCircle2, ClipboardCheck, Eye, Factory, PackageCheck, Play, RefreshCw, ShieldCheck, Shirt,
 } from 'lucide-react';
 import { qualityApi, warehouseApi } from '../../services/operations';
-import { qualityAdminApi } from '../../services/admin';
 import type {
-  GoodsReceiptRef, ProductionBatch, QualityDefect, QualityInspection, QualityPendingWork, StorageBin, Warehouse,
+  GoodsReceiptRef, ProductionBatch, QualityInspection, QualityPendingWork, Warehouse,
 } from '../../types/api';
 import {
-  ActionStack, EmptyRow, ErpButton, ErpDataTable, ErpInput, ErpPageHeader, ErpSelect, ErpStatusBadge,
-  ErpTabs, InfoBanner, StatTile, TabShell, TabToolbar, TablePager, TextLink, btnSm, fieldLabel,
+  Badge, Button, EmptyRow, ErpDataTable, ErpSelect, FilterBar, IconButton, InfoBanner, KpiGrid, PageHeader,
+  RowActionsMenu, SearchInput, Section, StatTile, StatusBadge, TablePager, TableSkeleton, Tabs, toast,
 } from '../../components/erp';
-import { AlertBanner } from '../../components/AlertBanner';
-import { SuccessBanner } from '../users/SuccessBanner';
-import { ConfirmDialog } from '../users/ConfirmDialog';
 import { useAuth } from '../../app/providers/AuthProvider';
 import {
-  dispositionLabel, formatDateTime, grnLineSummary, incomingQcSuccessMessage, inspectionRefId,
-  inspectionSummary, poNumberFromGrn, RM_INCOMING_QC_FLOW, resultLabel, statusLabel, typeLabel,
+  formatDateTime, grnLineSummary, incomingQcSuccessMessage, inspectionRefId, inspectionSummary, poNumberFromGrn, typeLabel,
 } from './qualityUtils';
 import { putAwayPath } from '../inventory/inventoryUtils';
+import { CompleteInspectionDrawer, type CompleteInit, type IncomingLineForm } from './CompleteInspectionDrawer';
+import { InspectionDetailDrawer } from './InspectionDetailDrawer';
+import { useDebouncedValue } from '../production/useProductionActions';
+import { QueryErrorRow } from '../production/QueryErrorRow';
 
 const PAGE_SIZE = 15;
+/** Batches reach QC from the shop floor — poll so new work shows up without a manual refresh. */
+const LIVE_REFRESH_MS = 15_000;
 
-type TabId = 'incoming' | 'samples' | 'inprocess' | 'final' | 'queue' | 'history';
+type TabId = 'incoming' | 'inprocess' | 'final' | 'samples' | 'queue' | 'history';
+const TAB_IDS: TabId[] = ['incoming', 'inprocess', 'final', 'samples', 'queue', 'history'];
 
-function binLabel(b: StorageBin) {
-  return `${b.zoneCode}-${b.binCode}`;
+/** Remembered QC defaults (per viewer). */
+const PREF = { rmBin: 'erp-qc-rm-bin', fgBin: 'erp-qc-fg-bin', autoDispatch: 'erp-qc-auto-dispatch' };
+function readPref(key: string): string {
+  try { return localStorage.getItem(key) || ''; } catch { return ''; }
+}
+function writePref(key: string, value: string) {
+  try { localStorage.setItem(key, value); } catch { /* ignore */ }
 }
 
 function grnQty(grn: GoodsReceiptRef) {
   return grn.lines?.reduce((s, l) => s + (l.receivedQty ?? 0), 0) || 0;
 }
 
-function batchQty(b: ProductionBatch) {
-  return b.producedQuantity || b.plannedQuantity || 0;
+/** In-process QC lot = good pieces still in the batch. */
+function goodQty(b: ProductionBatch) {
+  const rejected = (b as ProductionBatch & { rejectedQuantity?: number }).rejectedQuantity || 0;
+  return Math.max(0, (b.plannedQuantity || 0) - rejected);
 }
+
+/** Final QC lot = pieces produced (planned − in-process rejects); legacy batches fall back to planned. */
+function batchQty(b: ProductionBatch) {
+  return b.producedQuantity || goodQty(b);
+}
+
+function grnLineForms(grn?: GoodsReceiptRef): IncomingLineForm[] {
+  return (grn?.lines || [])
+    .filter((l) => (l.receivedQty ?? 0) > 0)
+    .map((l) => {
+      const mat = l.materialId;
+      const matObj = typeof mat === 'object' && mat ? mat : undefined;
+      const received = l.receivedQty ?? 0;
+      return {
+        materialId: matObj?._id || (typeof mat === 'string' ? mat : ''),
+        materialCode: matObj?.materialCode,
+        name: matObj?.name,
+        unit: l.unit || matObj?.unit,
+        receivedQty: received,
+        accepted: String(received),
+        rejected: '0',
+      };
+    });
+}
+
+const stage = (s?: string) => (s ? s.charAt(0) + s.slice(1).toLowerCase().replace(/_/g, ' ') : '—');
 
 export function QualityPage() {
   const qc = useQueryClient();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { permissions } = useAuth();
   const canCreate = permissions.includes('*') || permissions.includes('quality.create');
   const canUpdate = permissions.includes('*') || permissions.includes('quality.update');
 
-  const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
-  const [tab, setTab] = useState<TabId>('incoming');
+  const paramTab = searchParams.get('tab') as TabId | null;
+  const [chosenTab, setChosenTab] = useState<TabId | null>(paramTab && TAB_IDS.includes(paramTab) ? paramTab : null);
   const [page, setPage] = useState(1);
-  const [search, setSearch] = useState('');
   const [searchInput, setSearchInput] = useState('');
+  const search = useDebouncedValue(searchInput.trim());
   const [statusFilter, setStatusFilter] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
-  const [rmBinId, setRmBinId] = useState('');
-  const [fgBinId, setFgBinId] = useState('');
-  const [autoDispatch, setAutoDispatch] = useState(false);
-
-  const [completeId, setCompleteId] = useState<string | null>(null);
-  const [completeForm, setCompleteForm] = useState({
-    passedQuantity: '0',
-    failedQuantity: '0',
-    disposition: 'PASS' as 'PASS' | 'REWORK' | 'REJECT',
-    storageBinId: '',
-    autoDispatchReady: false,
-  });
-  const [defectForm, setDefectForm] = useState({
-    categoryId: '', description: '', quantity: '1', severity: 'MINOR',
-  });
-  const [confirmAction, setConfirmAction] = useState<{ label: string; fn: () => void } | null>(null);
+  const [completeInit, setCompleteInit] = useState<CompleteInit | null>(null);
+  const [detail, setDetail] = useState<QualityInspection | null>(null);
   const [postQcNext, setPostQcNext] = useState<{ materialId?: string; materialCode?: string; qty?: number } | null>(null);
 
-  const showSuccess = (msg: string) => {
-    setSuccess(msg);
-    setError('');
-    setTimeout(() => setSuccess(''), 4000);
-  };
-
   const invalidate = () => {
-    qc.invalidateQueries({ queryKey: ['quality-stats'] });
-    qc.invalidateQueries({ queryKey: ['quality-pending'] });
-    qc.invalidateQueries({ queryKey: ['qc-queue'] });
-    qc.invalidateQueries({ queryKey: ['quality-inspections'] });
-    qc.invalidateQueries({ queryKey: ['grns'] });
-    qc.invalidateQueries({ queryKey: ['purchase-list'] });
-    qc.invalidateQueries({ queryKey: ['purchase-stats'] });
-    qc.invalidateQueries({ queryKey: ['batches'] });
-    qc.invalidateQueries({ queryKey: ['inventory-balances'] });
-    qc.invalidateQueries({ queryKey: ['inventory-balances-page'] });
-    qc.invalidateQueries({ queryKey: ['inventory-stats'] });
-    qc.invalidateQueries({ queryKey: ['dispatch-ready'] });
-    qc.invalidateQueries({ queryKey: ['samples'] });
-    qc.invalidateQueries({ queryKey: ['sample'] });
-    qc.invalidateQueries({ queryKey: ['sample-stats'] });
+    [
+      'quality-stats', 'quality-pending', 'qc-queue', 'quality-inspections', 'quality-inspection', 'grns', 'purchase-list',
+      'purchase-stats', 'batches', 'batch-board', 'production-list', 'production-stats', 'production-batch', 'batch-inspections',
+      'inventory-balances', 'inventory-balances-page', 'inventory-stats', 'dispatch-ready', 'samples', 'sample', 'sample-stats',
+    ].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
   };
 
-  const { data: stats } = useQuery({ queryKey: ['quality-stats'], queryFn: () => qualityApi.stats() });
+  const statsQ = useQuery({ queryKey: ['quality-stats'], queryFn: () => qualityApi.stats(), refetchInterval: LIVE_REFRESH_MS });
+  const stats = statsQ.data;
   const { data: catalog } = useQuery({ queryKey: ['quality-catalog'], queryFn: () => qualityApi.catalog() });
-  const { data: pending } = useQuery({
+  const pendingQ = useQuery({
     queryKey: ['quality-pending'],
+    refetchInterval: LIVE_REFRESH_MS,
     queryFn: async () => {
       const data = await qualityApi.pendingWork();
       qc.invalidateQueries({ queryKey: ['qc-queue'] });
       return data;
     },
   });
-  const { data: queue = [] } = useQuery({ queryKey: ['qc-queue'], queryFn: qualityApi.queue });
-
-  const { data: inspectionsPage, isLoading, isFetching, refetch } = useQuery({
-    queryKey: ['quality-inspections', page, search, statusFilter, typeFilter],
-    queryFn: () => qualityApi.listPage({
-      page,
-      limit: PAGE_SIZE,
-      search: search || undefined,
-      status: statusFilter || undefined,
-      inspectionType: typeFilter || undefined,
-    }),
-  });
-  const inspections = inspectionsPage?.items ?? [];
-  const meta = inspectionsPage?.meta;
-
-  const { data: warehouses = [] } = useQuery({ queryKey: ['warehouses'], queryFn: () => warehouseApi.list() });
-  const rmWh = warehouses.find((w: Warehouse) => w.type === 'RAW_MATERIAL') || warehouses[0];
-  const fgWh = warehouses.find((w: Warehouse) => w.type === 'FINISHED_GOODS') || warehouses[0];
-
-  const { data: rmBins = [] } = useQuery({
-    queryKey: ['bins', rmWh?._id, 'qc-rm'],
-    queryFn: () => warehouseApi.listBins(rmWh!._id),
-    enabled: !!rmWh?._id,
-  });
-  const { data: fgBins = [] } = useQuery({
-    queryKey: ['bins', fgWh?._id, 'qc-fg'],
-    queryFn: () => warehouseApi.listBins(fgWh!._id),
-    enabled: !!fgWh?._id,
-  });
-
-  const { data: categories = [] } = useQuery({
-    queryKey: ['defect-categories'],
-    queryFn: qualityAdminApi.listDefectCategories,
-  });
-
-  const activeInspection = completeId
-    ? [...queue, ...inspections].find((i) => i._id === completeId)
-    : undefined;
-
-  const { data: defects = [], refetch: refetchDefects } = useQuery({
-    queryKey: ['inspection-defects', completeId],
-    queryFn: () => qualityApi.listDefects(completeId!),
-    enabled: !!completeId,
-  });
-
-  const createIncoming = useMutation({
-    mutationFn: (grnId: string) => qualityApi.createIncoming(grnId),
-    onSuccess: (insp) => {
-      showSuccess(`Inspection ${insp.inspectionNumber} created`);
-      invalidate();
-    },
-    onError: (e: Error) => setError(e.message),
-  });
-
-  const createInProcess = useMutation({
-    mutationFn: (batchId: string) => qualityApi.createInProcess(batchId),
-    onSuccess: (insp) => {
-      showSuccess(`In-process inspection ${insp.inspectionNumber} created`);
-      invalidate();
-    },
-    onError: (e: Error) => setError(e.message),
-  });
-
-  const createFinal = useMutation({
-    mutationFn: ({ batchId, qty }: { batchId: string; qty: number }) =>
-      qualityApi.createFinal(batchId, {
-        storageBinId: fgBinId || undefined,
-        autoDispatchReady: autoDispatch,
-      }).then((insp) => {
-        openComplete(insp, qty);
-        return insp;
-      }),
-    onSuccess: () => invalidate(),
-    onError: (e: Error) => setError(e.message),
-  });
-
-  const startMut = useMutation({
-    mutationFn: (id: string) => qualityApi.start(id),
-    onSuccess: (insp) => {
-      showSuccess(`Started ${insp.inspectionNumber}`);
-      invalidate();
-    },
-    onError: (e: Error) => setError(e.message),
-  });
-
-  const recordDefect = useMutation({
-    mutationFn: () => qualityApi.recordDefect(completeId!, {
-      categoryId: defectForm.categoryId || undefined,
-      description: defectForm.description || undefined,
-      quantity: Number(defectForm.quantity) || 1,
-      severity: defectForm.severity,
-    }),
-    onSuccess: () => {
-      setDefectForm({ categoryId: '', description: '', quantity: '1', severity: 'MINOR' });
-      refetchDefects();
-      showSuccess('Defect recorded');
-    },
-    onError: (e: Error) => setError(e.message),
-  });
-
-  const completeMut = useMutation({
-    mutationFn: () => {
-      const passed = Number(completeForm.passedQuantity) || 0;
-      const failed = Number(completeForm.failedQuantity) || 0;
-      const disposition = completeForm.disposition;
-      let result: string = disposition;
-      if (disposition === 'PASS' && failed > 0 && passed > 0) result = 'PARTIAL';
-      else if (disposition === 'PASS' && failed === 0) result = 'PASS';
-      else if (disposition === 'REJECT') result = 'FAIL';
-
-      const body: Parameters<typeof qualityApi.complete>[1] = {
-        passedQuantity: passed,
-        failedQuantity: failed,
-        disposition,
-        result,
-      };
-
-      if (activeInspection?.inspectionType === 'INCOMING') {
-        body.storageBinId = completeForm.storageBinId || rmBinId || undefined;
-      }
-      if (activeInspection?.inspectionType === 'FINAL') {
-        body.storageBinId = completeForm.storageBinId || fgBinId || undefined;
-        body.autoDispatchReady = completeForm.autoDispatchReady;
-      }
-
-      return qualityApi.complete(completeId!, body);
-    },
-    onSuccess: (insp) => {
-      setCompleteId(null);
-      if (activeInspection?.inspectionType === 'INCOMING') {
-        const refId = inspectionRefId(activeInspection);
-        const grn = pendingGrns.find((g) => g._id === refId);
-        const firstLine = grn?.lines?.[0];
-        const mat = firstLine?.materialId;
-        const materialId = typeof mat === 'object' && mat && '_id' in mat ? (mat as { _id: string })._id : typeof mat === 'string' ? mat : undefined;
-        const materialCode = typeof mat === 'object' && mat && 'materialCode' in mat ? (mat as { materialCode?: string }).materialCode : undefined;
-        const qty = Number(completeForm.passedQuantity) || (grn ? grnQty(grn) : 0);
-        setPostQcNext({ materialId, materialCode, qty });
-        showSuccess(incomingQcSuccessMessage());
-      } else if (activeInspection?.inspectionType === 'SAMPLING' || activeInspection?.referenceType === 'SAMPLE') {
-        showSuccess(insp.result === 'FAIL' || insp.disposition === 'REJECT'
-          ? 'Sample QC failed - sampling / manager can request a revision'
-          : 'Sample QC passed - next is fit trial or buyer approval');
-      } else {
-        showSuccess(`Inspection ${insp.inspectionNumber} completed`);
-      }
-      invalidate();
-    },
-    onError: (e: Error) => setError(e.message),
-  });
+  const pending = pendingQ.data;
+  const queueQ = useQuery({ queryKey: ['qc-queue'], queryFn: qualityApi.queue, refetchInterval: LIVE_REFRESH_MS });
+  const queue = queueQ.data ?? [];
 
   const pendingGrns = pending?.pendingGrns ?? [];
   const inProgressBatches = pending?.inProgressBatches ?? [];
   const completedBatches = pending?.completedBatches ?? [];
   const pendingSamples = pending?.pendingSamples ?? [];
 
+  // Open the first tab that has work waiting, unless the user picked one.
+  const autoTab: TabId = pendingGrns.length ? 'incoming'
+    : completedBatches.length ? 'final'
+      : inProgressBatches.length ? 'inprocess'
+        : pendingSamples.length ? 'samples'
+          : queue.length ? 'queue' : 'incoming';
+  const tab: TabId = chosenTab ?? autoTab;
+  const setTab = (id: TabId) => {
+    setChosenTab(id);
+    setPage(1);
+    if (searchParams.get('tab')) {
+      const next = new URLSearchParams(searchParams);
+      next.delete('tab');
+      setSearchParams(next, { replace: true });
+    }
+  };
+
+  const historyQ = useQuery({
+    queryKey: ['quality-inspections', page, search, statusFilter, typeFilter],
+    queryFn: () => qualityApi.listPage({
+      page, limit: PAGE_SIZE, search: search || undefined, status: statusFilter || undefined, inspectionType: typeFilter || undefined,
+    }),
+    enabled: tab === 'history',
+    placeholderData: (prev) => prev,
+  });
+  const inspections = historyQ.data?.items ?? [];
+  const meta = historyQ.data?.meta;
+
+  const { data: warehouses = [] } = useQuery({ queryKey: ['warehouses'], queryFn: () => warehouseApi.list() });
+  const rmWh = warehouses.find((w: Warehouse) => w.type === 'RAW_MATERIAL') || warehouses[0];
+  const fgWh = warehouses.find((w: Warehouse) => w.type === 'FINISHED_GOODS') || warehouses[0];
+  const { data: rmBins = [] } = useQuery({ queryKey: ['bins', rmWh?._id, 'qc-rm'], queryFn: () => warehouseApi.listBins(rmWh!._id), enabled: !!rmWh?._id });
+  const { data: fgBins = [] } = useQuery({ queryKey: ['bins', fgWh?._id, 'qc-fg'], queryFn: () => warehouseApi.listBins(fgWh!._id), enabled: !!fgWh?._id });
+
+  const createIncoming = useMutation({ mutationFn: (grnId: string) => qualityApi.createIncoming(grnId) });
+  const createInProcess = useMutation({ mutationFn: (batchId: string) => qualityApi.createInProcess(batchId) });
+  const createFinal = useMutation({
+    mutationFn: (batchId: string) => qualityApi.createFinal(batchId, {
+      storageBinId: readPref(PREF.fgBin) || undefined,
+      autoDispatchReady: readPref(PREF.autoDispatch) === '1',
+    }),
+  });
+  const startMut = useMutation({ mutationFn: (id: string) => qualityApi.start(id) });
+  const [busyRow, setBusyRow] = useState<string | null>(null);
+
   const openComplete = (insp: QualityInspection, defaultQty?: number) => {
     let qty = defaultQty ?? 0;
-    if (!qty && insp.inspectionType === 'INCOMING') {
-      const refId = inspectionRefId(insp);
+    let lines: IncomingLineForm[] = [];
+    const refId = inspectionRefId(insp);
+    if (insp.inspectionType === 'INCOMING') {
       const grn = pendingGrns.find((g) => g._id === refId);
-      if (grn) qty = grnQty(grn);
+      lines = grnLineForms(grn);
+      if (!qty && grn) qty = grnQty(grn);
+    }
+    if (!qty && insp.inspectionType === 'FINAL') {
+      const batch = completedBatches.find((b) => b._id === refId);
+      if (batch) qty = batchQty(batch);
+    }
+    if (!qty && insp.inspectionType === 'IN_PROCESS') {
+      const batch = inProgressBatches.find((b) => b._id === refId);
+      if (batch) qty = goodQty(batch);
     }
     if (!qty && (insp.inspectionType === 'SAMPLING' || insp.referenceType === 'SAMPLE')) qty = 1;
-    setCompleteId(insp._id);
-    setCompleteForm({
-      passedQuantity: String(qty),
-      failedQuantity: '0',
-      disposition: 'PASS',
-      storageBinId: insp.inspectionType === 'INCOMING' ? rmBinId : fgBinId,
-      autoDispatchReady: autoDispatch,
+    // Freeze the auto-picked tab so the list doesn't jump once this queue empties.
+    setChosenTab((c) => c ?? tab);
+    setDetail(null);
+    setCompleteInit({
+      inspection: insp,
+      qty,
+      base: ['FINAL', 'IN_PROCESS'].includes(insp.inspectionType) && qty > 0 ? qty : undefined,
+      lines,
+      storageBinId: readPref(insp.inspectionType === 'INCOMING' ? PREF.rmBin : PREF.fgBin),
+      autoDispatchReady: readPref(PREF.autoDispatch) === '1',
     });
   };
 
-  const runIncomingQc = async (grn: GoodsReceiptRef) => {
-    try {
-      let insp: QualityInspection | undefined;
-      const linked = grn.qcInspectionId;
-      if (linked && typeof linked === 'object' && linked._id) {
-        insp = queue.find((q) => q._id === linked._id) || {
-          _id: linked._id,
-          inspectionNumber: linked.inspectionNumber || '',
-          inspectionType: 'INCOMING',
-          status: linked.status || 'PENDING',
-        };
-      }
-      if (!insp) {
-        insp = queue.find((q) => inspectionRefId(q) === grn._id && q.inspectionType === 'INCOMING');
-      }
-      if (!insp) {
-        insp = await createIncoming.mutateAsync(grn._id);
-      }
-      if (insp.status === 'PENDING') {
-        insp = await startMut.mutateAsync(insp._id);
-      }
-      openComplete(insp, grnQty(grn));
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Incoming QC failed');
-    }
+  /** Wraps a multi-step "get inspection ready, then open the form" flow with a row spinner + toast on failure. */
+  const withRow = async (rowId: string, fn: () => Promise<void>) => {
+    setBusyRow(rowId);
+    try { await fn(); } catch { /* mutation errors already toast */ } finally { setBusyRow(null); }
   };
+
+  const runIncomingQc = (grn: GoodsReceiptRef) => withRow(grn._id, async () => {
+    let insp: QualityInspection | undefined;
+    const linked = grn.qcInspectionId;
+    if (linked && typeof linked === 'object' && linked._id) {
+      insp = queue.find((q) => q._id === linked._id) || {
+        _id: linked._id, inspectionNumber: linked.inspectionNumber || '', inspectionType: 'INCOMING', status: linked.status || 'PENDING',
+      };
+    }
+    if (!insp) insp = queue.find((q) => inspectionRefId(q) === grn._id && q.inspectionType === 'INCOMING');
+    if (!insp) insp = await createIncoming.mutateAsync(grn._id);
+    if (insp.status === 'PENDING') insp = await startMut.mutateAsync(insp._id);
+    invalidate();
+    openComplete(insp, grnQty(grn));
+  });
 
   type PendingSample = NonNullable<QualityPendingWork['pendingSamples']>[number];
-
-  const runSampleQc = async (s: PendingSample) => {
-    try {
-      const linked = s.qcInspectionId;
-      let insp: QualityInspection | undefined;
-      if (linked && typeof linked === 'object' && linked._id) {
-        insp = queue.find((q) => q._id === linked._id) || {
-          _id: linked._id,
-          inspectionNumber: linked.inspectionNumber || '',
-          inspectionType: 'SAMPLING',
-          status: linked.status || 'PENDING',
-          referenceType: 'SAMPLE',
-          referenceId: s._id,
-        };
-      }
-      if (!insp) {
-        insp = queue.find((q) => q.referenceType === 'SAMPLE' && inspectionRefId(q) === s._id);
-      }
-      if (!insp) {
-        setError('Inspection not ready yet - refresh or open the sample');
-        return;
-      }
-      if (insp.status === 'PENDING') {
-        insp = await startMut.mutateAsync(insp._id);
-      }
-      openComplete(insp, 1);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Sample QC failed');
+  const sampleInspection = (s: PendingSample): QualityInspection | undefined => {
+    const linked = s.qcInspectionId;
+    if (linked && typeof linked === 'object' && linked._id) {
+      return queue.find((q) => q._id === linked._id) || {
+        _id: linked._id, inspectionNumber: linked.inspectionNumber || '', inspectionType: 'SAMPLING', status: linked.status || 'PENDING', referenceType: 'SAMPLE', referenceId: s._id,
+      };
     }
+    return queue.find((q) => q.referenceType === 'SAMPLE' && inspectionRefId(q) === s._id);
+  };
+  const runSampleQc = (s: PendingSample) => withRow(s._id, async () => {
+    let insp = sampleInspection(s);
+    if (!insp) {
+      toast.warning('Inspection not ready yet', { description: 'Refresh, or open the sample to check its status.' });
+      return;
+    }
+    if (insp.status === 'PENDING') insp = await startMut.mutateAsync(insp._id);
+    openComplete(insp, 1);
+  });
+
+  const openBatchInspection = (b: ProductionBatch, type: 'IN_PROCESS' | 'FINAL') =>
+    queue.find((q) => q.inspectionType === type && inspectionRefId(q) === b._id && q.status !== 'COMPLETED');
+
+  const runInProcess = (b: ProductionBatch, completeAfter: boolean) => withRow(b._id, async () => {
+    const existing = openBatchInspection(b, 'IN_PROCESS');
+    const insp = existing ?? await createInProcess.mutateAsync(b._id);
+    invalidate();
+    if (completeAfter) openComplete(insp, goodQty(b));
+    else toast.success(`In-process inspection ${insp.inspectionNumber} created`);
+  });
+
+  const runFinal = (b: ProductionBatch) => withRow(b._id, async () => {
+    const insp = openBatchInspection(b, 'FINAL') ?? await createFinal.mutateAsync(b._id);
+    invalidate();
+    openComplete(insp, batchQty(b));
+  });
+
+  const startOnly = (q: QualityInspection) => withRow(q._id, async () => {
+    const insp = await startMut.mutateAsync(q._id);
+    toast.success(`Started ${insp.inspectionNumber}`);
+    invalidate();
+    if (detail?._id === q._id) setDetail(insp);
+  });
+
+  const onCompleted = (insp: QualityInspection, init: CompleteInit, lines: IncomingLineForm[]) => {
+    const type = init.inspection.inspectionType;
+    setCompleteInit(null);
+    if (type === 'INCOMING') {
+      const firstAccepted = lines.find((l) => (Number(l.accepted) || 0) > 0) || lines[0];
+      const qty = lines.reduce((sum, l) => sum + (Number(l.accepted) || 0), 0);
+      setPostQcNext({ materialId: firstAccepted?.materialId, materialCode: firstAccepted?.materialCode, qty });
+      toast.success(incomingQcSuccessMessage());
+    } else if (type === 'SAMPLING' || init.inspection.referenceType === 'SAMPLE') {
+      toast.success(insp.result === 'FAIL' || insp.disposition === 'REJECT' ? 'Sample QC failed' : 'Sample QC passed', {
+        description: insp.result === 'FAIL' || insp.disposition === 'REJECT'
+          ? 'Sampling or the manager can request a revision.'
+          : 'Next is fit trial or buyer approval.',
+      });
+    } else {
+      toast.success(`Inspection ${insp.inspectionNumber} completed`);
+    }
+    invalidate();
   };
 
-  const tabMeta: Record<TabId, { title: string; hint: string }> = {
-    incoming: { title: 'Incoming QC', hint: 'GRNs from purchase payments waiting for inspection. Invoice should already be on the GRN. Passed qty receipts to dock or an RM bin.' },
-    samples: { title: 'Sample QC', hint: 'After stitching, inspect the garment. Pass moves it to fit trial or buyer review.' },
-    inprocess: { title: 'In-process QC', hint: 'Create or complete inspections on batches currently on the floor.' },
-    final: { title: 'Final QC', hint: 'Inspect completed batches. Optionally mark dispatch-ready on pass.' },
-    queue: { title: 'Active queue', hint: 'Inspections already created - start or complete them here.' },
-    history: { title: 'Inspection history', hint: 'Search and filter completed and in-progress inspections.' },
-  };
+  const historyFilters = !!(searchInput || statusFilter || typeFilter);
+  const clearHistory = () => { setSearchInput(''); setStatusFilter(''); setTypeFilter(''); setPage(1); };
+  const refresh = () => { statsQ.refetch(); pendingQ.refetch(); queueQ.refetch(); if (tab === 'history') historyQ.refetch(); };
+  const pendingLoading = pendingQ.isLoading;
 
   return (
-    <div className="space-y-3">
-      <AlertBanner message={error} onDismiss={() => setError('')} />
-      <SuccessBanner message={success} onDismiss={() => setSuccess('')} />
-
-      {postQcNext && (
-        <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 px-4 py-3">
-          <h3 className="text-sm font-semibold text-emerald-800">Incoming QC complete - stock on dock</h3>
-          <p className="mt-1 text-[12px] text-erp-text-muted">
-            {postQcNext.qty ?? 0} units posted to unallocated dock
-            {postQcNext.materialCode ? ` (${postQcNext.materialCode})` : ''}.
-            Optional: put away to a bin, or reserve/issue from dock.
-          </p>
-          <div className="mt-3 flex flex-wrap gap-2">
-            <Link to="/inventory"><ErpButton variant="secondary" className={btnSm}>View inventory</ErpButton></Link>
-            <Link to={putAwayPath(postQcNext.materialId, postQcNext.materialCode)}>
-              <ErpButton className={btnSm}>Put away -&gt;</ErpButton>
-            </Link>
-            <Link to="/samples"><ErpButton variant="secondary" className={btnSm}>Samples</ErpButton></Link>
-            <Link to="/production/orders"><ErpButton variant="secondary" className={btnSm}>Production</ErpButton></Link>
-            <ErpButton variant="secondary" className={btnSm} onClick={() => setPostQcNext(null)}>Dismiss</ErpButton>
-          </div>
-        </div>
-      )}
-
-      <ErpPageHeader
-        title="Quality Control"
-        subtitle={(
+    <>
+      <PageHeader
+        title="Quality control"
+        description="Inspect incoming material, samples and production batches."
+        secondaryActions={(
           <>
-            Incoming GRN QC, sample garments after stitching, and production in-process / final QC.
-            <Link to="/samples" className="ml-2 text-[var(--erp-accent)]">Samples -&gt;</Link>
-            <Link to="/purchase" className="ml-2 text-[var(--erp-accent)]">Purchase -&gt;</Link>
-            <Link to="/inventory" className="ml-2 text-[var(--erp-accent)]">Inventory -&gt;</Link>
-            <Link to="/quality/capa" className="ml-2 text-[var(--erp-accent)]">CAPA -&gt;</Link>
-            <Link to="/quality/templates" className="ml-2 text-[var(--erp-accent)]">Templates -&gt;</Link>
+            <IconButton aria-label="Refresh" loading={pendingQ.isFetching || queueQ.isFetching} onClick={refresh}><RefreshCw size={16} /></IconButton>
+            <Button variant="secondary" icon={<ShieldCheck size={16} />} onClick={() => navigate('/quality/capa')}>CAPA</Button>
+            <Button variant="secondary" icon={<BookTemplate size={16} />} onClick={() => navigate('/quality/templates')}>Templates</Button>
           </>
-        )}
-        actions={(
-          <ErpButton variant="secondary" className={btnSm} onClick={() => { refetch(); invalidate(); }} disabled={isFetching}>
-            <RefreshCw className={`mr-1 inline h-3.5 w-3.5 ${isFetching ? 'animate-spin' : ''}`} />
-            Refresh
-          </ErpButton>
         )}
       />
 
-      <div className="grid grid-cols-2 overflow-hidden rounded-lg border border-[var(--erp-border)] bg-[var(--erp-border)] sm:grid-cols-4 xl:grid-cols-7">
-        <StatTile icon={ClipboardCheck} label="Pending QC" value={stats?.pending ?? 0} onClick={() => setTab('queue')} highlight={(stats?.pending ?? 0) > 0 ? 'warn' : undefined} />
-        <StatTile icon={FlaskConical} label="In progress" value={stats?.inProgress ?? 0} onClick={() => setTab('queue')} />
-        <StatTile icon={CheckCircle2} label="First-pass yield" value={`${stats?.firstPassYield ?? 0}%`} onClick={() => setTab('history')} />
-        <StatTile icon={AlertTriangle} label="Open CAPA" value={stats?.openCapa ?? 0} highlight={(stats?.openCapa ?? 0) > 0 ? 'warn' : undefined} onClick={() => navigate('/quality/capa')} />
-        <StatTile icon={ShieldCheck} label="Defects logged" value={stats?.defectsLogged ?? 0} onClick={() => setTab('history')} />
-        <StatTile icon={ClipboardCheck} label="GRNs waiting" value={stats?.pendingGrns ?? pendingGrns.length} highlight={pendingGrns.length > 0 ? 'accent' : undefined} onClick={() => setTab('incoming')} />
-        <StatTile icon={Shirt} label="Sample QC" value={stats?.pendingSampleQc ?? pendingSamples.length} onClick={() => setTab('samples')} />
-      </div>
+      {postQcNext && (
+        <InfoBanner
+          inset={false}
+          tone="success"
+          className="mb-4"
+          title="Incoming QC complete — stock is on the dock"
+          action={(
+            <div className="flex flex-wrap gap-2">
+              <Button size="sm" onClick={() => navigate(putAwayPath(postQcNext.materialId, postQcNext.materialCode))}>Put away</Button>
+              <Button size="sm" variant="secondary" onClick={() => navigate('/inventory')}>View inventory</Button>
+              <Button size="sm" variant="ghost" onClick={() => setPostQcNext(null)}>Dismiss</Button>
+            </div>
+          )}
+        >
+          {postQcNext.qty ?? 0} units{postQcNext.materialCode ? ` of ${postQcNext.materialCode}` : ''} were posted. Put them away to a bin now, or reserve and issue straight from the dock.
+        </InfoBanner>
+      )}
 
-      <div className="flex flex-wrap items-center gap-1.5 rounded-lg border border-[var(--erp-border)] bg-[var(--erp-surface)] px-3 py-2 text-[12px]">
-        <span className="mr-1 text-[11px] font-medium uppercase tracking-wide text-erp-text-muted">Incoming flow</span>
-        {RM_INCOMING_QC_FLOW.map((step, i) => (
-          <span key={step.id} className="flex items-center gap-1">
-            {i > 0 && <ArrowRight size={11} className="text-erp-text-muted" />}
-            <span
-              className={`rounded px-1.5 py-0.5 ${tab === 'incoming' && step.id === 'inspect' ? 'bg-[var(--erp-accent-muted)] font-medium' : 'text-erp-text-muted'}`}
-              title={step.detail}
-            >
-              {step.label}
-            </span>
-          </span>
-        ))}
-      </div>
+      <KpiGrid cols={6} className="mb-4">
+        <StatTile
+          icon={PackageCheck} label="GRNs waiting" value={stats?.pendingGrns ?? pendingGrns.length}
+          highlight={pendingGrns.length > 0 ? 'warn' : undefined} onClick={() => setTab('incoming')} active={tab === 'incoming'}
+        />
+        <StatTile
+          icon={Factory} label="Final QC due" value={completedBatches.length} hint="Batches off the line"
+          highlight={completedBatches.length > 0 ? 'warn' : undefined} onClick={() => setTab('final')} active={tab === 'final'}
+        />
+        <StatTile
+          icon={ClipboardCheck} label="In queue" value={(stats?.pending ?? 0) + (stats?.inProgress ?? 0)}
+          hint={`${stats?.inProgress ?? 0} in progress`} onClick={() => setTab('queue')} active={tab === 'queue'}
+        />
+        <StatTile icon={Shirt} label="Sample QC" value={stats?.pendingSampleQc ?? pendingSamples.length} onClick={() => setTab('samples')} active={tab === 'samples'} />
+        <StatTile
+          icon={CheckCircle2} label="Pass rate" value={`${stats?.firstPassYield ?? 0}%`}
+          hint={`First pass · ${stats?.defectsLogged ?? 0} defects`} onClick={() => setTab('history')} active={tab === 'history'}
+        />
+        <StatTile
+          icon={AlertTriangle} label="Open CAPA" value={stats?.openCapa ?? 0}
+          highlight={(stats?.openCapa ?? 0) > 0 ? 'warn' : undefined} onClick={() => navigate('/quality/capa')}
+        />
+      </KpiGrid>
 
-      <div className="flex flex-wrap items-end gap-3 rounded-lg border border-[var(--erp-border)] bg-[var(--erp-surface)] px-4 py-3">
-        <div>
-          <label className={fieldLabel}>RM receive bin</label>
-          <ErpSelect value={rmBinId} onChange={(e) => setRmBinId(e.target.value)} className="min-w-[160px] !py-1.5 text-[12px]">
-            <option value="">Unallocated dock</option>
-            {rmBins.map((b) => <option key={b._id} value={b._id}>{binLabel(b)}</option>)}
-          </ErpSelect>
-        </div>
-        <div>
-          <label className={fieldLabel}>FG bin (final QC)</label>
-          <ErpSelect value={fgBinId} onChange={(e) => setFgBinId(e.target.value)} className="min-w-[160px] !py-1.5 text-[12px]">
-            <option value="">Default warehouse</option>
-            {fgBins.map((b) => <option key={b._id} value={b._id}>{binLabel(b)}</option>)}
-          </ErpSelect>
-        </div>
-        <label className="mb-1.5 flex items-center gap-2 text-[12px] text-erp-text-muted">
-          <input type="checkbox" checked={autoDispatch} onChange={(e) => setAutoDispatch(e.target.checked)} className="rounded" />
-          Auto mark dispatch-ready after final QC
-        </label>
-      </div>
-
-      <TabShell
-        tabs={(
-          <ErpTabs
+      <Section flush>
+        <div className="px-3">
+          <Tabs
+            ariaLabel="Inspection queues"
             tabs={[
-              { id: 'incoming', label: `Incoming (${pendingGrns.length})` },
-              { id: 'samples', label: `Samples (${pendingSamples.length})` },
-              { id: 'inprocess', label: `In-process (${inProgressBatches.length})` },
-              { id: 'final', label: `Final (${completedBatches.length})` },
-              { id: 'queue', label: `Queue (${queue.length})` },
+              { id: 'incoming', label: 'Incoming', count: pendingGrns.length },
+              { id: 'inprocess', label: 'In-process', count: inProgressBatches.length },
+              { id: 'final', label: 'Final', count: completedBatches.length },
+              { id: 'samples', label: 'Samples', count: pendingSamples.length },
+              { id: 'queue', label: 'Open inspections', count: queue.length },
               { id: 'history', label: 'History' },
             ]}
             active={tab}
             onChange={(id) => setTab(id as TabId)}
           />
-        )}
-      >
-        <TabToolbar title={tabMeta[tab].title} hint={tabMeta[tab].hint}>
-          {tab === 'history' && (
-            <>
-              <div className="relative min-w-[180px]">
-                <Search size={13} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-erp-text-muted" />
-                <ErpInput
-                  className="!py-1.5 pl-8 text-[12px]"
-                  value={searchInput}
-                  onChange={(e) => setSearchInput(e.target.value)}
-                  placeholder="Number or reference..."
-                  onKeyDown={(e) => e.key === 'Enter' && (setSearch(searchInput), setPage(1))}
-                />
-              </div>
-              <ErpButton variant="secondary" className={btnSm} onClick={() => { setSearch(searchInput); setPage(1); }}>Search</ErpButton>
-              <div className="w-36">
-                <label className={fieldLabel}>Status</label>
-                <ErpSelect className="!py-1.5 text-[12px]" value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}>
-                  <option value="">All</option>
-                  {['PENDING', 'IN_PROGRESS', 'COMPLETED'].map((s) => (
-                    <option key={s} value={s}>{statusLabel(s)}</option>
-                  ))}
-                </ErpSelect>
-              </div>
-              <div className="w-36">
-                <label className={fieldLabel}>Type</label>
-                <ErpSelect className="!py-1.5 text-[12px]" value={typeFilter} onChange={(e) => { setTypeFilter(e.target.value); setPage(1); }}>
-                  <option value="">All</option>
-                  {(catalog?.inspectionTypes ?? ['INCOMING', 'IN_PROCESS', 'FINAL', 'SAMPLING']).map((t) => (
-                    <option key={t} value={t}>{typeLabel(t)}</option>
-                  ))}
-                </ErpSelect>
-              </div>
-            </>
-          )}
-        </TabToolbar>
+        </div>
 
         {tab === 'incoming' && (
-          <div>
-            {pendingGrns.length === 0 ? (
-              <InfoBanner>
-                No GRNs pending QC. Receive goods in <Link to="/purchase" className="font-medium text-[var(--erp-accent)]">Purchase -&gt; Receipts</Link> and submit for QC.
-              </InfoBanner>
-            ) : null}
-            <div className="overflow-x-auto">
-              <ErpDataTable className="w-full min-w-[720px] text-[12px]">
-                <thead>
-                  <tr>
-                    <th>GRN</th>
-                    <th>Payment</th>
-                    <th>Lines</th>
-                    <th className="text-right">Qty</th>
-                    <th>Inspection</th>
-                    <th className="text-right">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {pendingGrns.map((grn) => {
-                    const linkedInsp = grn.qcInspectionId;
-                    const inspLabel = linkedInsp && typeof linkedInsp === 'object' ? linkedInsp.inspectionNumber : undefined;
-                    return (
-                      <tr key={grn._id}>
-                        <td className="whitespace-nowrap font-mono font-medium">{grn.grnNumber}</td>
-                        <td className="font-mono text-erp-text-muted">{poNumberFromGrn(grn)}</td>
-                        <td className="text-erp-text-muted">{grnLineSummary(grn)}</td>
-                        <td className="text-right">{grnQty(grn)}</td>
-                        <td className="font-mono text-[11px] text-erp-text-muted">{inspLabel || '-'}</td>
-                        <td className="text-right">
-                          <ActionStack>
-                            {canUpdate && (
-                              <ErpButton
-                                className={btnSm}
-                                disabled={createIncoming.isPending || startMut.isPending}
-                                onClick={() => runIncomingQc(grn)}
-                              >
-                                {inspLabel ? 'Complete QC' : 'Inspect and complete'}
-                              </ErpButton>
-                            )}
-                            {canCreate && !canUpdate && (
-                              <ErpButton
-                                variant="secondary"
-                                className={btnSm}
-                                disabled={createIncoming.isPending}
-                                onClick={() => createIncoming.mutate(grn._id)}
-                              >
-                                Create inspection
-                              </ErpButton>
-                            )}
-                          </ActionStack>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                  {pendingGrns.length === 0 && (
-                    <EmptyRow colSpan={6}>No incoming GRNs waiting</EmptyRow>
-                  )}
-                </tbody>
-              </ErpDataTable>
-            </div>
-          </div>
-        )}
-
-        {tab === 'samples' && (
-          <div className="overflow-x-auto">
-            <ErpDataTable className="w-full min-w-[640px] text-[12px]">
+          <>
+            <InfoBanner tone="info" title="How incoming QC works" dismissKey="quality-incoming-how">
+              Purchase records the GRN with the supplier invoice. Inspect each line here: accepted quantity is posted to the unallocated dock (or a bin you choose), rejected quantity stays open on the payment for a replacement delivery. Put stock away from Warehouse afterwards.
+            </InfoBanner>
+            <ErpDataTable className="mt-3 min-w-[760px]">
               <thead>
-                <tr>
-                  <th>Sample</th>
-                  <th>Design</th>
-                  <th>Inspection</th>
-                  <th className="text-right">Actions</th>
-                </tr>
+                <tr><th>GRN</th><th>Payment</th><th>Materials</th><th className="erp-num">Qty</th><th>Inspection</th><th className="erp-cell-actions"><span className="sr-only">Actions</span></th></tr>
               </thead>
               <tbody>
-                {pendingSamples.map((s) => {
-                  const design = s.designId && typeof s.designId === 'object'
-                    ? [s.designId.designCode, s.designId.title].filter(Boolean).join(' - ')
-                    : '';
-                  const insp = s.qcInspectionId && typeof s.qcInspectionId === 'object' ? s.qcInspectionId : null;
-                  const canInspect = canUpdate && !!(
-                    insp?._id
-                    || queue.find((q) => q.referenceType === 'SAMPLE' && inspectionRefId(q) === s._id)
-                  );
+                {pendingLoading ? <TableSkeleton asRows rows={4} columns={6} /> : pendingQ.isError ? <QueryErrorRow colSpan={6} error={pendingQ.error} onRetry={() => pendingQ.refetch()} /> : pendingGrns.length === 0 ? (
+                  <EmptyRow colSpan={6} title="No goods receipts waiting" icon={PackageCheck}>
+                    GRNs appear here when Purchase submits them for QC. <Link to="/purchase" className="font-medium text-[var(--erp-accent)]">Go to Purchase</Link>
+                  </EmptyRow>
+                ) : pendingGrns.map((grn) => {
+                  const linked = grn.qcInspectionId;
+                  const inspLabel = linked && typeof linked === 'object' ? linked.inspectionNumber : undefined;
                   return (
-                    <tr key={s._id}>
-                      <td className="whitespace-nowrap font-mono font-medium">{s.sampleCode}</td>
-                      <td className="text-erp-text-muted">{design || '-'}</td>
-                      <td className="font-mono text-[11px] text-erp-text-muted">{insp?.inspectionNumber || '-'}</td>
-                      <td className="text-right">
-                        <ActionStack>
-                          <TextLink to={`/samples?sampleId=${s._id}`}>Open sample</TextLink>
-                          {canInspect && (
-                            <ErpButton
-                              className={btnSm}
-                              disabled={startMut.isPending}
-                              onClick={() => runSampleQc(s)}
+                    <tr key={grn._id}>
+                      <td className="erp-cell-primary whitespace-nowrap font-mono">{grn.grnNumber}</td>
+                      <td className="font-mono text-erp-text-muted">{poNumberFromGrn(grn)}</td>
+                      <td className="max-w-[320px] truncate text-erp-text-muted" title={grnLineSummary(grn)}>{grnLineSummary(grn)}</td>
+                      <td className="erp-num">{grnQty(grn).toLocaleString()}</td>
+                      <td className="font-mono text-erp-text-muted">{inspLabel || '—'}</td>
+                      <td className="erp-cell-actions">
+                        <div className="flex justify-end">
+                          {canUpdate ? (
+                            <Button size="sm" loading={busyRow === grn._id} icon={<ClipboardCheck size={14} />} onClick={() => runIncomingQc(grn)}>Inspect</Button>
+                          ) : canCreate ? (
+                            <Button
+                              size="sm" variant="secondary" loading={busyRow === grn._id}
+                              onClick={() => withRow(grn._id, async () => {
+                                const insp = await createIncoming.mutateAsync(grn._id);
+                                toast.success(`Inspection ${insp.inspectionNumber} created`);
+                                invalidate();
+                              })}
                             >
-                              Inspect
-                            </ErpButton>
-                          )}
-                        </ActionStack>
+                              Create inspection
+                            </Button>
+                          ) : null}
+                        </div>
                       </td>
                     </tr>
                   );
                 })}
-                {pendingSamples.length === 0 && (
-                  <EmptyRow colSpan={4}>No samples waiting for QC</EmptyRow>
-                )}
               </tbody>
             </ErpDataTable>
-          </div>
+          </>
         )}
 
         {tab === 'inprocess' && (
-          <div className="overflow-x-auto">
-            <ErpDataTable className="w-full min-w-[640px] text-[12px]">
-              <thead>
-                <tr>
-                  <th>Batch</th>
-                  <th>Stage</th>
-                  <th className="text-right">Planned</th>
-                  <th className="text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {inProgressBatches.map((b) => (
+          <ErpDataTable className="min-w-[640px]">
+            <thead>
+              <tr><th>Batch</th><th>Stage</th><th className="erp-num">Planned</th><th className="erp-num">Good</th><th>Inspection</th><th className="erp-cell-actions"><span className="sr-only">Actions</span></th></tr>
+            </thead>
+            <tbody>
+              {pendingLoading ? <TableSkeleton asRows rows={4} columns={6} /> : pendingQ.isError ? <QueryErrorRow colSpan={6} error={pendingQ.error} onRetry={() => pendingQ.refetch()} /> : inProgressBatches.length === 0 ? (
+                <EmptyRow colSpan={6} title="No batches on the line" icon={Factory}>Running batches appear here for stage inspections.</EmptyRow>
+              ) : inProgressBatches.map((b) => {
+                const existing = openBatchInspection(b, 'IN_PROCESS');
+                return (
                   <tr key={b._id}>
-                    <td className="whitespace-nowrap font-mono font-medium">{b.batchNumber}</td>
-                    <td>{b.currentStage || '-'}</td>
-                    <td className="text-right">{b.plannedQuantity ?? '-'}</td>
-                    <td className="text-right">
-                      {canCreate && (
-                        <div className="flex flex-wrap justify-end gap-1.5">
-                          <ErpButton
-                            variant="secondary"
-                            className={btnSm}
-                            disabled={createInProcess.isPending}
-                            onClick={() => createInProcess.mutate(b._id)}
-                          >
-                            Create inspection
-                          </ErpButton>
-                          {canUpdate && (
-                            <ErpButton
-                              className={btnSm}
-                              onClick={() => createInProcess.mutateAsync(b._id).then((insp) => openComplete(insp, batchQty(b)))}
-                            >
-                              Quick complete
-                            </ErpButton>
-                          )}
-                        </div>
-                      )}
+                    <td className="erp-cell-primary whitespace-nowrap font-mono">{b.batchNumber}</td>
+                    <td>{stage(b.currentStage)}</td>
+                    <td className="erp-num">{b.plannedQuantity ?? '—'}</td>
+                    <td className="erp-num">{goodQty(b)}</td>
+                    <td>{existing ? <span className="font-mono text-erp-text-muted">{existing.inspectionNumber}</span> : <span className="text-erp-text-muted">—</span>}</td>
+                    <td className="erp-cell-actions">
+                      <div className="flex items-center justify-end gap-1">
+                        {(existing ? canUpdate : canCreate && canUpdate) && (
+                          <Button size="sm" loading={busyRow === b._id} icon={<ClipboardCheck size={14} />} onClick={() => runInProcess(b, true)}>
+                            {existing ? 'Complete' : 'Inspect'}
+                          </Button>
+                        )}
+                        <RowActionsMenu
+                          label={`Actions for ${b.batchNumber}`}
+                          items={[
+                            { label: 'Create inspection only', icon: Play, hidden: !canCreate || !!existing, onSelect: () => runInProcess(b, false) },
+                            { label: 'Open in Production', icon: Eye, onSelect: () => navigate('/production/orders?tab=board') },
+                          ]}
+                        />
+                      </div>
                     </td>
                   </tr>
-                ))}
-                {inProgressBatches.length === 0 && (
-                  <EmptyRow colSpan={4}>No in-progress batches</EmptyRow>
-                )}
-              </tbody>
-            </ErpDataTable>
-          </div>
+                );
+              })}
+            </tbody>
+          </ErpDataTable>
         )}
 
         {tab === 'final' && (
-          <div className="overflow-x-auto">
-            <ErpDataTable className="w-full min-w-[560px] text-[12px]">
-              <thead>
-                <tr>
-                  <th>Batch</th>
-                  <th className="text-right">Produced</th>
-                  <th className="text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {completedBatches.map((b) => (
+          <ErpDataTable>
+            <thead>
+              <tr><th>Batch</th><th className="erp-num">Pieces to inspect</th><th>Inspection</th><th className="erp-cell-actions"><span className="sr-only">Actions</span></th></tr>
+            </thead>
+            <tbody>
+              {pendingLoading ? <TableSkeleton asRows rows={4} columns={4} /> : pendingQ.isError ? <QueryErrorRow colSpan={4} error={pendingQ.error} onRetry={() => pendingQ.refetch()} /> : completedBatches.length === 0 ? (
+                <EmptyRow colSpan={4} title="No batches waiting for final QC" icon={Factory}>Batches show up here when they finish the last line stage.</EmptyRow>
+              ) : completedBatches.map((b) => {
+                const existing = openBatchInspection(b, 'FINAL');
+                return (
                   <tr key={b._id}>
-                    <td className="whitespace-nowrap font-mono font-medium">{b.batchNumber}</td>
-                    <td className="text-right">{batchQty(b)}</td>
-                    <td className="text-right">
-                      {canCreate && (
-                        <ErpButton
-                          className={btnSm}
-                          disabled={createFinal.isPending}
-                          onClick={() => createFinal.mutate({ batchId: b._id, qty: batchQty(b) })}
-                        >
-                          Final QC
-                        </ErpButton>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-                {completedBatches.length === 0 && (
-                  <EmptyRow colSpan={3}>No batches awaiting final QC</EmptyRow>
-                )}
-              </tbody>
-            </ErpDataTable>
-          </div>
-        )}
-
-        {tab === 'queue' && (
-          <div className="overflow-x-auto">
-            <ErpDataTable className="w-full min-w-[640px] text-[12px]">
-              <thead>
-                <tr>
-                  <th>Number</th>
-                  <th>Type</th>
-                  <th>Status</th>
-                  <th className="text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {queue.map((q) => (
-                  <tr key={q._id}>
-                    <td className="whitespace-nowrap font-mono font-medium">{q.inspectionNumber}</td>
-                    <td>
-                      {typeLabel(q.inspectionType)}
-                      {(q.inspectionType === 'SAMPLING' || q.referenceType === 'SAMPLE') && inspectionRefId(q) && (
-                        <TextLink to={`/samples?sampleId=${inspectionRefId(q)}`}> Sample</TextLink>
-                      )}
-                    </td>
-                    <td><ErpStatusBadge status={q.status} label={statusLabel(q.status)} /></td>
-                    <td className="text-right">
-                      <div className="flex justify-end gap-1.5">
-                        {canUpdate && q.status === 'PENDING' && (
-                          <ErpButton variant="secondary" className={btnSm} onClick={() => startMut.mutate(q._id)}>Start</ErpButton>
-                        )}
-                        {canUpdate && ['PENDING', 'IN_PROGRESS'].includes(q.status) && (
-                          <ErpButton className={btnSm} onClick={() => openComplete(q)}>Complete</ErpButton>
+                    <td className="erp-cell-primary whitespace-nowrap font-mono">{b.batchNumber}</td>
+                    <td className="erp-num">{batchQty(b)}</td>
+                    <td>{existing ? <span className="font-mono text-erp-text-muted">{existing.inspectionNumber}</span> : <span className="text-erp-text-muted">—</span>}</td>
+                    <td className="erp-cell-actions">
+                      <div className="flex justify-end">
+                        {(existing ? canUpdate : canCreate) && (
+                          <Button size="sm" loading={busyRow === b._id} icon={<ClipboardCheck size={14} />} onClick={() => runFinal(b)}>Final QC</Button>
                         )}
                       </div>
                     </td>
                   </tr>
-                ))}
-                {queue.length === 0 && (
-                  <EmptyRow colSpan={4}>No inspections in queue</EmptyRow>
-                )}
-              </tbody>
-            </ErpDataTable>
-          </div>
+                );
+              })}
+            </tbody>
+          </ErpDataTable>
+        )}
+
+        {tab === 'samples' && (
+          <ErpDataTable className="min-w-[640px]">
+            <thead>
+              <tr><th>Sample</th><th>Design</th><th>Inspection</th><th className="erp-cell-actions"><span className="sr-only">Actions</span></th></tr>
+            </thead>
+            <tbody>
+              {pendingLoading ? <TableSkeleton asRows rows={3} columns={4} /> : pendingQ.isError ? <QueryErrorRow colSpan={4} error={pendingQ.error} onRetry={() => pendingQ.refetch()} /> : pendingSamples.length === 0 ? (
+                <EmptyRow colSpan={4} title="No samples waiting for QC" icon={Shirt}>Samples arrive here after stitching.</EmptyRow>
+              ) : pendingSamples.map((s) => {
+                const design = s.designId && typeof s.designId === 'object' ? [s.designId.designCode, s.designId.title].filter(Boolean).join(' — ') : '';
+                const insp = sampleInspection(s);
+                return (
+                  <tr key={s._id}>
+                    <td className="erp-cell-primary whitespace-nowrap font-mono">{s.sampleCode}</td>
+                    <td className="text-erp-text-muted">{design || '—'}</td>
+                    <td className="font-mono text-erp-text-muted">{insp?.inspectionNumber || '—'}</td>
+                    <td className="erp-cell-actions">
+                      <div className="flex items-center justify-end gap-1">
+                        {canUpdate && insp && (
+                          <Button size="sm" loading={busyRow === s._id} icon={<ClipboardCheck size={14} />} onClick={() => runSampleQc(s)}>Inspect</Button>
+                        )}
+                        <RowActionsMenu label={`Actions for ${s.sampleCode}`} items={[{ label: 'Open sample', icon: Eye, onSelect: () => navigate(`/samples?sampleId=${s._id}`) }]} />
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </ErpDataTable>
+        )}
+
+        {tab === 'queue' && (
+          <ErpDataTable className="min-w-[640px]">
+            <thead>
+              <tr><th>Inspection</th><th>Type</th><th>Status</th><th className="erp-cell-actions"><span className="sr-only">Actions</span></th></tr>
+            </thead>
+            <tbody>
+              {queueQ.isLoading ? <TableSkeleton asRows rows={4} columns={4} /> : queueQ.isError ? <QueryErrorRow colSpan={4} error={queueQ.error} onRetry={() => queueQ.refetch()} /> : queue.length === 0 ? (
+                <EmptyRow colSpan={4} title="No open inspections" icon={ClipboardCheck}>Inspections you create appear here until they are completed.</EmptyRow>
+              ) : queue.map((q) => (
+                <tr key={q._id} className={`erp-row-clickable${detail?._id === q._id ? ' erp-row-selected' : ''}`} onClick={() => setDetail(q)}>
+                  <td className="erp-cell-primary whitespace-nowrap font-mono">{q.inspectionNumber}</td>
+                  <td>{inspectionSummary(q)}</td>
+                  <td><StatusBadge status={q.status} /></td>
+                  <td className="erp-cell-actions">
+                    <div className="flex items-center justify-end gap-1">
+                      {canUpdate && ['PENDING', 'IN_PROGRESS'].includes(q.status) && (
+                        <Button size="sm" onClick={(e) => { e.stopPropagation(); openComplete(q); }}>Complete</Button>
+                      )}
+                      <RowActionsMenu
+                        label={`Actions for ${q.inspectionNumber}`}
+                        items={[
+                          { label: 'View details', icon: Eye, onSelect: () => setDetail(q) },
+                          { label: 'Mark started', icon: Play, hidden: !(canUpdate && q.status === 'PENDING'), onSelect: () => startOnly(q) },
+                          { label: 'Open sample', icon: Shirt, hidden: !(q.inspectionType === 'SAMPLING' || q.referenceType === 'SAMPLE'), onSelect: () => navigate(`/samples?sampleId=${inspectionRefId(q)}`) },
+                        ]}
+                      />
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </ErpDataTable>
         )}
 
         {tab === 'history' && (
-          <div>
-            <div className="overflow-x-auto">
-              <ErpDataTable className="w-full min-w-[800px] text-[12px]">
-                <thead>
-                  <tr>
-                    <th>Number</th>
-                    <th>Type</th>
-                    <th>Status</th>
-                    <th>Result</th>
-                    <th className="text-right">Pass / Fail</th>
-                    <th>Completed</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {isLoading ? (
-                    <EmptyRow colSpan={6}>Loading...</EmptyRow>
-                  ) : inspections.map((i) => (
-                    <tr key={i._id}>
-                      <td className="whitespace-nowrap font-mono font-medium">{i.inspectionNumber}</td>
-                      <td>{inspectionSummary(i)}</td>
-                      <td><ErpStatusBadge status={i.status} label={statusLabel(i.status)} /></td>
-                      <td>{resultLabel(i.result)}</td>
-                      <td className="text-right">
-                        {i.passedQuantity ?? '-'} / {i.failedQuantity ?? '-'}
-                        {i.disposition && <span className="ml-1 text-[11px] text-erp-text-muted">({dispositionLabel(i.disposition)})</span>}
-                      </td>
-                      <td className="whitespace-nowrap text-erp-text-muted">{formatDateTime(i.completedAt)}</td>
-                    </tr>
-                  ))}
-                  {!isLoading && inspections.length === 0 && (
-                    <EmptyRow colSpan={6}>No inspections found</EmptyRow>
-                  )}
-                </tbody>
-              </ErpDataTable>
-            </div>
-            {meta && (
-              <TablePager
-                page={page}
-                totalPages={meta.totalPages}
-                total={meta.total}
-                onPrev={() => setPage((p) => p - 1)}
-                onNext={() => setPage((p) => p + 1)}
-              />
-            )}
-          </div>
-        )}
-      </TabShell>
-
-      {completeId && activeInspection && (
-        <div className="fixed inset-0 z-[10000] flex items-center justify-center overflow-y-auto bg-black/45 p-4" onClick={() => setCompleteId(null)} role="presentation">
-          <div
-            className="my-auto w-full max-w-lg rounded-lg border border-[var(--erp-border)] bg-[var(--erp-surface,var(--erp-header-bg,#fff))] shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
-            role="dialog"
-            aria-modal="true"
-          >
-            <div className="flex items-start justify-between border-b border-[var(--erp-border)] px-4 py-3">
-              <div>
-                <h3 className="text-sm font-semibold text-erp-text-primary">Complete inspection</h3>
-                <p className="mt-0.5 text-[12px] text-erp-text-muted">
-                  {activeInspection.inspectionNumber} · {typeLabel(activeInspection.inspectionType)}
-                  {(activeInspection.inspectionType === 'SAMPLING' || activeInspection.referenceType === 'SAMPLE') && (
-                    <>
-                      {' · '}
-                      <Link to={`/samples?sampleId=${inspectionRefId(activeInspection)}`} className="text-[var(--erp-accent)]">Open sample</Link>
-                    </>
-                  )}
-                </p>
-              </div>
-              <button type="button" className="rounded p-1 text-erp-text-muted hover:bg-[var(--erp-surface-muted)]" onClick={() => setCompleteId(null)} aria-label="Close">
-                <X size={16} />
-              </button>
-            </div>
-            <div className="max-h-[70vh] overflow-y-auto p-4">
-              {(activeInspection.inspectionType === 'SAMPLING' || activeInspection.referenceType === 'SAMPLE') && (
-                <p className="mb-3 text-[12px] text-erp-text-muted">
-                  One garment. PASS moves the sample to fit trial (fit samples) or buyer approval. REJECT marks QC failed.
-                </p>
-              )}
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className={fieldLabel}>Passed qty</label>
-                  <ErpInput type="number" min={0} className="!py-1.5 text-[12px]" value={completeForm.passedQuantity} onChange={(e) => setCompleteForm((f) => ({ ...f, passedQuantity: e.target.value }))} />
-                </div>
-                <div>
-                  <label className={fieldLabel}>Failed qty</label>
-                  <ErpInput type="number" min={0} className="!py-1.5 text-[12px]" value={completeForm.failedQuantity} onChange={(e) => setCompleteForm((f) => ({ ...f, failedQuantity: e.target.value }))} />
-                </div>
-                <div className="col-span-2">
-                  <label className={fieldLabel}>Disposition</label>
-                  <ErpSelect className="!py-1.5 text-[12px]" value={completeForm.disposition} onChange={(e) => setCompleteForm((f) => ({ ...f, disposition: e.target.value as 'PASS' | 'REWORK' | 'REJECT' }))}>
-                    {(catalog?.dispositions ?? ['PASS', 'REWORK', 'REJECT']).map((d) => (
-                      <option key={d} value={d}>{dispositionLabel(d)}</option>
-                    ))}
+          <>
+            <FilterBar
+              search={<SearchInput inputSize="sm" value={searchInput} onChange={(v) => { setSearchInput(v); setPage(1); }} placeholder="Search inspection number…" />}
+              filters={(
+                <>
+                  <ErpSelect inputSize="sm" aria-label="Status" value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}>
+                    <option value="">All statuses</option>
+                    <option value="PENDING">Pending</option>
+                    <option value="IN_PROGRESS">In progress</option>
+                    <option value="COMPLETED">Completed</option>
                   </ErpSelect>
-                </div>
-                {activeInspection.inspectionType === 'INCOMING' && (
-                  <div className="col-span-2">
-                    <label className={fieldLabel}>RM storage bin</label>
-                    <ErpSelect className="!py-1.5 text-[12px]" value={completeForm.storageBinId} onChange={(e) => setCompleteForm((f) => ({ ...f, storageBinId: e.target.value }))}>
-                      <option value="">Unallocated dock (default)</option>
-                      {rmBins.map((b) => <option key={b._id} value={b._id}>{binLabel(b)}</option>)}
-                    </ErpSelect>
-                    <p className="mt-1 text-[11px] text-erp-text-muted">Passed qty posts on complete. Leave dock empty to put away later in Warehouse.</p>
-                  </div>
-                )}
-                {activeInspection.inspectionType === 'FINAL' && (
-                  <>
-                    <div className="col-span-2">
-                      <label className={fieldLabel}>FG storage bin</label>
-                      <ErpSelect className="!py-1.5 text-[12px]" value={completeForm.storageBinId} onChange={(e) => setCompleteForm((f) => ({ ...f, storageBinId: e.target.value }))}>
-                        <option value="">Default warehouse</option>
-                        {fgBins.map((b) => <option key={b._id} value={b._id}>{binLabel(b)}</option>)}
-                      </ErpSelect>
-                    </div>
-                    <label className="col-span-2 flex items-center gap-2 text-[12px]">
-                      <input type="checkbox" checked={completeForm.autoDispatchReady} onChange={(e) => setCompleteForm((f) => ({ ...f, autoDispatchReady: e.target.checked }))} />
-                      Mark dispatch-ready on pass
-                    </label>
-                  </>
-                )}
-              </div>
-
-              {canUpdate && (
-                <div className="mt-4 rounded-md border border-[var(--erp-border)] p-3">
-                  <h4 className="mb-2 text-[12px] font-semibold">Defects ({defects.length})</h4>
-                  {defects.length > 0 && (
-                    <ul className="mb-3 space-y-1 text-[12px]">
-                      {defects.map((d: QualityDefect) => (
-                        <li key={d._id} className="flex justify-between text-erp-text-muted">
-                          <span>{d.description || 'Defect'} x {d.quantity}</span>
-                          <span>{d.severity}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                  <div className="grid grid-cols-2 gap-2">
-                    <div className="col-span-2">
-                      <label className={fieldLabel}>Category</label>
-                      <ErpSelect className="!py-1.5 text-[12px]" value={defectForm.categoryId} onChange={(e) => setDefectForm((f) => ({ ...f, categoryId: e.target.value }))}>
-                        <option value="">Uncategorized</option>
-                        {categories.map((c) => (
-                          <option key={c._id} value={c._id}>{c.code} - {c.name}</option>
-                        ))}
-                      </ErpSelect>
-                    </div>
-                    <div className="col-span-2">
-                      <label className={fieldLabel}>Description</label>
-                      <ErpInput className="!py-1.5 text-[12px]" value={defectForm.description} onChange={(e) => setDefectForm((f) => ({ ...f, description: e.target.value }))} />
-                    </div>
-                    <div>
-                      <label className={fieldLabel}>Qty</label>
-                      <ErpInput type="number" min={1} className="!py-1.5 text-[12px]" value={defectForm.quantity} onChange={(e) => setDefectForm((f) => ({ ...f, quantity: e.target.value }))} />
-                    </div>
-                    <div>
-                      <label className={fieldLabel}>Severity</label>
-                      <ErpSelect className="!py-1.5 text-[12px]" value={defectForm.severity} onChange={(e) => setDefectForm((f) => ({ ...f, severity: e.target.value }))}>
-                        {(catalog?.defectSeverities ?? ['MINOR', 'MAJOR', 'CRITICAL']).map((s) => (
-                          <option key={s} value={s}>{s}</option>
-                        ))}
-                      </ErpSelect>
-                    </div>
-                  </div>
-                  <ErpButton variant="secondary" className={`mt-2 ${btnSm}`} disabled={recordDefect.isPending} onClick={() => recordDefect.mutate()}>
-                    Add defect
-                  </ErpButton>
-                </div>
+                  <ErpSelect inputSize="sm" aria-label="Type" value={typeFilter} onChange={(e) => { setTypeFilter(e.target.value); setPage(1); }}>
+                    <option value="">All types</option>
+                    {(catalog?.inspectionTypes ?? ['INCOMING', 'IN_PROCESS', 'FINAL', 'SAMPLING']).map((t) => <option key={t} value={t}>{typeLabel(t)}</option>)}
+                  </ErpSelect>
+                </>
               )}
-            </div>
-            <div className="flex justify-end gap-2 border-t border-[var(--erp-border)] px-4 py-3">
-              <ErpButton variant="secondary" className={btnSm} onClick={() => setCompleteId(null)}>Cancel</ErpButton>
-              {canUpdate && (
-                <ErpButton
-                  className={btnSm}
-                  disabled={completeMut.isPending}
-                  onClick={() => setConfirmAction({
-                    label: 'Complete this inspection and apply disposition?',
-                    fn: () => { completeMut.mutate(); setConfirmAction(null); },
-                  })}
-                >
-                  Complete inspection
-                </ErpButton>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
+              onClear={historyFilters ? clearHistory : undefined}
+            />
+            <ErpDataTable className="min-w-[800px]">
+              <thead>
+                <tr><th>Inspection</th><th>Type</th><th>Status</th><th>Result</th><th className="erp-num">Passed</th><th className="erp-num">Failed</th><th>Completed</th></tr>
+              </thead>
+              <tbody>
+                {historyQ.isLoading ? <TableSkeleton asRows rows={6} columns={7} /> : historyQ.isError ? <QueryErrorRow colSpan={7} error={historyQ.error} onRetry={() => historyQ.refetch()} /> : inspections.length === 0 ? (
+                  <EmptyRow
+                    colSpan={7}
+                    title={historyFilters ? 'No inspections match these filters' : 'No inspections yet'}
+                    action={historyFilters ? <Button size="sm" variant="secondary" onClick={clearHistory}>Clear filters</Button> : undefined}
+                  />
+                ) : inspections.map((i) => (
+                  <tr key={i._id} className={`erp-row-clickable${detail?._id === i._id ? ' erp-row-selected' : ''}`} onClick={() => setDetail(i)}>
+                    <td className="erp-cell-primary whitespace-nowrap font-mono">{i.inspectionNumber}</td>
+                    <td>{inspectionSummary(i)}</td>
+                    <td><StatusBadge status={i.status} /></td>
+                    <td>{i.result ? <StatusBadge status={i.result} /> : <span className="text-erp-text-muted">—</span>}</td>
+                    <td className="erp-num">{i.passedQuantity ?? '—'}</td>
+                    <td className="erp-num">{i.failedQuantity ? <span className="text-[var(--erp-danger-text)]">{i.failedQuantity}</span> : (i.failedQuantity ?? '—')}</td>
+                    <td className="whitespace-nowrap text-erp-text-muted">
+                      {formatDateTime(i.completedAt)}
+                      {i.disposition === 'REWORK' && <Badge tone="warning" className="ml-2">Rework</Badge>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </ErpDataTable>
+            {meta && (
+              <TablePager page={page} totalPages={meta.totalPages} total={meta.total} pageSize={PAGE_SIZE} itemLabel="inspections" onPrev={() => setPage((p) => p - 1)} onNext={() => setPage((p) => p + 1)} />
+            )}
+          </>
+        )}
+      </Section>
 
-      {confirmAction && (
-        <ConfirmDialog
-          open={!!confirmAction}
-          title="Confirm"
-          message={confirmAction.label}
-          loading={completeMut.isPending}
-          onConfirm={confirmAction.fn}
-          onCancel={() => setConfirmAction(null)}
-        />
-      )}
-    </div>
+      <CompleteInspectionDrawer
+        init={completeInit}
+        onClose={() => setCompleteInit(null)}
+        onCompleted={onCompleted}
+        rmBins={rmBins}
+        fgBins={fgBins}
+        dispositions={catalog?.dispositions}
+        severities={catalog?.defectSeverities}
+        canUpdate={canUpdate}
+        onRememberDefaults={(d) => {
+          if (d.rmBin !== undefined) writePref(PREF.rmBin, d.rmBin);
+          if (d.fgBin !== undefined) writePref(PREF.fgBin, d.fgBin);
+          if (d.autoDispatch !== undefined) writePref(PREF.autoDispatch, d.autoDispatch ? '1' : '');
+        }}
+      />
+      <InspectionDetailDrawer
+        inspection={detail}
+        onClose={() => setDetail(null)}
+        canUpdate={canUpdate}
+        starting={busyRow === detail?._id}
+        onStart={startOnly}
+        onComplete={(i) => openComplete(i)}
+      />
+    </>
   );
 }

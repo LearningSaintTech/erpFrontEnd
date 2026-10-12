@@ -1,537 +1,27 @@
 import { useEffect, useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useParams, useNavigate, Link } from 'react-router-dom';
-import {
-  BarChart3, Download, Factory, FileText, IndianRupee, Package, RefreshCw, ShieldCheck, TrendingUp, Users,
-} from 'lucide-react';
-import {
-  Bar, BarChart, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
-} from 'recharts';
-import { PreviewableImage } from '../../components/ImagePreview';
-import { mediaUrl } from '../inventory/inventoryUtils';
+import { useQuery } from '@tanstack/react-query';
+import { useParams, useNavigate } from 'react-router-dom';
+import { BarChart3, Download, RefreshCw } from 'lucide-react';
 import { reportApi } from '../../services/reports';
-import { purchaseApi } from '../../services/operations';
 import type {
   ApprovalReport, EmployeeReport, FactoryReport, FinancialReport, InventoryReport,
   MachineReport, ProductionReport, PurchaseReport, QualityReport, ReportDatePreset,
-  ReportPeriod, ReportTabId, WasteReport, PurchaseOrder, GoodsReceipt,
+  ReportPeriod, ReportTabId, WasteReport,
 } from '../../types/api';
 import {
-  ErpPageHeader, ErpTabs, ErpButton, ErpCard, ErpDataTable, ErpSelect, ErpStatusBadge,
+  Button, EmptyState, IconButton, KpiGrid, PageHeader, Section, Skeleton, Tabs, toast,
 } from '../../components/erp';
-import { AlertBanner } from '../../components/AlertBanner';
-import { SuccessBanner } from '../users/SuccessBanner';
+import { QueryState } from '../../components/QueryState';
 import { useAuth } from '../../app/providers/AuthProvider';
+import { formatPeriod, REPORT_TABS } from './reportsUtils';
+import { PeriodSelect } from '../dashboard/DashboardPage';
+import { getApiErrorMessage } from '../../utils/errors';
 import {
-  DATE_PRESET_OPTIONS, formatCurrency, formatNumber, formatPct, formatPeriod,
-  recordToChartData, statusLabel, tabMeta,
-} from './reportsUtils';
+  ApprovalTab, EmployeeTab, FactoryTab, FinancialTab, InventoryTab, MachineTab, ProductionTab,
+  PurchaseTab, QualityTab, WasteTab,
+} from './components/ReportTabs';
 
-const CHART_COLORS = ['var(--erp-accent)', '#6366f1', '#22c55e', '#f59e0b', '#ef4444', '#8b5cf6'];
-const fieldLabel = 'mb-0.5 block text-[10px] font-medium text-erp-text-muted';
-const btnSm = '!px-2 !py-1 text-[10px]';
-
-function KpiCard({ label, value, icon: Icon }: { label: string; value: string | number; icon?: React.ComponentType<{ className?: string }> }) {
-  return (
-    <ErpCard className="p-3">
-      <div className="flex items-center justify-between">
-        <span className="text-[10px] text-erp-text-muted">{label}</span>
-        {Icon && <Icon className="h-3.5 w-3.5 text-erp-text-muted" />}
-      </div>
-      <p className="mt-1 text-lg font-semibold">{value}</p>
-    </ErpCard>
-  );
-}
-
-function StatusBarChart({ data, title }: { data: { name: string; value: number }[]; title: string }) {
-  if (!data.length) {
-    return (
-      <ErpCard className="p-4">
-        <p className="mb-2 text-sm font-medium">{title}</p>
-        <p className="text-xs text-erp-text-muted">No data for this period</p>
-      </ErpCard>
-    );
-  }
-  return (
-    <ErpCard className="p-4">
-      <p className="mb-3 text-sm font-medium">{title}</p>
-      <div className="h-44">
-        <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={data} margin={{ top: 4, right: 4, left: -16, bottom: 0 }}>
-            <XAxis dataKey="name" tick={{ fontSize: 9, fill: 'var(--erp-text-muted)' }} axisLine={false} tickLine={false} />
-            <YAxis tick={{ fontSize: 9, fill: 'var(--erp-text-muted)' }} axisLine={false} tickLine={false} allowDecimals={false} />
-            <Tooltip
-              contentStyle={{
-                background: 'var(--erp-glass-elevated)',
-                border: '1px solid var(--erp-border)',
-                borderRadius: 8,
-                fontSize: 11,
-              }}
-            />
-            <Bar dataKey="value" fill="var(--erp-accent)" radius={[4, 4, 0, 0]} />
-          </BarChart>
-        </ResponsiveContainer>
-      </div>
-    </ErpCard>
-  );
-}
-
-function StatusPieChart({ data, title }: { data: { name: string; value: number }[]; title: string }) {
-  if (!data.length) {
-    return (
-      <ErpCard className="p-4">
-        <p className="mb-2 text-sm font-medium">{title}</p>
-        <p className="text-xs text-erp-text-muted">No data</p>
-      </ErpCard>
-    );
-  }
-  return (
-    <ErpCard className="p-4">
-      <p className="mb-3 text-sm font-medium">{title}</p>
-      <div className="h-44">
-        <ResponsiveContainer width="100%" height="100%">
-          <PieChart>
-            <Pie data={data} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={70} label={({ name, percent }) => `${name} ${((percent ?? 0) * 100).toFixed(0)}%`}>
-              {data.map((_, i) => <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />)}
-            </Pie>
-            <Tooltip contentStyle={{ background: 'var(--erp-glass-elevated)', border: '1px solid var(--erp-border)', borderRadius: 8, fontSize: 11 }} />
-          </PieChart>
-        </ResponsiveContainer>
-      </div>
-    </ErpCard>
-  );
-}
-
-function BreakdownTable({ title, data }: { title: string; data: { name: string; value: number }[] }) {
-  return (
-    <ErpCard className="p-4">
-      <p className="mb-3 text-sm font-medium">{title}</p>
-      <ErpDataTable>
-        <thead><tr><th>Status</th><th className="text-right">Count</th></tr></thead>
-        <tbody>
-          {data.map((r) => (
-            <tr key={r.name}>
-              <td><ErpStatusBadge status={r.name.toUpperCase().replace(/ /g, '_')} label={r.name} /></td>
-              <td className="text-right font-mono text-xs">{formatNumber(r.value)}</td>
-            </tr>
-          ))}
-          {data.length === 0 && <tr><td colSpan={2} className="py-4 text-center text-erp-text-muted">No rows</td></tr>}
-        </tbody>
-      </ErpDataTable>
-    </ErpCard>
-  );
-}
-
-function FactoryTab({ data }: { data: FactoryReport }) {
-  const s = data.summary;
-  return (
-    <div className="space-y-4">
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6">
-        <KpiCard label="Approved designs" value={formatNumber(s.approvedDesigns)} icon={Factory} />
-        <KpiCard label="Batches in progress" value={formatNumber(s.batchesInProgress)} icon={TrendingUp} />
-        <KpiCard label="Fulfillment" value={formatPct(s.fulfillmentPct)} icon={BarChart3} />
-        <KpiCard label="First-pass yield" value={formatPct(s.firstPassYield)} icon={ShieldCheck} />
-        <KpiCard label="Unpaid payments" value={formatCurrency(s.openPoValue)} icon={IndianRupee} />
-        <KpiCard label="Low stock alerts" value={formatNumber(s.lowStockAlerts)} icon={Package} />
-      </div>
-      <div className="grid gap-4 lg:grid-cols-3">
-        <StatusBarChart data={recordToChartData(data.designsByStatus)} title="Designs by status" />
-        <StatusBarChart data={recordToChartData(data.productionByStatus)} title="Production orders" />
-        <StatusBarChart data={recordToChartData(data.samplesByStatus)} title="Samples by status" />
-      </div>
-    </div>
-  );
-}
-
-function ProductionTab({ data }: { data: ProductionReport }) {
-  return (
-    <div className="space-y-4">
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <KpiCard label="Planned qty" value={formatNumber(data.totalPlannedQty)} />
-        <KpiCard label="Produced qty" value={formatNumber(data.totalProducedQty)} />
-        <KpiCard label="Fulfillment" value={formatPct(data.fulfillmentPct)} />
-        <KpiCard label="Overdue orders" value={formatNumber(data.overdueOrders)} />
-        <KpiCard label="Batches in progress" value={formatNumber(data.batchesInProgress)} />
-        <KpiCard label="Batches completed" value={formatNumber(data.batchesCompleted)} />
-        <KpiCard label="Rework batches" value={formatNumber(data.batchesRework)} />
-        <KpiCard label="Capacity / hr" value={formatNumber(data.totalCapacityPerHour)} />
-      </div>
-      <div className="grid gap-4 lg:grid-cols-2">
-        <StatusBarChart data={recordToChartData(data.ordersByStatus)} title="Orders by status" />
-        <StatusBarChart data={recordToChartData(data.batchesByStage)} title="In-progress batches by stage" />
-      </div>
-    </div>
-  );
-}
-
-function InventoryTab({ data, showDrillDown }: { data: InventoryReport; showDrillDown: boolean }) {
-  const { data: lowStock } = useQuery({
-    queryKey: ['report-low-stock'],
-    queryFn: () => reportApi.lowStockPage({ page: 1, limit: 10 }),
-    enabled: showDrillDown,
-  });
-  return (
-    <div className="space-y-4">
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <KpiCard label="Materials" value={formatNumber(data.materialCount)} />
-        <KpiCard label="RM on hand" value={formatNumber(data.rmOnHand)} />
-        <KpiCard label="FG on hand" value={formatNumber(data.fgOnHand)} />
-        <KpiCard label="Stock value" value={formatCurrency(data.stockValue)} />
-        <KpiCard label="Low stock SKUs" value={formatNumber(data.lowStock)} />
-        <KpiCard label="Out of stock" value={formatNumber(data.outOfStock)} />
-        <KpiCard label="Dispatch ready" value={formatNumber(data.dispatchReady)} />
-        <KpiCard label="Reserved" value={formatNumber(data.totalReserved)} />
-      </div>
-      {showDrillDown && lowStock && lowStock.items.length > 0 && (
-        <ErpCard className="p-4">
-          <p className="mb-3 text-sm font-medium">Low stock drill-down</p>
-          <ErpDataTable>
-            <thead>
-              <tr>
-                <th>Material</th>
-                <th>Available</th>
-                <th>Reorder</th>
-                <th className="text-right">Value</th>
-              </tr>
-            </thead>
-            <tbody>
-              {lowStock.items.map((r) => (
-                <tr key={r.materialId}>
-                  <td>
-                    <span className="font-mono text-xs">{r.materialCode}</span>
-                    <span className="ml-2 text-xs text-erp-text-muted">{r.name}</span>
-                  </td>
-                  <td>{formatNumber(r.available)} {r.unit}</td>
-                  <td>{formatNumber(r.reorderLevel)}</td>
-                  <td className="text-right">{formatCurrency(r.stockValue)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </ErpDataTable>
-        </ErpCard>
-      )}
-    </div>
-  );
-}
-
-function PurchaseTab({ data }: { data: PurchaseReport }) {
-  return (
-    <div className="space-y-4">
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <KpiCard label="Period spend" value={formatCurrency(data.spendMtd)} icon={IndianRupee} />
-        <KpiCard label="Unpaid payments" value={formatNumber(data.poOpen)} />
-        <KpiCard label="Open payment value" value={formatCurrency(data.openPoValue)} />
-        <KpiCard label="GRNs pending QC" value={formatNumber(data.grnPendingQc)} />
-        <KpiCard label="Suppliers" value={formatNumber(data.suppliers)} />
-      </div>
-      <div className="grid gap-4 lg:grid-cols-2">
-        <BreakdownTable title="PR by status" data={recordToChartData(data.prByStatus)} />
-        <BreakdownTable title="Payment by status" data={recordToChartData(data.poByStatus)} />
-      </div>
-    </div>
-  );
-}
-
-function QualityTab({ data, showDrillDown }: { data: QualityReport; showDrillDown: boolean }) {
-  const { data: defects = [] } = useQuery({
-    queryKey: ['report-top-defects'],
-    queryFn: () => reportApi.topDefects({ limit: 8 }),
-    enabled: showDrillDown,
-  });
-  return (
-    <div className="space-y-4">
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <KpiCard label="First-pass yield" value={formatPct(data.firstPassYield)} icon={ShieldCheck} />
-        <KpiCard label="Pending inspections" value={formatNumber(data.pending)} />
-        <KpiCard label="Open CAPA" value={formatNumber(data.openCapa)} />
-        <KpiCard label="Defects logged" value={formatNumber(data.defectsLogged)} />
-        <KpiCard label="Passed" value={formatNumber(data.passed)} />
-        <KpiCard label="Failed" value={formatNumber(data.failed)} />
-        <KpiCard label="Rework" value={formatNumber(data.rework)} />
-        <KpiCard label="GRNs waiting QC" value={formatNumber(data.pendingGrns)} />
-      </div>
-      <div className="grid gap-4 lg:grid-cols-2">
-        <StatusPieChart data={recordToChartData(data.inspectionsByType)} title="Inspections by type" />
-        {showDrillDown && defects.length > 0 ? (
-          <ErpCard className="p-4">
-            <p className="mb-3 text-sm font-medium">Top defect categories</p>
-            <ErpDataTable>
-              <thead><tr><th>Code</th><th>Name</th><th className="text-right">Qty</th></tr></thead>
-              <tbody>
-                {defects.map((d) => (
-                  <tr key={d.code}>
-                    <td className="font-mono text-xs">{d.code}</td>
-                    <td>{d.name}</td>
-                    <td className="text-right">{formatNumber(d.quantity)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </ErpDataTable>
-          </ErpCard>
-        ) : (
-          <BreakdownTable title="Inspection outcomes" data={[
-            { name: 'Passed', value: data.passed ?? 0 },
-            { name: 'Failed', value: data.failed ?? 0 },
-            { name: 'Partial', value: data.partial ?? 0 },
-            { name: 'Rework', value: data.rework ?? 0 },
-          ].filter((r) => r.value > 0)} />
-        )}
-      </div>
-    </div>
-  );
-}
-
-function WasteTab({ data }: { data: WasteReport }) {
-  return (
-    <div className="space-y-4">
-      <div className="grid gap-3 sm:grid-cols-3">
-        <KpiCard label="Records" value={formatNumber(data.count)} />
-        <KpiCard label="Total cost" value={formatCurrency(data.totalCost)} icon={IndianRupee} />
-        <KpiCard label="Recovered" value={formatNumber(data.recovered)} />
-      </div>
-      <StatusBarChart data={recordToChartData(data.byType)} title="Waste by type" />
-    </div>
-  );
-}
-
-function MachineTab({ data }: { data: MachineReport }) {
-  return (
-    <div className="space-y-4">
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <KpiCard label="Total machines" value={formatNumber(data.total)} />
-        <KpiCard label="Active" value={formatNumber(data.active)} />
-        <KpiCard label="Maintenance" value={formatNumber(data.maintenance)} />
-        <KpiCard label="Utilization" value={formatPct(data.utilizationPct)} />
-        <KpiCard label="Capacity / hr" value={formatNumber(data.totalCapacityPerHour)} />
-        <KpiCard label="Production lines" value={formatNumber(data.lineCount)} />
-      </div>
-      <StatusPieChart data={recordToChartData(data.machinesByStatus)} title="Machines by status" />
-    </div>
-  );
-}
-
-function EmployeeTab({ data }: { data: EmployeeReport }) {
-  return (
-    <div className="space-y-4">
-      <div className="grid gap-3 sm:grid-cols-3">
-        <KpiCard label="Assigned users" value={formatNumber(data.assignedUsers)} icon={Users} />
-        <KpiCard label="Active" value={formatNumber(data.activeUsers)} />
-        <KpiCard label="Inactive" value={formatNumber(data.inactiveUsers)} />
-      </div>
-      <StatusBarChart data={recordToChartData(data.usersByRole)} title="Users by role" />
-    </div>
-  );
-}
-
-function paymentInvoiceFiles(po: PurchaseOrder, grns: GoodsReceipt[]) {
-  const fromPo = (po.receipts || [])
-    .map((r, index) => ({ ...r, kind: 'po' as const, docId: po._id, index }))
-    .filter((r) => r.url);
-  const fromGrn = grns.flatMap((g) => {
-    const id = typeof g.poId === 'string' ? g.poId : g.poId?._id;
-    if (id !== po._id) return [];
-    return (g.receipts || [])
-      .map((r, index) => ({ ...r, kind: 'grn' as const, docId: g._id, index }))
-      .filter((r) => r.url);
-  });
-  return [...fromPo, ...fromGrn];
-}
-
-function FinancialTab({ data }: { data: FinancialReport }) {
-  const qc = useQueryClient();
-  const { permissions } = useAuth();
-  const canMarkPaid = permissions.includes('*') || permissions.includes('purchase.pay');
-  const [payError, setPayError] = useState('');
-  const [paySuccess, setPaySuccess] = useState('');
-
-  const { data: payments = [] } = useQuery({
-    queryKey: ['finance-payments'],
-    queryFn: () => purchaseApi.listPOs({ limit: 50, excludeStatus: 'CANCELLED' }),
-  });
-  const { data: grns = [] } = useQuery({
-    queryKey: ['finance-grns'],
-    queryFn: () => purchaseApi.listGRNs({ limit: 200 }),
-  });
-
-  const markPaid = useMutation({
-    mutationFn: (id: string) => purchaseApi.markPoPaid(id),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['finance-payments'] });
-      qc.invalidateQueries({ queryKey: ['purchase-stats'] });
-      qc.invalidateQueries({ queryKey: ['reports'] });
-      qc.invalidateQueries({ queryKey: ['purchase-list'] });
-      setPaySuccess('Marked paid');
-      setPayError('');
-    },
-    onError: (e: Error) => setPayError(e.message),
-  });
-
-  const downloadInvoice = (kind: 'po' | 'grn', id: string, index: number, fileName?: string) => {
-    purchaseApi.downloadReceipt(kind, id, index, fileName).catch((e: Error) => setPayError(e.message));
-  };
-
-  const supplierName = (po: PurchaseOrder) => {
-    const s = po.supplierId;
-    if (!s || typeof s === 'string') return s || '—';
-    return `${s.supplierCode} — ${s.name}`;
-  };
-
-  return (
-    <div className="space-y-4">
-      <p className="text-xs text-erp-text-muted">{formatPeriod(data.period.from, data.period.to)}</p>
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <KpiCard label="Purchase spend" value={formatCurrency(data.purchaseSpend)} icon={IndianRupee} />
-        <KpiCard label="Waste cost" value={formatCurrency(data.wasteCostTotal)} />
-        <KpiCard label="Stock value" value={formatCurrency(data.stockValue)} icon={Package} />
-        <KpiCard label="Net exposure" value={formatCurrency(data.netExposure)} />
-      </div>
-
-      <ErpCard className="p-4">
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <p className="text-sm font-medium">Payments</p>
-            <p className="text-xs text-erp-text-muted">
-              Open the invoice, download it, then mark paid. No supplier login — agreed on call.
-            </p>
-          </div>
-          <Link to="/purchase?tab=po" className="text-xs text-[var(--erp-accent)]">Open purchase payments -&gt;</Link>
-        </div>
-        {payError && <p className="mb-2 text-xs text-red-600">{payError}</p>}
-        {paySuccess && <p className="mb-2 text-xs text-emerald-700">{paySuccess}</p>}
-        {payments.length === 0 ? (
-          <p className="text-xs text-erp-text-muted">No payments yet.</p>
-        ) : (
-          <ErpDataTable>
-            <thead>
-              <tr>
-                <th>Payment</th>
-                <th>Supplier</th>
-                <th className="text-right">Amount</th>
-                <th>Invoice</th>
-                <th>Paid</th>
-                <th className="text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {payments.map((po) => {
-                const paid = po.paymentStatus === 'PAID';
-                const invoices = paymentInvoiceFiles(po, grns as GoodsReceipt[]);
-                return (
-                  <tr key={po._id}>
-                    <td className="font-mono text-[12px]">{po.poNumber}</td>
-                    <td>{supplierName(po)}</td>
-                    <td className="text-right">{formatCurrency(po.totalAmount)}</td>
-                    <td>
-                      {invoices.length === 0 ? (
-                        <span className="text-xs text-erp-text-muted">None</span>
-                      ) : (
-                        <div className="flex flex-col gap-1">
-                          {invoices.map((inv) => {
-                            const href = mediaUrl(inv.url);
-                            const isPdf = /\.pdf($|\?)/i.test(inv.fileName || inv.url || '');
-                            return (
-                              <div key={`${inv.kind}-${inv.docId}-${inv.index}`} className="flex items-center gap-1.5">
-                                {isPdf ? (
-                                  <a
-                                    href={href}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    className="inline-flex items-center gap-1 text-[11px] text-erp-text-muted hover:text-[var(--erp-accent)]"
-                                    title={inv.fileName || 'Invoice PDF'}
-                                  >
-                                    <FileText size={12} />
-                                    {inv.fileName || 'PDF'}
-                                  </a>
-                                ) : (
-                                  <PreviewableImage
-                                    src={href}
-                                    alt={inv.fileName || 'Invoice'}
-                                    className="h-8 w-8 object-cover"
-                                    onDownload={() => downloadInvoice(inv.kind, inv.docId, inv.index, inv.fileName)}
-                                  />
-                                )}
-                                <ErpButton
-                                  variant="secondary"
-                                  className={btnSm}
-                                  onClick={() => downloadInvoice(inv.kind, inv.docId, inv.index, inv.fileName)}
-                                >
-                                  <Download size={11} className="mr-1 inline" />
-                                  Download
-                                </ErpButton>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </td>
-                    <td>
-                      <ErpStatusBadge status={paid ? 'COMPLETED' : 'PENDING'} label={paid ? 'Paid' : 'Unpaid'} />
-                    </td>
-                    <td className="text-right">
-                      {canMarkPaid && !paid && (
-                        <ErpButton
-                          className={btnSm}
-                          disabled={markPaid.isPending}
-                          onClick={() => markPaid.mutate(po._id)}
-                        >
-                          Mark paid
-                        </ErpButton>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </ErpDataTable>
-        )}
-      </ErpCard>
-    </div>
-  );
-}
-
-function ApprovalTab({ data, showDrillDown }: { data: ApprovalReport; showDrillDown: boolean }) {
-  const { data: pendingPage } = useQuery({
-    queryKey: ['report-pending-approvals'],
-    queryFn: () => reportApi.pendingApprovalsPage({ page: 1, limit: 10 }),
-    enabled: showDrillDown,
-  });
-  return (
-    <div className="space-y-4">
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <KpiCard label="Pending" value={formatNumber(data.pending)} />
-        <KpiCard label="Approved" value={formatNumber(data.approved)} />
-        <KpiCard label="Rejected" value={formatNumber(data.rejected)} />
-        <KpiCard label="Approval rate" value={formatPct(data.approvalRate)} />
-      </div>
-      <div className="grid gap-4 lg:grid-cols-2">
-        <StatusBarChart data={recordToChartData(data.pendingByType)} title="Pending by document type" />
-        {showDrillDown && pendingPage && pendingPage.items.length > 0 && (
-          <ErpCard className="p-4">
-            <p className="mb-3 text-sm font-medium">Pending approvals</p>
-            <ErpDataTable>
-              <thead><tr><th>Type</th><th>Level</th><th>Submitted</th></tr></thead>
-              <tbody>
-                {pendingPage.items.map((a) => (
-                  <tr key={a._id}>
-                    <td>{statusLabel(a.documentType)}</td>
-                    <td>L{a.currentLevel}</td>
-                    <td className="text-xs text-erp-text-muted">
-                      {a.submittedAt ? new Date(a.submittedAt).toLocaleDateString() : '—'}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </ErpDataTable>
-          </ErpCard>
-        )}
-      </div>
-    </div>
-  );
-}
-
-const VALID_REPORT_TABS: ReportTabId[] = [
-  'factory', 'production', 'inventory', 'purchase', 'quality', 'waste', 'machine', 'employee', 'financial', 'approval',
-];
+const VALID_REPORT_TABS: ReportTabId[] = REPORT_TABS.map((t) => t.id);
 
 function defaultReportTab(permissions: string[]): ReportTabId {
   if (permissions.includes('*')) return 'factory';
@@ -542,10 +32,29 @@ function defaultReportTab(permissions: string[]): ReportTabId {
   if (has('inventory.read')) return 'inventory';
   return 'factory';
 }
+
 function reportPeriod(data: unknown): ReportPeriod | null {
   if (!data || typeof data !== 'object' || !('period' in data)) return null;
   const p = (data as { period?: ReportPeriod | null }).period;
   return p ?? null;
+}
+
+function ReportSkeleton() {
+  return (
+    <div className="space-y-4" role="status" aria-label="Loading report">
+      <KpiGrid cols={6}>
+        {Array.from({ length: 6 }).map((_, i) => (
+          <div key={i} className="erp-stat-tile bg-[var(--erp-surface)] px-4 py-3.5">
+            <Skeleton width="50%" /><Skeleton className="mt-2" width="70%" height={24} />
+          </div>
+        ))}
+      </KpiGrid>
+      <div className="grid gap-4 lg:grid-cols-2">
+        <div className="erp-card p-4"><Skeleton height={180} /></div>
+        <div className="erp-card p-4"><Skeleton height={180} /></div>
+      </div>
+    </div>
+  );
 }
 
 export function ReportsPage() {
@@ -558,23 +67,14 @@ export function ReportsPage() {
   useEffect(() => {
     if (!canRead) return;
     const valid = tabParam && VALID_REPORT_TABS.includes(tabParam as ReportTabId);
-    if (!valid) {
-      navigate(`/reports/${defaultReportTab(permissions)}`, { replace: true });
-    }
+    if (!valid) navigate(`/reports/${defaultReportTab(permissions)}`, { replace: true });
   }, [tabParam, permissions, canRead, navigate]);
 
   const activeTab = (VALID_REPORT_TABS.includes(tabParam as ReportTabId) ? tabParam : defaultReportTab(permissions)) as ReportTabId;
-  const meta = tabMeta(activeTab);
+  const meta = REPORT_TABS.find((t) => t.id === activeTab) ?? REPORT_TABS[0];
   const [preset, setPreset] = useState<ReportDatePreset>('all');
-  const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
+  const [exporting, setExporting] = useState(false);
   const filters = { preset };
-
-  const { data: stats } = useQuery({
-    queryKey: ['report-stats', preset],
-    queryFn: () => reportApi.stats(filters),
-    enabled: canRead,
-  });
 
   const tabFetchers: Record<ReportTabId, (f: typeof filters) => Promise<unknown>> = {
     factory: reportApi.factory,
@@ -589,7 +89,7 @@ export function ReportsPage() {
     approval: reportApi.approval,
   };
 
-  const { data, isLoading, isFetching, refetch, error: queryError } = useQuery({
+  const { data, isLoading, isFetching, isError, error, refetch } = useQuery({
     queryKey: ['reports', activeTab, preset],
     queryFn: () => tabFetchers[activeTab](filters),
     enabled: canRead,
@@ -598,119 +98,88 @@ export function ReportsPage() {
   const selectTab = (id: string) => navigate(`/reports/${id}`, { replace: true });
 
   const handleExport = async () => {
+    setExporting(true);
     try {
       const blob = await reportApi.exportCsv(activeTab, filters);
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
       a.download = `${activeTab}-report.csv`;
+      document.body.appendChild(a);
       a.click();
-      URL.revokeObjectURL(url);
-      setSuccess('Report exported');
-      setError('');
-      setTimeout(() => setSuccess(''), 3000);
+      a.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      toast.success(`${meta.label} report exported`);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Export failed');
+      toast.error(getApiErrorMessage(e));
+    } finally {
+      setExporting(false);
     }
   };
 
   if (!canRead) {
     return (
-      <div>
-        <ErpPageHeader title="Reports & Analytics" subtitle="Insights and operational KPIs" />
-        <p className="text-sm text-erp-text-muted">You do not have permission to view reports.</p>
+      <div className="space-y-4">
+        <PageHeader title="Reports" description="Operational reports for every module." />
+        <Section><EmptyState icon={BarChart3} title="You don't have access to reports" description="Ask an administrator for the report permission." /></Section>
       </div>
     );
   }
 
-  const displayError = error || (queryError instanceof Error ? queryError.message : '');
   const period = reportPeriod(data);
 
   return (
-    <div>
-      <AlertBanner message={displayError} onDismiss={() => setError('')} />
-      <SuccessBanner message={success} onDismiss={() => setSuccess('')} />
-
-      <ErpPageHeader
-        title="Reports & Analytics"
-        subtitle={meta.subtitle}
-        actions={(
-          <div className="flex flex-wrap items-center gap-2">
-            <label className="flex items-center gap-2">
-              <span className={fieldLabel}>Period</span>
-              <ErpSelect value={preset} onChange={(e) => setPreset(e.target.value as ReportDatePreset)} className="min-w-[130px]">
-                {DATE_PRESET_OPTIONS.map((o) => (
-                  <option key={o.id} value={o.id}>{o.label}</option>
-                ))}
-              </ErpSelect>
-            </label>
-            <ErpButton variant="secondary" onClick={() => refetch()} disabled={isFetching}>
-              <RefreshCw className={`mr-1 inline h-3.5 w-3.5 ${isFetching ? 'animate-spin' : ''}`} />
-              Refresh
-            </ErpButton>
-            {canExport && (
-              <ErpButton variant="secondary" onClick={handleExport}>
-                <Download className="mr-1 inline h-3.5 w-3.5" />
-                Export CSV
-              </ErpButton>
-            )}
-          </div>
+    <div className="space-y-4">
+      <PageHeader
+        title="Reports"
+        description="Operational reports for every module, for the period you choose."
+        secondaryActions={(
+          <>
+            <PeriodSelect value={preset} onChange={setPreset} />
+            <IconButton aria-label="Refresh report" outlined size="sm" onClick={() => refetch()} loading={isFetching}>
+              <RefreshCw size={16} />
+            </IconButton>
+          </>
         )}
+        primaryAction={canExport ? (
+          <Button variant="secondary" size="sm" icon={<Download size={16} />} onClick={handleExport} loading={exporting}>
+            Export CSV
+          </Button>
+        ) : undefined}
       />
 
-      {stats && (
-        <div className="mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
-          <KpiCard label="Fulfillment" value={formatPct(stats.production?.fulfillmentPct)} icon={TrendingUp} />
-          <KpiCard label="Stock value" value={formatCurrency(stats.inventory?.stockValue)} icon={Package} />
-          <KpiCard label="Unpaid payments" value={formatCurrency(stats.purchase?.openPoValue)} icon={IndianRupee} />
-          <KpiCard label="QC yield" value={formatPct(stats.quality?.firstPassYield)} icon={ShieldCheck} />
-          <KpiCard label="Waste cost" value={formatCurrency(stats.waste?.totalCost)} />
-          <KpiCard label="Dispatch ready" value={formatNumber(stats.warehouse?.dispatchReady)} />
-        </div>
-      )}
+      <Tabs
+        tabs={REPORT_TABS.map((t) => ({ id: t.id, label: t.label }))}
+        active={activeTab}
+        onChange={selectTab}
+        ariaLabel="Report"
+      />
 
-      <div className="mb-4">
-        <ErpTabs
-          tabs={[
-            { id: 'factory', label: 'Factory' },
-            { id: 'production', label: 'Production' },
-            { id: 'inventory', label: 'Inventory' },
-            { id: 'purchase', label: 'Purchase' },
-            { id: 'quality', label: 'Quality' },
-            { id: 'waste', label: 'Waste' },
-            { id: 'machine', label: 'Machine' },
-            { id: 'employee', label: 'Employee' },
-            { id: 'financial', label: 'Financial' },
-            { id: 'approval', label: 'Approval' },
-          ]}
-          active={activeTab}
-          onChange={selectTab}
-        />
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <p className="text-[13px] text-erp-text-secondary">{meta.subtitle}</p>
+        {period && <p className="text-xs text-erp-text-muted">{formatPeriod(period.from, period.to)}</p>}
       </div>
 
-      {period && (
-        <p className="mb-4 text-xs text-erp-text-muted">
-          Showing data for {formatPeriod(period.from, period.to)}
-        </p>
-      )}
-
-      {isLoading ? (
-        <p className="text-erp-text-muted">Loading report…</p>
-      ) : data != null ? (
-        <>
+      {isLoading ? <ReportSkeleton /> : (
+        <QueryState
+          isError={isError}
+          error={error}
+          onRetry={refetch}
+          isEmpty={data == null}
+          emptyMessage="No report data available"
+          emptyIcon={BarChart3}
+        >
           {activeTab === 'factory' && <FactoryTab data={data as FactoryReport} />}
           {activeTab === 'production' && <ProductionTab data={data as ProductionReport} />}
-          {activeTab === 'inventory' && <InventoryTab data={data as InventoryReport} showDrillDown />}
+          {activeTab === 'inventory' && <InventoryTab data={data as InventoryReport} />}
           {activeTab === 'purchase' && <PurchaseTab data={data as PurchaseReport} />}
-          {activeTab === 'quality' && <QualityTab data={data as QualityReport} showDrillDown />}
+          {activeTab === 'quality' && <QualityTab data={data as QualityReport} />}
           {activeTab === 'waste' && <WasteTab data={data as WasteReport} />}
           {activeTab === 'machine' && <MachineTab data={data as MachineReport} />}
           {activeTab === 'employee' && <EmployeeTab data={data as EmployeeReport} />}
           {activeTab === 'financial' && <FinancialTab data={data as FinancialReport} />}
-          {activeTab === 'approval' && <ApprovalTab data={data as ApprovalReport} showDrillDown />}
-        </>
-      ) : (
-        <p className="text-erp-text-muted">No report data available</p>
+          {activeTab === 'approval' && <ApprovalTab data={data as ApprovalReport} />}
+        </QueryState>
       )}
     </div>
   );

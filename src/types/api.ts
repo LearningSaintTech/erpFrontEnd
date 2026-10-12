@@ -299,6 +299,7 @@ export interface Bom {
     unitCost?: number;
   }[];
   totalCostPerPiece?: number;
+  submittedBy?: string | { _id: string };
 }
 
 export interface Material {
@@ -398,6 +399,7 @@ export interface QualityInspection {
 export interface NotificationItem {
   _id: string;
   userId?: string;
+  factoryId?: string;
   title: string;
   message?: string;
   eventType: string;
@@ -413,21 +415,6 @@ export interface ApprovalItem {
   documentId: string;
   status: string;
   submittedAt?: string;
-}
-
-export interface Rfq {
-  _id: string;
-  rfqNumber: string;
-  status: string;
-  prId?: string | PurchaseRequisition;
-}
-
-export interface Quotation {
-  _id: string;
-  rfqId: string;
-  supplierId: string | Supplier;
-  totalAmount: number;
-  status: string;
 }
 
 export interface WasteRecord {

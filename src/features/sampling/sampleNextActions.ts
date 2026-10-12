@@ -19,6 +19,8 @@ export interface SampleAction {
   commentTitle?: string;
   step?: string;
   who: string;
+  /** Destructive / negative outcome — shown in red and kept out of the primary slot. */
+  danger?: boolean;
 }
 
 export function getSampleActions(opts: {
@@ -30,22 +32,25 @@ export function getSampleActions(opts: {
   canInventory: boolean;
   canQc: boolean;
   materialCount: number;
+  /** sampling.approve or sampling.create — may abandon a non-terminal sample. */
+  canCancel?: boolean;
 }): SampleAction[] {
-  const { status, sampleType, canEdit, canAdvanceFloor, canApprove, canInventory, canQc, materialCount } = opts;
+  const {
+    status, sampleType, canEdit, canAdvanceFloor, canApprove, canInventory, canQc, materialCount, canCancel,
+  } = opts;
   const actions: SampleAction[] = [];
   const floorWho = 'Pattern master / sampling team';
 
-  if (canEdit && ['CREATED', 'REVISION_REQUESTED'].includes(status)) {
-    if (materialCount > 0) {
-      actions.push({
-        id: 'submit-rm',
-        kind: 'confirm',
-        step: 'submit-material',
-        label: 'Submit fabric & trims request',
-        confirmMessage: 'Submit fabric & trims for SAMPLE_MATERIAL approval?',
-        who: 'Pattern master',
-      });
-    }
+  // REVISION_REQUESTED still holds the last iteration's stock — Reopen (below) releases it first.
+  if (canEdit && status === 'CREATED' && materialCount > 0) {
+    actions.push({
+      id: 'submit-rm',
+      kind: 'confirm',
+      step: 'submit-material',
+      label: 'Submit materials for approval',
+      confirmMessage: 'The fabric and trims list goes to the merchandiser for approval. You can still be asked to change it.',
+      who: 'Pattern master',
+    });
   }
 
   if (canEdit && status === 'REVISION_REQUESTED') {
@@ -54,7 +59,7 @@ export function getSampleActions(opts: {
       kind: 'confirm',
       step: 'reopen',
       label: 'Reopen for rework',
-      confirmMessage: 'Reopen sample so materials can be updated?',
+      confirmMessage: 'Reserved stock from the last round is released so you can update the materials and resubmit.',
       who: 'Pattern master',
     });
   }
@@ -65,17 +70,26 @@ export function getSampleActions(opts: {
         id: 'approve-rm',
         kind: 'confirm',
         step: 'approve-material',
-        label: 'Approve fabric & trims',
-        confirmMessage: 'Approve this material request?',
+        label: 'Approve materials',
+        confirmMessage: 'The store keeper can then reserve the fabric and trims.',
+        who: 'Merchandiser / manager',
+      },
+      {
+        id: 'request-material-changes',
+        kind: 'comment',
+        step: 'request-material-changes',
+        label: 'Request changes',
+        commentTitle: 'Ask the pattern master to change the materials',
         who: 'Merchandiser / manager',
       },
       {
         id: 'reject-rm',
         kind: 'comment',
         step: 'reject-material',
-        label: 'Reject material request',
+        label: 'Reject materials',
         commentTitle: 'Reject material request',
         who: 'Merchandiser / manager',
+        danger: true,
       },
     );
   }
@@ -86,7 +100,7 @@ export function getSampleActions(opts: {
       kind: 'confirm',
       step: 'reserve',
       label: 'Reserve stock',
-      confirmMessage: 'Reserve required quantities? Available stock decreases; on-hand unchanged until issue.',
+      confirmMessage: 'Required quantities are held for this sample. Available stock goes down; on-hand stays the same until you issue.',
       who: 'Store / inventory',
     });
   }
@@ -97,7 +111,7 @@ export function getSampleActions(opts: {
       kind: 'confirm',
       step: 'issue',
       label: 'Issue to cutting',
-      confirmMessage: 'Issue reserved materials to cutting? On-hand stock decreases → sample status CUTTING.',
+      confirmMessage: 'Reserved materials leave the store and the sample moves to cutting. On-hand stock goes down.',
       who: 'Store / inventory',
     });
   }
@@ -107,8 +121,8 @@ export function getSampleActions(opts: {
       id: 'complete-cutting',
       kind: 'confirm',
       step: 'complete-cutting',
-      label: 'Complete cutting → stitching',
-      confirmMessage: 'Mark cutting complete and hand bundles to sample tailor?',
+      label: 'Mark cutting complete',
+      confirmMessage: 'Cut bundles are handed to the sample tailor for stitching.',
       who: floorWho,
     });
   }
@@ -118,19 +132,18 @@ export function getSampleActions(opts: {
       id: 'complete-stitching',
       kind: 'confirm',
       step: 'complete',
-      label: 'Complete stitching → QC',
-      confirmMessage: 'Mark stitching complete and send to quality inspection?',
+      label: 'Mark stitching complete',
+      confirmMessage: 'The sample goes to quality inspection.',
       who: floorWho,
     });
   }
 
   if (canQc && status === 'QC_PENDING') {
-    const after = sampleNeedsFitTrial(sampleType) ? 'fit trial' : 'buyer review';
     actions.push(
       {
         id: 'qc-pass',
         kind: 'modal-qc-pass',
-        label: `Pass QC → ${after}`,
+        label: 'Pass QC',
         who: 'Quality team',
       },
       {
@@ -138,6 +151,7 @@ export function getSampleActions(opts: {
         kind: 'modal-qc-fail',
         label: 'Fail QC',
         who: 'Quality team',
+        danger: true,
       },
     );
   }
@@ -146,8 +160,19 @@ export function getSampleActions(opts: {
     actions.push({
       id: 'fit-trial',
       kind: 'modal-fit-trial',
-      label: 'Record fit session → buyer review',
+      label: 'Record fit session',
       who: floorWho,
+    });
+  }
+
+  if (canApprove && status === 'FIT_TRIAL') {
+    actions.push({
+      id: 'revision-fit',
+      kind: 'comment',
+      step: 'revision',
+      label: 'Request revision',
+      commentTitle: 'Request a revised sample after the fit trial',
+      who: 'Buyer / design manager',
     });
   }
 
@@ -156,8 +181,8 @@ export function getSampleActions(opts: {
       id: 'revision-qc',
       kind: 'comment',
       step: 'revision',
-      label: 'Request revision',
-      commentTitle: 'Request revised sample after QC fail',
+      label: 'Request revised sample',
+      commentTitle: 'Request a revised sample after QC failed',
       who: 'Merchandiser / manager',
     });
   }
@@ -168,8 +193,8 @@ export function getSampleActions(opts: {
         id: 'approve',
         kind: 'confirm',
         step: 'approve',
-        label: 'Approve for bulk production',
-        confirmMessage: 'Approve this sample for bulk production and SKU?',
+        label: 'Approve sample',
+        confirmMessage: 'The sample is approved for bulk production. SKUs can be generated from it.',
         who: 'Buyer / design manager',
       },
       {
@@ -187,60 +212,90 @@ export function getSampleActions(opts: {
         label: 'Reject sample',
         commentTitle: 'Reject sample',
         who: 'Buyer / design manager',
+        danger: true,
       },
     );
+  }
+
+  if (canCancel && !SAMPLE_CLOSED_STATUSES.includes(status)) {
+    actions.push({
+      id: 'cancel',
+      kind: 'confirm',
+      step: 'cancel',
+      label: 'Cancel sample',
+      confirmMessage: 'Reserved stock is released and open approvals and inspections are closed. This cannot be undone.',
+      who: 'Sampling manager',
+      danger: true,
+    });
   }
 
   return actions;
 }
 
+/** Statuses where no further workflow action applies (COMPLETED is legacy). */
+export const SAMPLE_CLOSED_STATUSES = ['APPROVED', 'REJECTED', 'COMPLETED'];
+
 /** Who must act next when the current user has no buttons. */
 export function sampleWaitingHint(status: string): { who: string; action: string } {
   const hints: Record<string, { who: string; action: string }> = {
-    CREATED: { who: 'Pattern master', action: 'Add fabric & trims, then submit the RM request' },
-    REVISION_REQUESTED: { who: 'Pattern master', action: 'Update materials and resubmit the RM request' },
-    MATERIAL_REQUEST_PENDING: { who: 'Merchandiser / design manager', action: 'Approve SAMPLE_MATERIAL in Approvals → Inbox' },
-    MATERIAL_REQUEST_APPROVED: { who: 'Store keeper (inventory.update)', action: 'Reserve stock for all material lines' },
-    MATERIAL_RESERVED: { who: 'Store keeper (inventory.update)', action: 'Issue fabric & trims → advances to CUTTING' },
-    CUTTING: { who: 'Pattern master / sampling team', action: 'Mark cutting complete → hand off to sample tailor' },
-    IN_PROGRESS: { who: 'Pattern master / sampling team', action: 'Complete stitching → send to QC' },
-    QC_PENDING: { who: 'QC inspector', action: 'Pass or fail on Quality → Inspections (or this sample)' },
+    CREATED: { who: 'Pattern master', action: 'Add fabric and trims, then submit them for approval' },
+    REVISION_REQUESTED: { who: 'Pattern master', action: 'Reopen for rework, update the materials and resubmit' },
+    MATERIAL_REQUEST_PENDING: { who: 'Merchandiser / design manager', action: 'Approve the material request' },
+    MATERIAL_REQUEST_APPROVED: { who: 'Store keeper', action: 'Reserve stock for every material line' },
+    MATERIAL_RESERVED: { who: 'Store keeper', action: 'Issue the materials to cutting' },
+    CUTTING: { who: 'Pattern master / sampling team', action: 'Cut the pieces and mark cutting complete' },
+    IN_PROGRESS: { who: 'Pattern master / sampling team', action: 'Stitch the sample and send it to QC' },
+    QC_PENDING: { who: 'QC inspector', action: 'Inspect the sample and pass or fail it' },
     QC_FAILED: { who: 'Design manager', action: 'Request a revised sample' },
-    FIT_TRIAL: { who: 'Pattern master / sampling team', action: 'Record fit session results' },
-    PENDING_APPROVAL: { who: 'Design manager or buyer', action: 'Approve, request revision, or reject the sample' },
+    FIT_TRIAL: { who: 'Pattern master / sampling team', action: 'Record the fit session' },
+    PENDING_APPROVAL: { who: 'Design manager or buyer', action: 'Approve, request a revision or reject the sample' },
   };
-  return hints[status] || { who: 'Assigned role', action: 'Advance the sample workflow' };
+  return hints[status] || { who: 'Assigned role', action: 'Move the sample to its next step' };
+}
+
+/** Short verb for the list's action button — says what you'll do, not just "Take action". */
+export function sampleActionLabel(status: string): string {
+  const labels: Record<string, string> = {
+    CREATED: 'Add materials',
+    REVISION_REQUESTED: 'Rework sample',
+    MATERIAL_REQUEST_PENDING: 'Review materials',
+    MATERIAL_REQUEST_APPROVED: 'Reserve stock',
+    MATERIAL_RESERVED: 'Issue materials',
+    CUTTING: 'Finish cutting',
+    IN_PROGRESS: 'Finish stitching',
+    QC_PENDING: 'Inspect',
+    QC_FAILED: 'Request revision',
+    FIT_TRIAL: 'Record fit',
+    PENDING_APPROVAL: 'Review sample',
+  };
+  return labels[status] || 'Take action';
 }
 
 export function activeStepGuidanceBody(status: string): string {
-  if (status === 'MATERIAL_REQUEST_APPROVED') {
-    return 'Trims approved. Store must reserve stock, then issue to cutting before the pattern master can cut.';
-  }
-  if (status === 'MATERIAL_RESERVED') {
-    return 'Stock reserved. Store must issue materials to the cutting department.';
-  }
-  if (status === 'MATERIAL_REQUEST_PENDING') {
-    return 'RM request submitted. Approve SAMPLE_MATERIAL in Approvals inbox or via Approve RM below.';
-  }
-  return 'Use the action buttons above to advance this sample.';
+  if (status === 'MATERIAL_REQUEST_APPROVED') return 'Materials approved. The store keeper reserves stock, then issues it to cutting.';
+  if (status === 'MATERIAL_RESERVED') return 'Stock reserved. The store keeper issues it to cutting next.';
+  if (status === 'MATERIAL_REQUEST_PENDING') return 'Waiting for the merchandiser to approve the material request.';
+  return sampleWaitingHint(status).action + '.';
 }
 
 export function sampleWorkflowSuccessMessage(step: string): string {
   switch (step) {
-    case 'submit-material': return 'RM request submitted — awaiting SAMPLE_MATERIAL approval';
-    case 'approve-material': return 'Fabric & trims approved — store keeper can reserve stock';
+    case 'submit-material': return 'Materials submitted for approval';
+    case 'approve-material': return 'Materials approved — the store can reserve stock';
     case 'reject-material': return 'Material request rejected';
-    case 'reserve': return 'Materials reserved — issue to cutting when ready';
-    case 'issue': return 'Materials issued — sample moved to cutting (stock decreased)';
-    case 'complete-cutting': return 'Cutting complete — hand off to stitching';
+    case 'reserve': return 'Stock reserved';
+    case 'issue': return 'Materials issued — sample moved to cutting';
+    case 'complete-cutting': return 'Cutting complete — sent to stitching';
     case 'complete': return 'Stitching complete — sent to QC';
     case 'qc-pass': return 'QC passed';
-    case 'qc-fail': return 'QC failed — revision may be required';
-    case 'fit-trial': return 'Fit trial recorded';
+    case 'qc-fail': return 'QC failed';
+    case 'fit-trial': return 'Fit session recorded';
     case 'approve': return 'Sample approved for bulk production';
     case 'reject': return 'Sample rejected';
     case 'revision': return 'Revision requested';
     case 'reopen': return 'Sample reopened for rework';
+    case 'request-material-changes': return 'Changes requested — back with the pattern master';
+    case 'cancel': return 'Sample cancelled — reserved stock released';
     default: return 'Sample updated';
   }
 }
@@ -248,23 +303,23 @@ export function sampleWorkflowSuccessMessage(step: string): string {
 export function sampleStepConfirmMessage(step: string): string {
   switch (step) {
     case 'submit-material':
-      return 'Submit fabric & trims for SAMPLE_MATERIAL approval? Approvers can act here or in Approvals → Inbox.';
+      return 'The fabric and trims list goes to the merchandiser for approval.';
     case 'approve-material':
-      return 'Approve this material request? Store keeper can reserve stock after approval.';
+      return 'The store keeper can then reserve the fabric and trims.';
     case 'reserve':
-      return 'Reserve required quantities from factory stock? Available qty decreases; on-hand stays until issue.';
+      return 'Required quantities are held for this sample. On-hand stock stays the same until you issue.';
     case 'issue':
-      return 'Issue reserved materials to the cutting department? On-hand stock decreases and the sample advances to CUTTING.';
+      return 'Reserved materials leave the store and the sample moves to cutting.';
     case 'complete-cutting':
-      return 'Mark cutting complete and hand bundles to the sample tailor?';
+      return 'Cut bundles are handed to the sample tailor for stitching.';
     case 'complete':
-      return 'Mark stitching complete and send the sample to quality inspection?';
+      return 'The sample goes to quality inspection.';
     case 'approve':
-      return 'Approve this sample for bulk production and SKU planning?';
+      return 'The sample is approved for bulk production and SKU planning.';
     case 'reopen':
-      return 'Reopen the sample so materials can be updated?';
+      return 'The sample reopens so materials can be updated.';
     default:
-      return 'This action advances the sample workflow.';
+      return 'This moves the sample to its next step.';
   }
 }
 
@@ -279,8 +334,8 @@ export function stepGuidance(
   if (stepId === 'fit' && !sampleNeedsFitTrial(sampleType)) {
     return {
       state: 'skipped',
-      title: 'Fit trial not required',
-      body: `${sampleType || 'This'} sample type goes to buyer approval directly after QC.`,
+      title: 'No fit trial for this sample type',
+      body: 'It goes straight to buyer approval after QC.',
     };
   }
 
@@ -289,37 +344,29 @@ export function stepGuidance(
       state: 'done',
       title: status === 'APPROVED' ? 'Sample approved' : 'Sample rejected',
       body: status === 'APPROVED'
-        ? 'Ready for SKU matrix and bulk production planning.'
-        : 'Sample was rejected — create a new iteration if needed.',
+        ? 'Ready for SKUs and bulk production planning.'
+        : 'Create a new sample if the design needs another round.',
     };
   }
 
   if (stepId === activeStep) {
-    return {
-      state: 'active',
-      title: `Current stage: ${statusLabel(status)}`,
-      body: activeStepGuidanceBody(status),
-    };
+    return { state: 'active', title: `Now: ${statusLabel(status)}`, body: activeStepGuidanceBody(status) };
   }
 
   const order: SampleWorkflowStepId[] = ['brief', 'materials', 'cutting', 'stitching', 'qc', 'fit', 'approval'];
   if (order.indexOf(stepId) < order.indexOf(activeStep)) {
-    return { state: 'done', title: 'Completed', body: 'This stage is done for the current iteration.' };
+    return { state: 'done', title: 'Done', body: 'This step is finished for the current round.' };
   }
 
   const unlockHints: Record<SampleWorkflowStepId, string> = {
-    brief: 'Review tech pack and sample type before procuring materials.',
-    materials: 'Add fabric & trims, then submit for approval.',
-    cutting: 'Unlocks after materials are issued to cutting.',
-    stitching: 'Unlocks after cutting is marked complete.',
-    qc: 'Unlocks after sample stitching is complete.',
-    fit: 'Unlocks after QC pass (fit sample types only).',
-    approval: 'Unlocks after QC pass or fit trial completion.',
+    brief: 'Review the tech pack and sample type.',
+    materials: 'Add fabric and trims, then submit them for approval.',
+    cutting: 'Opens once materials are issued to cutting.',
+    stitching: 'Opens once cutting is complete.',
+    qc: 'Opens once stitching is complete.',
+    fit: 'Opens after QC passes (fit sample types only).',
+    approval: 'Opens after QC or the fit trial.',
   };
 
-  return {
-    state: 'locked',
-    title: 'Not yet active',
-    body: unlockHints[stepId],
-  };
+  return { state: 'locked', title: 'Not started yet', body: unlockHints[stepId] };
 }

@@ -12,6 +12,9 @@ const EVENT_LABELS: Record<string, string> = {
   'pr.submitted': 'PR submitted',
   'pr.approved': 'PR approved',
   'pr.rejected': 'PR rejected',
+  'pr.revision_requested': 'PR sent back for changes',
+  'po.created': 'Payment created',
+  'grn.qc_pending': 'Goods receipt awaiting QC',
   'production.materials_ready': 'Materials ready',
   'production.reserve_failed': 'Reserve failed',
   'production.partial_stock': 'Partial stock',
@@ -21,12 +24,17 @@ const EVENT_LABELS: Record<string, string> = {
   'sample.material_pending': 'Sample materials pending',
   'sample.qc_pending': 'Sample QC pending',
   'sample.approved': 'Sample approved',
+  'sample.material_approved': 'Sample materials approved',
+  'sample.qc_failed': 'Sample failed QC',
+  'sample.rejected': 'Sample rejected',
+  'sample.cancelled': 'Sample cancelled',
   'material_master.requested': 'Fabric request',
   'material_master.approved': 'Fabric added to store',
   'material_master.rejected': 'Fabric request declined',
   'approval.pending': 'Approval pending',
   'approval.approved': 'Approved',
   'approval.rejected': 'Rejected',
+  'approval.changes_requested': 'Changes requested',
   'chat.message': 'New chat message',
 };
 
@@ -36,6 +44,7 @@ const ROUTE_MAP: Record<string, string> = {
   PRODUCTION_BATCH: '/production',
   PURCHASE_REQUISITION: '/purchase',
   PURCHASE_ORDER: '/purchase?tab=po',
+  GOODS_RECEIPT: '/purchase?tab=grn',
   SAMPLE: '/samples',
   PATTERN: '/pattern',
   APPROVAL: '/approvals',
@@ -62,7 +71,7 @@ export function relativeTime(iso: string): string {
   if (hrs < 24) return `${hrs}h ago`;
   const days = Math.floor(hrs / 24);
   if (days < 7) return `${days}d ago`;
-  return new Date(iso).toLocaleDateString();
+  return new Date(iso).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
 export function notificationLink(n: NotificationItem): string | null {
@@ -77,7 +86,7 @@ export function notificationLink(n: NotificationItem): string | null {
   if (n.referenceType === 'SAMPLE') return `${base}?sampleId=${n.referenceId}`;
   if (n.referenceType === 'DESIGN') {
     if (n.eventType === 'pattern.completed') return `/samples?designId=${n.referenceId}&from=pattern`;
-    return `${base}/${n.referenceId}`;
+    return `${base}/${n.referenceId}/edit`;
   }
   return base;
 }

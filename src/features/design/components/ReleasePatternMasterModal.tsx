@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
-import { createPortal } from 'react-dom';
 import { useQuery } from '@tanstack/react-query';
-import { ErpButton, ErpSearchSelect } from '../../../components/erp';
+import { Button, ErpSearchSelect, Field, InfoBanner, Modal } from '../../../components/erp';
 import { patternApi } from '../../../services/manufacturing';
 import type { ErpUser } from '../../../types/api';
 
@@ -19,6 +18,7 @@ type Props = {
   onCancel: () => void;
 };
 
+/** Release an approved design and hand it to a pattern master. */
 export function ReleasePatternMasterModal({
   open,
   designLabel,
@@ -27,6 +27,7 @@ export function ReleasePatternMasterModal({
   onCancel,
 }: Props) {
   const [patternMasterId, setPatternMasterId] = useState('');
+  const [touched, setTouched] = useState(false);
 
   const { data: masters = [], isLoading, isError } = useQuery({
     queryKey: ['pattern-masters'],
@@ -35,45 +36,58 @@ export function ReleasePatternMasterModal({
   });
 
   useEffect(() => {
-    if (open) setPatternMasterId('');
+    if (open) {
+      setPatternMasterId('');
+      setTouched(false);
+    }
   }, [open]);
 
-  if (!open) return null;
+  // Only one pattern master at this factory: pick them so release is a single click.
+  useEffect(() => {
+    if (open && !patternMasterId && masters.length === 1) setPatternMasterId(String(masters[0]._id));
+  }, [open, masters, patternMasterId]);
 
-  const canConfirm = !!patternMasterId && !loading && !isLoading && masters.length > 0;
+  const noMasters = !isLoading && masters.length === 0;
 
-  return createPortal(
-    <div
-      className="erp-modal-overlay fixed inset-0 z-[10000] flex items-center justify-center overflow-y-auto bg-black/45 p-4"
-      onClick={onCancel}
-      role="presentation"
+  return (
+    <Modal
+      open={open}
+      onClose={onCancel}
+      size="sm"
+      title="Release to pattern"
+      description={designLabel
+        ? `${designLabel} will be locked and assigned to a pattern master for pattern, marker and grading.`
+        : 'The design will be locked and assigned to a pattern master.'}
+      footer={(
+        <>
+          <Button variant="secondary" onClick={onCancel} disabled={loading}>Cancel</Button>
+          <Button
+            loading={loading}
+            disabled={isLoading || noMasters}
+            onClick={() => {
+              setTouched(true);
+              if (patternMasterId) onConfirm(patternMasterId);
+            }}
+          >
+            Release and assign
+          </Button>
+        </>
+      )}
     >
-      <div
-        className="my-auto w-full max-w-md rounded-lg border border-[var(--erp-border)] bg-[var(--erp-surface,var(--erp-header-bg,#fff))] p-4 shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-        role="dialog"
-        aria-labelledby="release-pattern-master-title"
+      <Field
+        label="Pattern master"
+        required
+        htmlFor="release-pattern-master"
+        error={touched && !patternMasterId ? 'Choose who will develop the pattern.' : undefined}
       >
-        <h3 id="release-pattern-master-title" className="text-sm font-semibold text-erp-text-primary">
-          Release design
-        </h3>
-        <p className="mt-1.5 text-[11px] leading-snug text-erp-text-muted">
-          {designLabel
-            ? `Assign a pattern master for ${designLabel} so pattern, marker, and sampling can start.`
-            : 'Choose the next pattern master. They will own pattern, marker, grading, and the rest of development.'}
-        </p>
-
-        <label className="mt-3 mb-1 block text-[10px] font-medium text-erp-text-muted" htmlFor="release-pattern-master">
-          Pattern master
-        </label>
         <ErpSearchSelect
           id="release-pattern-master"
-          className="w-full !py-1.5 text-[11px]"
+          className="w-full"
           value={patternMasterId}
           disabled={loading || isLoading}
           loading={isLoading}
           placeholder={isLoading ? 'Loading pattern masters…' : 'Select pattern master…'}
-          searchPlaceholder="Search master…"
+          searchPlaceholder="Search pattern master…"
           emptyText="No pattern masters match"
           onChange={(id) => setPatternMasterId(id)}
           options={masters.map((u) => ({
@@ -82,30 +96,15 @@ export function ReleasePatternMasterModal({
             keywords: `${u.firstName || ''} ${u.lastName || ''} ${u.email || ''}`,
           }))}
         />
-
-        {!isLoading && masters.length === 0 && (
-          <p className="mt-2 text-[11px] text-amber-700">
-            No pattern masters for this factory. Assign the Pattern Master role in Users first.
-          </p>
-        )}
-        {isError && (
-          <p className="mt-2 text-[11px] text-red-600">Could not load pattern masters.</p>
-        )}
-
-        <div className="mt-4 flex justify-end gap-2">
-          <ErpButton variant="secondary" className="!px-3 !py-1.5 text-[11px]" onClick={onCancel} disabled={loading}>
-            Cancel
-          </ErpButton>
-          <ErpButton
-            className="!px-3 !py-1.5 text-[11px]"
-            disabled={!canConfirm}
-            onClick={() => onConfirm(patternMasterId)}
-          >
-            {loading ? 'Releasing…' : 'Release & assign'}
-          </ErpButton>
-        </div>
-      </div>
-    </div>,
-    document.body,
+      </Field>
+      {noMasters && (
+        <InfoBanner inset={false} tone="warn" className="mt-3">
+          No one in this factory has the Pattern Master role yet. Assign it in Users first.
+        </InfoBanner>
+      )}
+      {isError && (
+        <InfoBanner inset={false} tone="danger" className="mt-3">Could not load pattern masters. Try again.</InfoBanner>
+      )}
+    </Modal>
   );
 }

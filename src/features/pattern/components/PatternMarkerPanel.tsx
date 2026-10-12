@@ -1,10 +1,10 @@
 import { useMemo, useRef } from 'react';
-import { Upload, FileText } from 'lucide-react';
-import { ErpButton, ErpCard, ErpInput } from '../../../components/erp';
-import { calcMetersPerGarment, validateMarkerForm } from '../patternWorkflowUtils';
+import { Calculator, FileText, Upload } from 'lucide-react';
+import {
+  Button, ErpInput, Field, Section, Textarea,
+} from '../../../components/erp';
+import { calcMetersPerGarment } from '../patternWorkflowUtils';
 import type { PatternDevelopment } from '../../../types/api';
-
-const label = 'mb-1 block text-[10px] font-medium text-erp-text-muted';
 
 export interface MarkerFormState {
   markerLength: string;
@@ -36,28 +36,35 @@ export function emptyMarkerForm(pd?: PatternDevelopment, cuttableWidth?: string)
   };
 }
 
+/** Per-field messages for the marker form (shown after a save attempt). */
+export function markerFieldErrors(form: MarkerFormState) {
+  const errors: Partial<Record<keyof MarkerFormState, string>> = {};
+  const length = Number(form.markerLength);
+  const pieces = Number(form.piecesPerMarker);
+  if (!form.markerLength || Number.isNaN(length) || length <= 0) errors.markerLength = 'Enter the marker length in metres (more than 0).';
+  if (!form.piecesPerMarker || Number.isNaN(pieces) || pieces < 1) errors.piecesPerMarker = 'Enter how many garments the marker cuts (at least 1).';
+  return errors;
+}
+
 export function PatternMarkerPanel({
   pd,
   form,
   onChange,
-  onSave,
   onUpload,
-  saving,
   uploading,
   readOnly,
-  validationError,
+  showErrors,
 }: {
   pd?: PatternDevelopment;
   form: MarkerFormState;
   onChange: (patch: Partial<MarkerFormState>) => void;
-  onSave: () => void;
   onUpload: (file: File) => void;
-  saving?: boolean;
   uploading?: boolean;
   readOnly?: boolean;
-  validationError?: string;
+  showErrors?: boolean;
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
+  const errors = showErrors ? markerFieldErrors(form) : {};
 
   const calculatedMeters = useMemo(() => {
     const len = Number(form.markerLength);
@@ -66,163 +73,96 @@ export function PatternMarkerPanel({
     return calcMetersPerGarment(len, pieces, wastage);
   }, [form.markerLength, form.piecesPerMarker, form.wastagePercent]);
 
-  const designConsumption = pd?.calculatedConsumption?.metersPerGarment;
+  const savedConsumption = pd?.calculatedConsumption?.metersPerGarment;
 
   return (
-    <div className="space-y-3">
-      <ErpCard className="!p-3">
-        <h3 className="mb-1 text-[11px] font-semibold text-erp-text-primary">Marker layout</h3>
-        <p className="mb-3 text-[10px] text-erp-text-muted">
-          CAD nest: length and pieces give meters per garment. Cuttable width and efficiency are the mill facts the marker is nested to.
-        </p>
-
-        {pd?.marker?.fileName && (
-          <div className="mb-3 flex items-center gap-2 rounded border border-emerald-500/30 bg-emerald-500/5 px-2 py-1.5">
-            <FileText size={14} className="text-emerald-600" />
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-[11px] font-medium">{pd.marker.fileName}</p>
+    <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
+      <div className="space-y-4">
+        <Section
+          title="Marker layout"
+          description="Length and pieces from the CAD nest give metres per garment."
+          actions={!readOnly ? (
+            <>
+              <input
+                ref={fileRef}
+                type="file"
+                accept=".pdf,.dxf,.dwg,.png,.jpg,.jpeg,.plt"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  e.target.value = '';
+                  if (f) onUpload(f);
+                }}
+              />
+              <Button size="sm" variant="secondary" icon={<Upload size={14} />} loading={uploading} onClick={() => fileRef.current?.click()}>
+                {pd?.marker?.fileName ? 'Replace marker file' : 'Upload marker file'}
+              </Button>
+            </>
+          ) : undefined}
+        >
+          {pd?.marker?.fileName && (
+            <div className="mb-4 flex items-center gap-2 rounded-md border border-[var(--erp-border)] bg-[var(--erp-surface-muted)] px-3 py-2">
+              <FileText size={16} className="shrink-0 text-erp-text-muted" />
+              <span className="min-w-0 flex-1 truncate text-[13px] font-medium">{pd.marker.fileName}</span>
               {pd.marker.url && (
-                <a href={pd.marker.url} target="_blank" rel="noreferrer" className="text-[10px] text-[var(--erp-accent)] hover:underline">
-                  View marker file
+                <a href={pd.marker.url} target="_blank" rel="noreferrer" className="text-[13px] font-medium text-[var(--erp-accent)] hover:underline">
+                  View
                 </a>
               )}
             </div>
-          </div>
-        )}
-
-        {!readOnly && (
-          <div className="mb-3">
-            <input
-              ref={fileRef}
-              type="file"
-              accept=".pdf,.dxf,.dwg,.png,.jpg,.jpeg,.plt"
-              className="hidden"
-              onChange={(e) => {
-                const f = e.target.files?.[0];
-                if (!f) return;
-                if (f.size > 10 * 1024 * 1024) {
-                  e.target.value = '';
-                  return;
-                }
-                onUpload(f);
-                e.target.value = '';
-              }}
-            />
-            <ErpButton
-              variant="secondary"
-              className="!px-3 !py-1.5 text-[11px]"
-              disabled={uploading}
-              onClick={() => fileRef.current?.click()}
-            >
-              <Upload size={12} className="mr-1 inline" />
-              {uploading ? 'Uploading…' : 'Upload marker file'}
-            </ErpButton>
-          </div>
-        )}
-
-        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-          <div>
-            <label className={label}>Marker length (m)</label>
-            <ErpInput
-              type="number"
-              min={0}
-              step="0.01"
-              className="w-full !py-1.5 text-[11px]"
-              value={form.markerLength}
-              disabled={readOnly}
-              onChange={(e) => onChange({ markerLength: e.target.value })}
-            />
-          </div>
-          <div>
-            <label className={label}>Cuttable width (in / cm)</label>
-            <ErpInput
-              type="number"
-              min={0}
-              className="w-full !py-1.5 text-[11px]"
-              value={form.fabricWidth}
-              disabled={readOnly}
-              onChange={(e) => onChange({ fabricWidth: e.target.value })}
-            />
-          </div>
-          <div>
-            <label className={label}>Pieces per marker</label>
-            <ErpInput
-              type="number"
-              min={1}
-              className="w-full !py-1.5 text-[11px]"
-              value={form.piecesPerMarker}
-              disabled={readOnly}
-              onChange={(e) => onChange({ piecesPerMarker: e.target.value })}
-            />
-          </div>
-          <div>
-            <label className={label}>Nesting efficiency %</label>
-            <ErpInput
-              type="number"
-              min={0}
-              max={100}
-              className="w-full !py-1.5 text-[11px]"
-              value={form.efficiencyPercent}
-              disabled={readOnly}
-              onChange={(e) => onChange({ efficiencyPercent: e.target.value })}
-            />
-          </div>
-          <div>
-            <label className={label}>Wastage allowance %</label>
-            <ErpInput
-              type="number"
-              min={0}
-              max={100}
-              className="w-full !py-1.5 text-[11px]"
-              value={form.wastagePercent}
-              disabled={readOnly}
-              onChange={(e) => onChange({ wastagePercent: e.target.value })}
-            />
-          </div>
-        </div>
-
-        <div className="mt-3">
-          <label className={label}>Marker notes</label>
-          <textarea
-            value={form.markerNotes}
-            disabled={readOnly}
-            onChange={(e) => onChange({ markerNotes: e.target.value })}
-            placeholder="Layout notes, piece arrangement, grain direction…"
-            className="erp-input w-full resize-y !py-1.5 text-[11px]"
-            rows={2}
-          />
-        </div>
-      </ErpCard>
-
-      <ErpCard className="!border-[var(--erp-accent)]/20 !bg-[var(--erp-accent-muted)]/10 !p-3">
-        <h3 className="text-[11px] font-semibold text-erp-text-primary">Fabric consumption calculator</h3>
-        <p className="mt-1 text-[10px] text-erp-text-muted">
-          Formula: (marker length ÷ pieces per marker) × (1 + wastage%). Saving writes these meters onto the fabric consumption line used for the BOM.
-        </p>
-        <p className="mt-2 text-lg font-semibold text-[var(--erp-accent)]">
-          {calculatedMeters != null ? `${calculatedMeters} m / garment` : 'Enter length & pieces to calculate'}
-        </p>
-        {designConsumption != null && calculatedMeters != null && (
-          <p className="mt-1 text-[10px] text-erp-text-muted">
-            Saved on record: {designConsumption} m / garment
-          </p>
-        )}
-      </ErpCard>
-
-      {!readOnly && (
-        <>
-          {validationError && (
-            <p className="text-[11px] text-red-600">{validationError}</p>
           )}
-          <ErpButton
-            className="!px-4 !py-1.5 text-[11px]"
-            disabled={saving || !!validateMarkerForm(form)}
-            onClick={onSave}
-          >
-            Save marker & consumption
-          </ErpButton>
-        </>
-      )}
+
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <Field label="Marker length (m)" required error={errors.markerLength}>
+              <ErpInput type="number" min={0} step="0.01" className="tabular-nums" value={form.markerLength} disabled={readOnly} invalid={!!errors.markerLength} onChange={(e) => onChange({ markerLength: e.target.value })} />
+            </Field>
+            <Field label="Pieces per marker" required error={errors.piecesPerMarker}>
+              <ErpInput type="number" min={1} className="tabular-nums" value={form.piecesPerMarker} disabled={readOnly} invalid={!!errors.piecesPerMarker} onChange={(e) => onChange({ piecesPerMarker: e.target.value })} />
+            </Field>
+            <Field label="Wastage allowance %" hint="Cutting loss added once">
+              <ErpInput type="number" min={0} max={100} className="tabular-nums" value={form.wastagePercent} disabled={readOnly} onChange={(e) => onChange({ wastagePercent: e.target.value })} />
+            </Field>
+            <Field label="Cuttable width" hint="in or cm">
+              <ErpInput type="number" min={0} className="tabular-nums" value={form.fabricWidth} disabled={readOnly} onChange={(e) => onChange({ fabricWidth: e.target.value })} />
+            </Field>
+            <Field label="Nesting efficiency %">
+              <ErpInput type="number" min={0} max={100} className="tabular-nums" value={form.efficiencyPercent} disabled={readOnly} onChange={(e) => onChange({ efficiencyPercent: e.target.value })} />
+            </Field>
+          </div>
+
+          <Field label="Marker notes" className="mt-4">
+            <Textarea
+              value={form.markerNotes}
+              disabled={readOnly}
+              onChange={(e) => onChange({ markerNotes: e.target.value })}
+              placeholder="Layout notes, piece arrangement, grain direction…"
+              rows={2}
+            />
+          </Field>
+        </Section>
+      </div>
+
+      <Section title="Fabric per garment">
+        <div className="flex items-start gap-3">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-[var(--erp-accent-muted)] text-[var(--erp-accent)]">
+            <Calculator size={18} />
+          </span>
+          <div>
+            <p className="text-2xl font-semibold tabular-nums text-erp-text-primary">
+              {calculatedMeters != null ? `${calculatedMeters} m` : '—'}
+            </p>
+            <p className="text-xs text-erp-text-muted">
+              {calculatedMeters != null ? 'including wastage' : 'Enter length and pieces'}
+            </p>
+          </div>
+        </div>
+        {savedConsumption != null && (
+          <p className="mt-3 text-[13px] text-erp-text-secondary">Saved on record: <span className="tabular-nums">{savedConsumption} m</span></p>
+        )}
+        <p className="mt-3 text-xs leading-5 text-erp-text-muted">
+          (Length ÷ pieces) × (1 + wastage %). Saving writes metres and wastage onto the main fabric line and clears the consumption and BOM sign-offs.
+        </p>
+      </Section>
     </div>
   );
 }

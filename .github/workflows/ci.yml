@@ -1,0 +1,97 @@
+name: Frontend CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  typecheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npx tsc -b --pretty false
+
+  e2e:
+    needs: typecheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    # The suites drive the real UI against the real API, running on an in-memory MongoDB.
+    # Needs a repo secret BACKEND_REPO_TOKEN with read access to LearningSaintTech/backend.
+    env:
+      PLAYWRIGHT_BASE_URL: http://localhost:5310
+      E2E_API_URL: http://localhost:3310/api/v1
+      # Visual baselines are OS-specific (generated on Windows) — skip them in Linux CI.
+      E2E_SKIP_VISUAL: 'true'
+      E2E_SKIP_PERF: 'true'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: frontend
+
+      - uses: actions/checkout@v4
+        with:
+          repository: LearningSaintTech/backend
+          token: ${{ secrets.BACKEND_REPO_TOKEN }}
+          path: backend
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install backend
+        working-directory: backend
+        run: npm ci
+
+      - name: Install frontend + Playwright
+        working-directory: frontend
+        run: |
+          npm ci --ignore-scripts
+          npx playwright install --with-deps chromium
+
+      - name: Start backend (in-memory MongoDB + demo seed)
+        working-directory: backend
+        env:
+          PORT: '3310'
+          NODE_ENV: development
+          MONGODB_URI: mongodb://127.0.0.1:1/ci-must-not-connect
+          REDIS_URL: ''
+          EMAIL_NOTIFICATIONS: 'false'
+          AUTH_PHONE_OTP_ONLY: 'false'
+          TWOFACTOR_API_KEY: ''
+          DISABLE_RATE_LIMIT: 'true'
+          JWT_SECRET: ci-only-access-secret
+          JWT_REFRESH_SECRET: ci-only-refresh-secret
+        run: |
+          nohup node src/scripts/dev-memory.js > ../backend.log 2>&1 &
+          for i in $(seq 1 60); do curl -sf http://localhost:3310/health && break; sleep 3; done
+          curl -sf http://localhost:3310/health
+
+      - name: Start frontend (Vite dev server pointed at the local API)
+        working-directory: frontend
+        env:
+          VITE_API_URL: http://localhost:3310/api/v1
+        run: |
+          nohup npx vite --port 5310 --strictPort > ../frontend.log 2>&1 &
+          for i in $(seq 1 60); do curl -sf http://localhost:5310 >/dev/null && break; sleep 2; done
+
+      - name: End-to-end user flows
+        working-directory: frontend
+        run: npx playwright test --workers=1
+
+      - name: Upload report and logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-results
+          path: |
+            frontend/test-results
+            backend.log
+            frontend.log
+          retention-days: 7

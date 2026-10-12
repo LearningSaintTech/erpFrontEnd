@@ -1,6 +1,7 @@
-import type { ReactNode } from 'react';
-import { ErpCard } from '../../components/erp';
+import { useEffect, type ReactNode } from 'react';
+import { Button, Field, Section } from '../../components/erp';
 
+/** A settings group: card with a title, one-line description and its fields. */
 export function SettingsSection({
   title,
   description,
@@ -13,19 +14,13 @@ export function SettingsSection({
   actions?: ReactNode;
 }) {
   return (
-    <ErpCard className="!p-3">
-      <div className="mb-2 flex flex-wrap items-start justify-between gap-2">
-        <div>
-          <h3 className="text-[11px] font-medium text-erp-text-primary">{title}</h3>
-          {description && <p className="mt-0.5 text-[10px] text-erp-text-muted">{description}</p>}
-        </div>
-        {actions}
-      </div>
+    <Section title={title} description={description} actions={actions}>
       {children}
-    </ErpCard>
+    </Section>
   );
 }
 
+/** Thin wrapper kept for older call sites — prefer <Field>. */
 export function FieldLabel({
   label,
   hint,
@@ -37,11 +32,45 @@ export function FieldLabel({
   children: ReactNode;
   className?: string;
 }) {
+  return <Field label={label} hint={hint} className={className}>{children}</Field>;
+}
+
+/**
+ * Sticky bar at the bottom of a settings form. Shows "Unsaved changes" with Discard / Save
+ * while the form is dirty, and warns before the browser tab is closed.
+ */
+export function SaveBar({
+  dirty, saving, onSave, onDiscard, saveLabel = 'Save changes', disabled,
+}: {
+  dirty: boolean;
+  saving?: boolean;
+  onSave: () => void;
+  onDiscard: () => void;
+  saveLabel?: string;
+  disabled?: boolean;
+}) {
+  useEffect(() => {
+    if (!dirty) return undefined;
+    const handler = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ''; };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [dirty]);
+
+  if (!dirty && !saving) return null;
   return (
-    <label className={`block text-[10px] ${className}`}>
-      <span className="mb-0.5 block text-erp-text-muted">{label}</span>
-      {hint && <span className="mb-0.5 block text-[9px] text-erp-text-muted/80">{hint}</span>}
-      {children}
-    </label>
+    <div
+      className="sticky bottom-0 z-[var(--erp-z-sticky)] -mx-1 mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[var(--erp-border)] bg-[var(--erp-surface)] py-3 pl-4 pr-16 shadow-erp-md sm:pr-20"
+      role="region"
+      aria-label="Unsaved changes"
+    >
+      <p className="flex items-center gap-2 text-[13px] font-medium text-erp-text-primary">
+        <span className="h-2 w-2 rounded-full bg-[var(--erp-warning-solid)]" aria-hidden="true" />
+        You have unsaved changes
+      </p>
+      <div className="flex items-center gap-2">
+        <Button variant="secondary" size="sm" onClick={onDiscard} disabled={saving}>Discard</Button>
+        <Button size="sm" onClick={onSave} loading={saving} disabled={disabled}>{saveLabel}</Button>
+      </div>
+    </div>
   );
 }

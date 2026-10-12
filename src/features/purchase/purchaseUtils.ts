@@ -92,6 +92,8 @@ export function historyPurchaseLabel(linkedPo?: PurchaseOrder, grns?: Array<{ st
   if (completed) return 'Received — Finance can mark paid once invoice is on GRN';
   if (pendingQc) return 'GRN awaiting incoming QC';
   if (grns?.length) return 'GRN in progress — upload invoice';
+  if (linkedPo.status === 'CANCELLED') return 'Payment cancelled';
+  if (linkedPo.status === 'CLOSED') return 'Short-closed — partial quantity received';
   if (['RECEIVED'].includes(linkedPo.status)) return 'Fully received — attach invoice if missing';
   if (['SENT', 'PARTIAL', 'APPROVED'].includes(linkedPo.status)) return 'Open payment — receive GRN and upload invoice';
   return `Payment ${linkedPo.status.replace(/_/g, ' ')}`;
@@ -127,17 +129,21 @@ export function workflowHint(entity: 'pr' | 'po' | 'grn', status: string) {
     if (status === 'APPROVED') return 'Approved — create a payment after agreeing with the supplier on call';
     if (status === 'CONVERTED') return 'Converted to payment';
     if (status === 'REJECTED') return 'Rejected — revise lines if needed, then resubmit';
+    if (status === 'CANCELLED') return 'Cancelled — no payment will be created';
   }
   if (entity === 'po') {
     if (status === 'DRAFT') return 'Approve this payment so GRN can be recorded';
     if (status === 'APPROVED') return 'Record GRN and upload the supplier invoice, then Finance marks paid';
     if (status === 'SENT' || status === 'PARTIAL') return 'Receive goods (GRN) and upload invoice';
     if (status === 'RECEIVED') return 'Fully received — complete any open GRN QC';
+    if (status === 'CLOSED') return 'Short-closed — the unreceived balance is no longer expected';
+    if (status === 'CANCELLED') return 'Cancelled — the PR is back to Approved';
   }
   if (entity === 'grn') {
     if (status === 'DRAFT') return 'Upload invoice, then submit for incoming QC';
     if (status === 'PENDING_QC') return 'Quality: inspect → passed qty → unallocated dock stock';
     if (status === 'COMPLETED') return 'Stock received — Finance can mark paid once the invoice is attached';
+    if (status === 'CANCELLED') return 'Cancelled — quantities returned to the payment';
   }
   return '';
 }
@@ -156,10 +162,22 @@ export function purchaseSuccessMessage(type: string, status?: string): string {
     case 'markPaid': return 'Marked paid';
     case 'createGrn': return 'GRN created — attach invoice if not already, then submit QC';
     case 'submitGrn': return 'GRN submitted — complete incoming QC in Quality to receipt stock';
-    case 'rfq': return 'RFQ created';
-    case 'sendRfq': return 'RFQ sent to suppliers';
-    case 'quote': return 'Quotation recorded';
-    case 'selectQuote': return 'Quotation selected';
+    case 'cancelGrn': return 'GRN cancelled — quantities are open on the payment again';
+    case 'cancelPo': return 'Payment cancelled — the PR is back to Approved';
+    case 'closePo': return 'Payment short-closed';
+    case 'cancelPr': return 'PR cancelled';
+    case 'requestPrChanges': return 'Changes requested — PR is back with the requester as Draft';
     default: return 'Updated';
   }
+}
+
+/** PO states that can still receive goods (GRN). */
+export const PO_OPEN_STATUSES = ['APPROVED', 'SENT', 'PARTIAL'];
+
+export function canCancelPo(po: PurchaseOrder) {
+  return ['APPROVED', 'SENT'].includes(po.status) && po.paymentStatus !== 'PAID';
+}
+
+export function canClosePo(po: PurchaseOrder) {
+  return po.status === 'PARTIAL';
 }

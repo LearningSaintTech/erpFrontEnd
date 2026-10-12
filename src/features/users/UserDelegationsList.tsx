@@ -1,124 +1,102 @@
-import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { ArrowRight, Calendar } from 'lucide-react';
+import { ArrowRight, ArrowRightLeft, X } from 'lucide-react';
 import { usersApi } from '../../services/admin';
 import type { Delegation, ErpUser } from '../../types/api';
-import { ErpButton } from '../../components/erp';
-import { UserAvatar } from './UserAvatar';
-import { userDisplayName } from './userUtils';
-import { ConfirmDialog } from './ConfirmDialog';
+import {
+  Badge, EmptyState, IconButton, Skeleton, useConfirm,
+} from '../../components/erp';
+import { permissionLabel, userDisplayName } from './userUtils';
+import { formatDateTime } from '../../utils/format';
 
-function delegationUser(u?: ErpUser | string) {
+export function delegationUser(u?: ErpUser | string) {
   if (!u) return { name: '—', email: '', user: undefined as ErpUser | undefined };
   if (typeof u === 'string') return { name: u, email: '', user: undefined };
   return { name: userDisplayName(u), email: u.email, user: u };
 }
 
+export function formatRange(start?: string, end?: string) {
+  const f = (d?: string) => formatDateTime(d);
+  return `${f(start)} → ${f(end)}`;
+}
+
+export function useRevokeDelegation(onRevoked?: () => void) {
+  const qc = useQueryClient();
+  const confirm = useConfirm();
+  const revoke = useMutation({
+    mutationFn: (id: string) => usersApi.revokeDelegation(id),
+    meta: { successMessage: 'Delegation revoked' },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['user-delegations'] });
+      qc.invalidateQueries({ queryKey: ['delegations'] });
+      onRevoked?.();
+    },
+  });
+  const ask = async (d: Delegation) => {
+    const ok = await confirm({
+      title: 'Revoke this delegation?',
+      message: `${delegationUser(d.delegateId).name} immediately loses the ${d.permissions?.length ?? 0} borrowed permissions.`,
+      confirmLabel: 'Revoke',
+      tone: 'danger',
+    });
+    if (ok) revoke.mutate(d._id);
+  };
+  return { ask, isPending: revoke.isPending };
+}
+
+/** Delegations given or received by one user (inside the user drawer). */
 export function UserDelegationsList({
   userId,
   delegations,
   isLoading,
   canUpdate,
-  onError,
-  onSuccess,
 }: {
   userId: string;
   delegations: Delegation[];
   isLoading: boolean;
   canUpdate: boolean;
-  onError: (msg: string) => void;
-  onSuccess: (msg: string) => void;
 }) {
-  const qc = useQueryClient();
-  const [revokeId, setRevokeId] = useState<string | null>(null);
-
-  const revoke = useMutation({
-    mutationFn: (id: string) => usersApi.revokeDelegation(id),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['user-delegations', userId] });
-      qc.invalidateQueries({ queryKey: ['delegations'] });
-      setRevokeId(null);
-      onSuccess('Delegation revoked');
-    },
-    onError: (e: Error) => onError(e.message),
-  });
+  const revoke = useRevokeDelegation();
 
   if (isLoading) {
-    return <p className="text-erp-text-muted">Loading delegations…</p>;
+    return <div className="space-y-2"><Skeleton height={48} /><Skeleton height={48} /></div>;
   }
 
   if (delegations.length === 0) {
-    return <p className="text-erp-text-muted">No active delegations for this user at the selected factory.</p>;
+    return <EmptyState compact icon={ArrowRightLeft} title="No active delegations" description="Permissions lent to or from this user at the selected factory appear here." />;
   }
 
   return (
-    <>
-      <ul className="space-y-1.5">
-        {delegations.map((d) => {
-          const from = delegationUser(d.delegatorId);
-          const to = delegationUser(d.delegateId);
-          const isDelegator = (typeof d.delegatorId === 'string' ? d.delegatorId : d.delegatorId?._id) === userId;
-          const isDelegate = (typeof d.delegateId === 'string' ? d.delegateId : d.delegateId?._id) === userId;
-
-          return (
-            <li
-              key={d._id}
-              className="rounded-lg border border-[var(--erp-border)] bg-[var(--erp-surface)] px-2.5 py-2"
-            >
-              <div className="mb-1.5 flex flex-wrap items-center gap-2">
-                <span className="rounded bg-[var(--erp-accent)]/10 px-1.5 py-px text-[9px] font-medium uppercase tracking-wide text-[var(--erp-accent)]">
-                  {isDelegator ? 'Delegated out' : isDelegate ? 'Received' : 'Delegation'}
-                </span>
-                {from.user && <UserAvatar user={from.user} />}
-                <span className="font-medium">{from.name}</span>
-                <ArrowRight size={11} className="text-erp-text-muted" />
-                {to.user && <UserAvatar user={to.user} />}
-                <span className="font-medium">{to.name}</span>
-                {canUpdate && (
-                  <ErpButton
-                    variant="secondary"
-                    className="!ml-auto !px-1.5 !py-0.5 text-[10px]"
-                    disabled={revoke.isPending}
-                    onClick={(e) => { e.stopPropagation(); setRevokeId(d._id); }}
-                  >
-                    Revoke
-                  </ErpButton>
-                )}
+    <ul className="divide-y divide-[var(--erp-border)] rounded-lg border border-[var(--erp-border)]">
+      {delegations.map((d) => {
+        const from = delegationUser(d.delegatorId);
+        const to = delegationUser(d.delegateId);
+        const isDelegator = (typeof d.delegatorId === 'string' ? d.delegatorId : d.delegatorId?._id) === userId;
+        const perms = d.permissions ?? [];
+        return (
+          <li key={d._id} className="px-3 py-2.5">
+            <div className="flex items-start gap-2">
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-1.5 text-[13px]">
+                  <Badge tone={isDelegator ? 'info' : 'success'} dot={false}>{isDelegator ? 'Lent' : 'Received'}</Badge>
+                  <span className="font-medium text-erp-text-primary">{from.name}</span>
+                  <ArrowRight size={14} className="text-erp-text-muted" aria-hidden="true" />
+                  <span className="font-medium text-erp-text-primary">{to.name}</span>
+                </div>
+                <p className="mt-1 text-xs text-erp-text-muted">{formatRange(d.startDate, d.endDate)}</p>
+                <p className="mt-1 text-xs text-erp-text-secondary" title={perms.join(', ')}>
+                  {perms.slice(0, 4).map(permissionLabel).join(', ')}
+                  {perms.length > 4 && ` +${perms.length - 4} more`}
+                </p>
               </div>
-              <div className="mb-1 flex items-center gap-1 text-[10px] text-erp-text-muted">
-                <Calendar size={10} />
-                {d.startDate ? new Date(d.startDate).toLocaleString() : '—'}
-                {' — '}
-                {d.endDate ? new Date(d.endDate).toLocaleString() : '—'}
-              </div>
-              <div className="flex flex-wrap gap-1">
-                {(d.permissions ?? []).slice(0, 8).map((p) => (
-                  <span
-                    key={p}
-                    className="rounded bg-[var(--erp-accent)]/10 px-1.5 py-px font-mono text-[9px] text-[var(--erp-accent)]"
-                  >
-                    {p}
-                  </span>
-                ))}
-                {(d.permissions?.length ?? 0) > 8 && (
-                  <span className="text-[10px] text-erp-text-muted">+{(d.permissions?.length ?? 0) - 8} more</span>
-                )}
-              </div>
-            </li>
-          );
-        })}
-      </ul>
-
-      <ConfirmDialog
-        open={!!revokeId}
-        title="Revoke delegation"
-        message="The delegate will immediately lose these temporary permissions."
-        confirmLabel="Revoke"
-        danger
-        loading={revoke.isPending}
-        onConfirm={() => revokeId && revoke.mutate(revokeId)}
-        onCancel={() => setRevokeId(null)}
-      />
-    </>
+              {canUpdate && (
+                <IconButton aria-label="Revoke delegation" size="sm" onClick={() => revoke.ask(d)} disabled={revoke.isPending}>
+                  <X size={16} />
+                </IconButton>
+              )}
+            </div>
+          </li>
+        );
+      })}
+    </ul>
   );
 }

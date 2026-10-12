@@ -1,6 +1,11 @@
-import { useEffect, useState, type ReactNode } from 'react';
-import { createPortal } from 'react-dom';
-import { ErpButton, ErpInput } from '../../components/erp';
+import { useEffect, useState } from 'react';
+import { Button, ErpInput, Field, Modal } from '../../components/erp';
+
+/*
+ * Legacy controlled dialogs still imported by other feature pages (BOM, inventory, production,
+ * purchase, quality, SKU, warehouse…). Rebuilt on the shared Modal so they get focus trapping,
+ * Esc handling and consistent styling. New code should use `useConfirm()` / `usePrompt()`.
+ */
 
 type ConfirmDialogProps = {
   open: boolean;
@@ -14,46 +19,28 @@ type ConfirmDialogProps = {
   onCancel: () => void;
 };
 
-function ModalOverlay({ children, onBackdropClick }: { children: ReactNode; onBackdropClick: () => void }) {
-  return createPortal(
-    <div
-      className="erp-modal-overlay fixed inset-0 z-[10000] flex items-center justify-center overflow-y-auto bg-black/45 p-4"
-      onClick={onBackdropClick}
-      role="presentation"
-    >
-      <div className="my-auto flex w-full max-w-sm items-center justify-center" onClick={(e) => e.stopPropagation()}>
-        {children}
-      </div>
-    </div>,
-    document.body,
-  );
-}
-
 export function ConfirmDialog({
   open, title, message, confirmLabel = 'Confirm', cancelLabel = 'Cancel',
   danger, loading, onConfirm, onCancel,
 }: ConfirmDialogProps) {
-  if (!open) return null;
-
   return (
-    <ModalOverlay onBackdropClick={onCancel}>
-      <div className="w-full rounded-lg border border-[var(--erp-border)] bg-[var(--erp-surface,var(--erp-header-bg,#fff))] p-4 shadow-2xl">
-        <h3 className="text-sm font-semibold text-erp-text-primary">{title}</h3>
-        <p className="mt-1.5 text-[11px] leading-snug text-erp-text-muted">{message}</p>
-        <div className="mt-4 flex justify-end gap-2">
-          <ErpButton variant="secondary" className="!px-3 !py-1.5 text-[11px]" onClick={onCancel} disabled={loading}>
-            {cancelLabel}
-          </ErpButton>
-          <ErpButton
-            className={`!px-3 !py-1.5 text-[11px] ${danger ? '!bg-red-600 hover:!bg-red-700' : ''}`}
-            onClick={onConfirm}
-            disabled={loading}
-          >
-            {loading ? 'Working…' : confirmLabel}
-          </ErpButton>
-        </div>
-      </div>
-    </ModalOverlay>
+    <Modal
+      open={open}
+      onClose={() => { if (!loading) onCancel(); }}
+      title={title}
+      size="sm"
+      role="alertdialog"
+      footer={(
+        <>
+          <Button variant="secondary" onClick={onCancel} disabled={loading}>{cancelLabel}</Button>
+          <Button variant={danger ? 'danger-solid' : 'primary'} onClick={onConfirm} loading={loading}>
+            {confirmLabel}
+          </Button>
+        </>
+      )}
+    >
+      <p className="text-sm leading-relaxed text-erp-text-secondary">{message}</p>
+    </Modal>
   );
 }
 
@@ -75,40 +62,42 @@ export function PromptDialog({
   confirmLabel = 'Save', loading, onConfirm, onCancel,
 }: PromptDialogProps) {
   const [value, setValue] = useState('');
+  const [touched, setTouched] = useState(false);
 
   useEffect(() => {
-    if (open) setValue('');
+    if (open) { setValue(''); setTouched(false); }
   }, [open]);
 
-  if (!open) return null;
-
   const valid = value.length >= minLength;
+  const submit = () => {
+    setTouched(true);
+    if (valid) onConfirm(value);
+  };
 
   return (
-    <ModalOverlay onBackdropClick={onCancel}>
-      <div className="w-full rounded-lg border border-[var(--erp-border)] bg-[var(--erp-surface,var(--erp-header-bg,#fff))] p-4 shadow-2xl">
-        <h3 className="text-sm font-semibold text-erp-text-primary">{title}</h3>
-        <p className="mt-1 text-[11px] text-erp-text-muted">{message}</p>
-        <label className="mt-3 block text-[10px]">
-          <span className="mb-0.5 block text-erp-text-muted">{label}</span>
-          <ErpInput
-            type={type}
-            value={value}
-            onChange={(e) => setValue(e.target.value)}
-            className="!py-1.5 !text-[11px] w-full"
-            autoFocus
-            onKeyDown={(e) => e.key === 'Enter' && valid && onConfirm(value)}
-          />
-        </label>
-        <div className="mt-4 flex justify-end gap-2">
-          <ErpButton variant="secondary" className="!px-3 !py-1.5 text-[11px]" onClick={onCancel} disabled={loading}>
-            Cancel
-          </ErpButton>
-          <ErpButton className="!px-3 !py-1.5 text-[11px]" disabled={!valid || loading} onClick={() => onConfirm(value)}>
-            {loading ? 'Saving…' : confirmLabel}
-          </ErpButton>
-        </div>
-      </div>
-    </ModalOverlay>
+    <Modal
+      open={open}
+      onClose={() => { if (!loading) onCancel(); }}
+      title={title}
+      description={message}
+      size="sm"
+      closeOnOverlayClick={false}
+      footer={(
+        <>
+          <Button variant="secondary" onClick={onCancel} disabled={loading}>Cancel</Button>
+          <Button onClick={submit} loading={loading}>{confirmLabel}</Button>
+        </>
+      )}
+    >
+      <Field label={label} error={touched && !valid ? `Enter at least ${minLength} characters.` : undefined}>
+        <ErpInput
+          type={type}
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          autoFocus
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } }}
+        />
+      </Field>
+    </Modal>
   );
 }

@@ -69,10 +69,14 @@ export function transactionLabel(type: string) {
     || type.replace(/_/g, ' ').toLowerCase().replace(/^\w/, (c) => c.toUpperCase());
 }
 
-export function transactionReferenceLabel(tx: Pick<InventoryTransaction, 'referenceType' | 'referenceId'>) {
+export function transactionReferenceLabel(tx: Pick<InventoryTransaction, 'referenceType' | 'referenceId'> & { referenceNumber?: string }) {
   if (!tx.referenceType) return '—';
+  // "GOODS_RECEIPT" → "Goods receipt"; the API resolves document numbers (GRN-…, PO-…, bin code).
+  const type = tx.referenceType.replace(/_/g, ' ').toLowerCase().replace(/^\w/, (c) => c.toUpperCase())
+    .replace(/\b(fg|qc|grn|po|pr|bom|capa)\b/gi, (m) => m.toUpperCase());
+  if (tx.referenceNumber) return `${type} ${tx.referenceNumber}`;
   const id = tx.referenceId ? ` …${tx.referenceId.slice(-6)}` : '';
-  return `${tx.referenceType.replace(/_/g, ' ')}${id}`;
+  return `${type}${id}`;
 }
 
 export function stockWorkflowHint(balance: InventoryBalance): string {
@@ -204,7 +208,5 @@ export function performerName(performedBy: InventoryTransaction['performedBy']) 
   return parts.length ? parts.join(' ') : performedBy.email || '—';
 }
 
-export function formatDateTime(value?: string) {
-  if (!value) return '—';
-  return new Date(value).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' });
-}
+/** "11 Oct 2026, 2:59 am" — never the browser default ("10/11/26" reads as 10 November). */
+export { formatDateTime } from '../../utils/format';

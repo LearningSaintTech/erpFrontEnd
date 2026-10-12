@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Shield } from 'lucide-react';
-import { ErpCard, ErpPageHeader, ErpTabs } from '../../components/erp';
+import { InfoBanner, PageHeader, Tabs } from '../../components/erp';
 import { useChat } from '../../app/providers/ChatProvider';
 import { useQuery } from '@tanstack/react-query';
 import { chatApi } from '../../services/chat';
@@ -22,19 +22,19 @@ export function ChatPage() {
     }
   }, [roomParam, selectRoom, openChat]);
 
-  const tabs = [{ id: 'inbox', label: `Inbox${stats?.unreadTotal ? ` (${stats.unreadTotal})` : ''}` }];
-  if (canModerate) tabs.push({ id: 'moderate', label: 'Admin oversight' });
+  const tabs: { id: string; label: string; count?: number | null }[] = [
+    { id: 'inbox', label: 'Inbox', count: stats?.unreadTotal ? stats.unreadTotal : null },
+  ];
+  if (canModerate) tabs.push({ id: 'moderate', label: 'All conversations' });
 
   return (
     <div className="flex h-[calc(100vh-8rem)] flex-col">
-      <ErpPageHeader
-        title="Messages"
-        subtitle="Factory team chat — direct messages and groups. Use the header icon to open quick chat from anywhere."
-      />
+      <PageHeader title="Messages" description="Direct messages and group chats with your factory team." />
 
       {tabs.length > 1 && (
         <div className="mb-3">
-          <ErpTabs
+          <Tabs
+            ariaLabel="Message views"
             tabs={tabs}
             active={view}
             onChange={(id) => {
@@ -46,12 +46,9 @@ export function ChatPage() {
       )}
 
       {view === 'moderate' && (
-        <ErpCard className="mb-3 !border-amber-500/30 !bg-amber-500/5 !p-2">
-          <p className="flex items-center gap-2 text-[11px] text-amber-700">
-            <Shield className="h-3.5 w-3.5" />
-            Moderation view — you can read any factory conversation. Access is audited.
-          </p>
-        </ErpCard>
+        <InfoBanner inset={false} tone="warn" icon={<Shield size={16} className="mt-0.5 shrink-0" />} className="mb-3">
+          You can read every conversation at this factory. Each view is recorded in the audit log.
+        </InfoBanner>
       )}
 
       <ChatMessenger mode="page" view={view} onViewChange={setView} className="min-h-0 flex-1" />

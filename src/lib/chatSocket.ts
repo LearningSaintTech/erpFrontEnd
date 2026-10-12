@@ -5,7 +5,9 @@ let socket: Socket | null = null;
 let activeFactoryId: string | null = null;
 
 export function connectChatSocket(token: string, factoryId: string): Socket {
-  if (socket?.connected && activeFactoryId === factoryId) {
+  // Reuse while still handshaking too (`active`): replacing a connecting socket dropped the
+  // listeners NotificationProvider/ChatProvider had already attached to it.
+  if (socket && activeFactoryId === factoryId && (socket.connected || socket.active)) {
     return socket;
   }
   socket?.disconnect();

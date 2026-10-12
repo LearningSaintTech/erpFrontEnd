@@ -1,6 +1,9 @@
-import { Link } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { ErpButton, ErpStatusBadge } from '../../../components/erp';
+import { ArrowRight, Scissors } from 'lucide-react';
+import {
+  Button, EmptyState, ErpDataTable, InfoBanner, Section, StatusBadge,
+} from '../../../components/erp';
 import { patternApi } from '../../../services/manufacturing';
 import { useAuth } from '../../../app/providers/AuthProvider';
 import { hasPermission } from '../../../utils/permissions';
@@ -8,6 +11,7 @@ import { useDesignForm } from '../DesignFormContext';
 import { sampleTypeLabel, statusLabel } from '../../sampling/sampleUtils';
 
 export function SamplingTab() {
+  const navigate = useNavigate();
   const { samples, design, designId } = useDesignForm();
   const { permissions, user } = useAuth();
   const isSuperAdmin = !!user?.isSuperAdmin;
@@ -26,79 +30,67 @@ export function SamplingTab() {
   const hasApprovedSample = samples.some((s) => s.status === 'APPROVED');
   const activeSample = samples.find((s) => !['APPROVED', 'REJECTED'].includes(s.status));
 
+  let next: { text: string; action?: { label: string; to: string } } | null = null;
+  if (designId && !released) {
+    next = { text: 'Pattern and sampling start once this design is released.' };
+  } else if (released && !patternComplete) {
+    next = {
+      text: patternDev ? 'Pattern development is in progress.' : 'Waiting for a pattern master to be assigned.',
+      action: canPattern ? { label: 'Open pattern workspace', to: `/pattern?designId=${designId}` } : undefined,
+    };
+  } else if (patternComplete && !hasApprovedSample) {
+    next = {
+      text: activeSample ? `Sample ${activeSample.sampleCode} is in progress.` : 'Pattern is complete — a sample can be created.',
+      action: canSample
+        ? { label: activeSample ? 'Open sample' : 'Create sample', to: activeSample ? `/samples?sampleId=${activeSample._id}` : `/samples?designId=${designId}&from=pattern` }
+        : undefined,
+    };
+  } else if (hasApprovedSample) {
+    next = { text: 'Sample approved — generate SKUs and build the BOM.', action: { label: 'Open SKUs', to: '/products/skus' } };
+  }
+
   return (
     <div className="space-y-4">
-      <p className="text-sm text-erp-text-muted">
-        Samples for this design. Pattern development must be <strong>completed</strong> before creating samples.
-      </p>
-
-      {released && canPattern && !patternComplete && designId && (
-        <Link to={`/pattern?designId=${designId}`} className="text-sm text-[var(--erp-accent)] hover:underline">
-          Continue pattern verification →
-        </Link>
+      {next && (
+        <InfoBanner
+          inset={false}
+          tone={hasApprovedSample ? 'success' : 'info'}
+          action={next.action ? (
+            <Button size="sm" variant="secondary" iconRight={<ArrowRight size={14} />} onClick={() => navigate(next!.action!.to)}>
+              {next.action.label}
+            </Button>
+          ) : undefined}
+        >
+          {next.text}
+        </InfoBanner>
       )}
 
-      {released && patternComplete && canSample && designId && (
-        <div className="flex flex-wrap items-center gap-2">
-          <Link to={`/samples?designId=${designId}`} className="text-sm text-[var(--erp-accent)] hover:underline">
-            {activeSample ? 'Open sample workspace →' : 'Create sample →'}
-          </Link>
-          {activeSample && (
-            <Link to={`/samples?sampleId=${activeSample._id}`}>
-              <ErpButton variant="secondary" className="!px-2 !py-1 text-[10px]">
-                {activeSample.sampleCode}
-              </ErpButton>
-            </Link>
-          )}
-        </div>
-      )}
-
-      {hasApprovedSample && (
-        <p className="text-xs text-emerald-700">
-          Sample approved — proceed to the SKU matrix tab or{' '}
-          <Link to="/products/skus" className="font-medium text-[var(--erp-accent)] hover:underline">open SKU workspace</Link>.
-        </p>
-      )}
-
-      {samples.length === 0 ? (
-        <p className="text-sm text-erp-text-muted">No samples yet for this design.</p>
-      ) : (
-        <table className="w-full text-left text-sm">
-          <thead className="border-b bg-transparent">
-            <tr>
-              <th className="px-3 py-2">Sample #</th>
-              <th className="px-3 py-2">Type</th>
-              <th className="px-3 py-2">Status</th>
-              <th className="px-3 py-2">Comments</th>
-              <th className="px-3 py-2" />
-            </tr>
-          </thead>
-          <tbody>
-            {samples.map((s) => (
-              <tr key={s._id} className="border-b">
-                <td className="px-3 py-2 font-mono text-xs">{s.sampleCode}</td>
-                <td className="px-3 py-2">{sampleTypeLabel(s.sampleType)}</td>
-                <td className="px-3 py-2">
-                  <ErpStatusBadge status={s.status} label={statusLabel(s.status)} />
-                </td>
-                <td className="px-3 py-2 text-erp-text-secondary">{s.comments || '—'}</td>
-                <td className="px-3 py-2 text-right">
-                  <Link to={`/samples?sampleId=${s._id}`} className="text-xs text-[var(--erp-accent)] hover:underline">
-                    Open
-                  </Link>
-                </td>
+      <Section title="Samples" description="Every sample made for this design." flush={samples.length > 0}>
+        {samples.length === 0 ? (
+          <EmptyState compact icon={Scissors} title="No samples yet" description="Samples appear here once the sampling team creates them." />
+        ) : (
+          <ErpDataTable>
+            <thead>
+              <tr>
+                <th>Sample</th>
+                <th>Type</th>
+                <th>Status</th>
+                <th>Comments</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-
-      {designId && !released && (
-        <p className="text-xs text-amber-700">Release this design to enable pattern development and sampling.</p>
-      )}
-      {released && !patternComplete && (
-        <p className="text-xs text-amber-700">Complete pattern verification before creating samples.</p>
-      )}
+            </thead>
+            <tbody>
+              {samples.map((s) => (
+                <tr key={s._id} className="erp-row-clickable" onClick={() => navigate(`/samples?sampleId=${s._id}`)}>
+                  <td className="erp-cell-primary font-mono">{s.sampleCode}</td>
+                  <td>{sampleTypeLabel(s.sampleType)}</td>
+                  <td><StatusBadge status={s.status} label={statusLabel(s.status)} /></td>
+                  <td className="text-erp-text-secondary">{s.comments || '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </ErpDataTable>
+        )}
+      </Section>
     </div>
   );
 }

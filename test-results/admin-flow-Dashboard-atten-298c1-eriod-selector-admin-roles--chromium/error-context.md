@@ -1,0 +1,228 @@
+# Instructions
+
+- Following Playwright test failed.
+- Explain why, be concise, respect Playwright best practices.
+- Provide a snippet of code with the fix, if possible.
+
+# Test info
+
+- Name: admin-flow.spec.ts >> Dashboard: attention cards deep-link, KPIs and period selector (admin + roles)
+- Location: e2e\admin-flow.spec.ts:22:1
+
+# Error details
+
+```
+Test timeout of 120000ms exceeded.
+```
+
+# Page snapshot
+
+```yaml
+- generic [active] [ref=e1]:
+  - generic [ref=e4]:
+    - link "Skip to content" [ref=e5] [cursor=pointer]:
+      - /url: "#erp-main"
+    - complementary "Sidebar" [ref=e6]:
+      - link "ERP Factory — dashboard" [ref=e8] [cursor=pointer]:
+        - /url: /
+        - generic [ref=e9]: EF
+        - generic [ref=e10]:
+          - generic [ref=e11]: ERP Factory
+          - generic [ref=e12]: Factory workspace
+      - navigation "Main" [ref=e13]:
+        - list [ref=e15]:
+          - listitem [ref=e16]:
+            - link "Dashboard" [ref=e17] [cursor=pointer]:
+              - /url: /
+              - img [ref=e18]
+              - generic [ref=e23]: Dashboard
+          - listitem [ref=e24]:
+            - link "Approvals" [ref=e25] [cursor=pointer]:
+              - /url: /approvals
+              - img [ref=e26]
+              - generic [ref=e29]: Approvals
+        - generic [ref=e30]:
+          - paragraph [ref=e31]: Develop
+          - list [ref=e32]:
+            - listitem [ref=e33]:
+              - link "Samples" [ref=e34] [cursor=pointer]:
+                - /url: /samples
+                - img [ref=e35]
+                - generic [ref=e37]: Samples
+        - generic [ref=e38]:
+          - paragraph [ref=e39]: Procure
+          - list [ref=e40]:
+            - listitem [ref=e41]:
+              - link "Purchase" [ref=e42] [cursor=pointer]:
+                - /url: /purchase
+                - img [ref=e43]
+                - generic [ref=e47]: Purchase
+            - listitem [ref=e48]:
+              - link "Vendors" [ref=e49] [cursor=pointer]:
+                - /url: /vendors
+                - img [ref=e50]
+                - generic [ref=e54]: Vendors
+        - generic [ref=e55]:
+          - paragraph [ref=e56]: Stock
+          - list [ref=e57]:
+            - listitem [ref=e58]:
+              - link "Inventory" [ref=e59] [cursor=pointer]:
+                - /url: /inventory
+                - img [ref=e60]
+                - generic [ref=e70]: Inventory
+            - listitem [ref=e71]:
+              - button "Warehouse" [ref=e73] [cursor=pointer]:
+                - img [ref=e74]
+                - generic [ref=e77]: Warehouse
+                - img [ref=e78]
+        - generic [ref=e80]:
+          - paragraph [ref=e81]: Insights
+          - list [ref=e82]:
+            - listitem [ref=e83]:
+              - link "Notifications" [ref=e84] [cursor=pointer]:
+                - /url: /notifications
+                - img [ref=e85]
+                - generic [ref=e88]: Notifications
+            - listitem [ref=e89]:
+              - link "Messages" [ref=e90] [cursor=pointer]:
+                - /url: /chat
+                - img [ref=e91]
+                - generic [ref=e93]: Messages
+        - generic [ref=e94]:
+          - paragraph [ref=e95]: Administration
+          - list [ref=e96]:
+            - listitem [ref=e97]:
+              - link "Approval workflows" [ref=e98] [cursor=pointer]:
+                - /url: /approvals?tab=workflows
+                - img [ref=e99]
+                - generic [ref=e103]: Approval workflows
+      - button "Collapse sidebar" [ref=e106] [cursor=pointer]:
+        - img [ref=e107]
+        - generic [ref=e110]: Collapse
+    - generic [ref=e111]:
+      - banner [ref=e112]:
+        - navigation "Breadcrumb" [ref=e114]:
+          - list [ref=e115]:
+            - listitem [ref=e116]: Dashboard
+        - button "Search pages and actions" [ref=e117] [cursor=pointer]:
+          - img [ref=e118]
+          - generic [ref=e121]: Search…
+          - generic [ref=e122]: Ctrl K
+        - generic "F01 — Main Production Unit" [ref=e123]: Main Production Unit
+        - generic [ref=e124]:
+          - button "Messages" [ref=e125] [cursor=pointer]:
+            - img [ref=e126]
+          - button "Notifications, 2 unread" [ref=e129] [cursor=pointer]:
+            - img [ref=e130]
+            - generic [ref=e133]: "2"
+        - button "Account menu for Store Keeper" [ref=e135] [cursor=pointer]:
+          - generic [ref=e136]: SK
+          - img [ref=e137]
+      - main [ref=e139]:
+        - generic [ref=e140]:
+          - generic [ref=e143]:
+            - heading "Good evening, Store" [level=1] [ref=e145]
+            - paragraph [ref=e146]: Here is what needs attention at Main Production Unit today.
+          - generic [ref=e147]:
+            - generic [ref=e149]:
+              - heading "Needs your attention" [level=3] [ref=e150]
+              - paragraph [ref=e151]: 3 queues need action.
+            - list [ref=e153]:
+              - listitem [ref=e154]:
+                - link "Stock to put away Received stock waiting on the dock for a bin 3" [ref=e155] [cursor=pointer]:
+                  - /url: /inventory?tab=stock
+                  - img [ref=e157]
+                  - generic [ref=e159]:
+                    - generic [ref=e160]: Stock to put away
+                    - generic [ref=e161]: Received stock waiting on the dock for a bin
+                  - generic [ref=e162]: "3"
+                  - img [ref=e163]
+              - listitem [ref=e165]:
+                - link "Receipts to send to QC Goods received but not submitted for inspection 1" [ref=e166] [cursor=pointer]:
+                  - /url: /purchase?tab=grn
+                  - img [ref=e168]
+                  - generic [ref=e173]:
+                    - generic [ref=e174]: Receipts to send to QC
+                    - generic [ref=e175]: Goods received but not submitted for inspection
+                  - generic [ref=e176]: "1"
+                  - img [ref=e177]
+              - listitem [ref=e179]:
+                - link "Sample materials to issue Approved requests waiting for the store 1" [ref=e180] [cursor=pointer]:
+                  - /url: /samples
+                  - img [ref=e182]
+                  - generic [ref=e188]:
+                    - generic [ref=e189]: Sample materials to issue
+                    - generic [ref=e190]: Approved requests waiting for the store
+                  - generic [ref=e191]: "1"
+                  - img [ref=e192]
+              - listitem [ref=e194]:
+                - link "Low stock materials Nothing waiting 0" [ref=e195] [cursor=pointer]:
+                  - /url: /inventory?tab=alerts
+                  - img [ref=e197]
+                  - generic [ref=e200]:
+                    - generic [ref=e201]: Low stock materials
+                    - generic [ref=e202]: Nothing waiting
+                  - generic [ref=e203]: "0"
+                  - img [ref=e204]
+          - generic [ref=e206]:
+            - heading "Your workspace" [level=3] [ref=e209]
+            - generic [ref=e211]:
+              - link "Sampling Proto and fit samples" [ref=e212] [cursor=pointer]:
+                - /url: /samples
+                - img [ref=e214]
+                - generic [ref=e220]:
+                  - generic [ref=e221]: Sampling
+                  - generic [ref=e222]: Proto and fit samples
+              - link "Inventory Raw material and finished stock" [ref=e223] [cursor=pointer]:
+                - /url: /inventory
+                - img [ref=e225]
+                - generic [ref=e229]:
+                  - generic [ref=e230]: Inventory
+                  - generic [ref=e231]: Raw material and finished stock
+              - link "Purchase Requisitions, payments, receipts" [ref=e232] [cursor=pointer]:
+                - /url: /purchase
+                - img [ref=e234]
+                - generic [ref=e238]:
+                  - generic [ref=e239]: Purchase
+                  - generic [ref=e240]: Requisitions, payments, receipts
+              - link "Warehouse Bins and dispatch" [ref=e241] [cursor=pointer]:
+                - /url: /warehouse/warehouses
+                - img [ref=e243]
+                - generic [ref=e253]:
+                  - generic [ref=e254]: Warehouse
+                  - generic [ref=e255]: Bins and dispatch
+              - link "Approvals Pending decisions" [ref=e256] [cursor=pointer]:
+                - /url: /approvals
+                - img [ref=e258]
+                - generic [ref=e261]:
+                  - generic [ref=e262]: Approvals
+                  - generic [ref=e263]: Pending decisions
+  - region "Notifications"
+  - generic [ref=e265]:
+    - generic "Drag up or down to reposition" [ref=e266]:
+      - img [ref=e267]
+    - button "Open messages" [ref=e274]:
+      - img [ref=e275]
+      - generic: Messages (drag to move)
+  - generic:
+    - dialog:
+      - banner:
+        - generic:
+          - img
+          - generic:
+            - heading [level=2]: Messages
+        - generic:
+          - link:
+            - /url: /chat
+            - text: All chats
+          - button:
+            - img
+      - generic:
+        - generic:
+          - generic:
+            - generic:
+              - generic:
+                - generic:
+                  - img
+                  - searchbox
+```

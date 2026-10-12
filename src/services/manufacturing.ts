@@ -111,7 +111,7 @@ export const sampleApi = {
     api.get<{ data: SampleStats }>('/samples/stats', { params }).then(unwrap),
   catalog: () => api.get<{ data: { statuses: string[]; sampleTypes: string[] } }>('/samples/catalog').then(unwrap),
   materialOptions: () => api.get<{ data: Material[] }>('/samples/material-options').then(unwrap),
-  eligibleDesigns: () => api.get<{ data: SampleEligibleDesign[] }>('/samples/eligible-designs').then(unwrap),
+  eligibleDesigns: (params?: { onlyNew?: boolean }) => api.get<{ data: SampleEligibleDesign[] }>('/samples/eligible-designs', { params }).then(unwrap),
   list: (params?: { status?: string; limit?: number; excludeTerminal?: boolean }) =>
     api.get<{ data: Sample[]; meta?: ApiListMeta }>('/samples', {
       params: { limit: 200, ...params, excludeTerminal: params?.excludeTerminal ? 'true' : undefined },
@@ -144,6 +144,10 @@ export const sampleApi = {
     api.post<{ data: Sample }>(`/samples/${id}/approve-material-request`).then(unwrap),
   rejectMaterialRequest: (id: string, comments?: string) =>
     api.post<{ data: Sample }>(`/samples/${id}/reject-material-request`, { comments }).then(unwrap),
+  requestMaterialChanges: (id: string, comments: string) =>
+    api.post<{ data: Sample }>(`/samples/${id}/request-material-changes`, { comments }).then(unwrap),
+  cancel: (id: string, reason: string) =>
+    api.post<{ data: Sample }>(`/samples/${id}/cancel`, { reason }).then(unwrap),
   reserveMaterials: (id: string) =>
     api.post<{ data: Sample }>(`/samples/${id}/reserve-materials`).then(unwrap),
   issueMaterials: (id: string) =>
@@ -200,7 +204,7 @@ export const patternApi = {
     api.get<{ data: { _id: string; materialCode: string; name: string; unit: string; category?: string; unitCost?: number }[] }>('/pattern-developments/material-options').then(unwrap),
   listMasters: () =>
     api.get<{ data: ErpUser[] }>('/pattern-developments/masters').then(unwrap),
-  assign: (body: { designId: string; patternMasterId: string }) =>
+  assign: (body: { designId: string; patternMasterId: string; reassign?: boolean }) =>
     api.post<{ data: PatternDevelopment }>('/pattern-developments/assign', body).then(unwrap),
   update: (designId: string, body: {
     patternNotes?: string;
@@ -236,12 +240,14 @@ export const skuApi = {
   eligibleSamples: () => api.get<{ data: SkuEligibleSample[] }>('/skus/eligible-samples').then(unwrap),
   preview: (sampleId: string) =>
     api.get<{ data: SkuPreview }>('/skus/preview', { params: { sampleId } }).then(unwrap),
-  list: (params?: { status?: string; limit?: number }) =>
+  /** `hasActiveBom: true` → only SKUs with a frozen (ACTIVE) BOM, i.e. production-ready. */
+  list: (params?: { status?: string; limit?: number; hasActiveBom?: boolean }) =>
     api.get<{ data: import('../types/api').Sku[]; meta?: ApiListMeta }>('/skus', {
-      params: { limit: 200, ...params },
+      params: { limit: 200, ...params, hasActiveBom: params?.hasActiveBom == null ? undefined : String(params.hasActiveBom) },
     }).then(unwrap),
   listPage: (params?: {
     page?: number; limit?: number; status?: string; search?: string; designId?: string; sampleId?: string;
+    hasActiveBom?: boolean;
   }) => api.get<{ data: import('../types/api').Sku[]; meta: ApiListMeta }>('/skus', { params }).then(unwrapList),
   get: (id: string) => api.get<{ data: import('../types/api').Sku }>(`/skus/${id}`).then(unwrap),
   create: (body: {
@@ -273,7 +279,12 @@ export const bomApi = {
     api.post<{ data: import('../types/api').Bom }>('/boms', body).then(unwrap),
   update: (id: string, lines: import('../types/api').BomLine[]) =>
     api.put<{ data: import('../types/api').Bom }>(`/boms/${id}`, { lines }).then(unwrap),
+  submit: (id: string) => api.post<{ data: import('../types/api').Bom }>(`/boms/${id}/submit`).then(unwrap),
   approve: (id: string) => api.post<{ data: import('../types/api').Bom }>(`/boms/${id}/approve`).then(unwrap),
+  reject: (id: string, comments: string) =>
+    api.post<{ data: import('../types/api').Bom }>(`/boms/${id}/reject`, { comments }).then(unwrap),
+  requestChanges: (id: string, comments: string) =>
+    api.post<{ data: import('../types/api').Bom }>(`/boms/${id}/request-changes`, { comments }).then(unwrap),
   finalize: (id: string) =>
     api.post<{ data: { bom: import('../types/api').Bom; mrp: MrpPreview } }>(`/boms/${id}/finalize`).then(unwrap),
   mrpPreview: (id: string) => api.get<{ data: MrpPreview }>(`/boms/${id}/mrp-preview`).then(unwrap),
@@ -315,29 +326,36 @@ export const inventoryApi = {
     }>('/materials/bulk', body).then(unwrap),
   updateMaterial: (id: string, body: Partial<Material>) =>
     api.patch<{ data: Material }>(`/materials/${id}`, body).then(unwrap),
-  receipt: (body: { materialId: string; quantity: number; unit: string; storageBinId?: string }) =>
+  receipt: (body: { materialId: string; quantity: number; unit: string; storageBinId?: string; unitCost?: number }) =>
     api.post<{ data: InventoryBalance }>('/inventory/receipt', body).then(unwrap),
   balances: () => api.get<{ data: InventoryBalance[] }>('/inventory/balances').then(unwrap),
   listBalancesPage: (params?: {
-    page?: number; limit?: number; search?: string; lowStockOnly?: boolean; inventoryType?: string;
+    page?: number; limit?: number; search?: string; lowStockOnly?: boolean; inventoryType?: string; includeEmpty?: boolean;
   }) => api.get<{ data: InventoryBalance[]; meta: ApiListMeta }>('/inventory/balances', {
-    params: { ...params, lowStockOnly: params?.lowStockOnly ? 'true' : undefined },
+    params: {
+      ...params,
+      lowStockOnly: params?.lowStockOnly ? 'true' : undefined,
+      includeEmpty: params?.includeEmpty ? 'true' : undefined,
+    },
   }).then(unwrapList),
   listTransactionsPage: (params?: { page?: number; limit?: number; materialId?: string; type?: string }) =>
     api.get<{ data: InventoryTransaction[]; meta: ApiListMeta }>('/inventory/transactions', { params }).then(unwrapList),
   availability: (materialId: string) =>
     api.get<{ data: MaterialAvailability }>('/inventory/availability', { params: { materialId } }).then(unwrap),
+  /** Manual holds only (SAMPLE / PRODUCTION_ORDER reserve through their modules). */
   reserve: (body: {
     materialId: string; quantity: number; unit: string;
-    referenceType: string; referenceId: string;
-  }) => api.post('/inventory/reserve', body).then(unwrap),
+    referenceId?: string; note?: string;
+  }) => api.post<{ data: { _id: string; materialId?: string | Material; quantity: number; unit?: string; referenceId: string; note?: string; createdAt?: string; createdBy?: string | { firstName?: string; lastName?: string } } }>('/inventory/reserve', { ...body, referenceType: 'MANUAL' }).then(unwrap),
+  listManualReservations: (params?: { materialId?: string }) =>
+    api.get<{ data: Array<{ _id: string; materialId?: string | Material; quantity: number; unit?: string; referenceId: string; note?: string; createdAt?: string; createdBy?: string | { firstName?: string; lastName?: string } }> }>('/inventory/reservations/manual', { params }).then(unwrap),
   issue: (body: {
     materialId: string; quantity: number; unit: string;
     referenceType: string; referenceId: string;
     reservationReferenceType?: string; reservationReferenceId?: string;
   }) => api.post('/inventory/issue', body).then(unwrap),
-  releaseReservations: (body: { referenceType: string; referenceId: string }) =>
-    api.post<{ data: { released: number } }>('/inventory/release-reservations', body).then(unwrap),
+  releaseReservations: (body: { referenceId: string }) =>
+    api.post<{ data: { released: number } }>('/inventory/release-reservations', { ...body, referenceType: 'MANUAL' }).then(unwrap),
   listMaterialMasterRequests: (params?: {
     page?: number; limit?: number; status?: string; designId?: string;
   }) => api.get<{ data: MaterialMasterRequest[]; meta: ApiListMeta }>('/material-master-requests', { params }).then(unwrapList),

@@ -1,32 +1,28 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { createPortal } from 'react-dom';
-import { Link, useSearchParams } from 'react-router-dom';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  ChevronDown, ChevronRight, Package, Plus, Scan, Search, Warehouse as WhIcon, X,
+  Boxes, ChevronDown, ChevronRight, Layers, MapPin, Package, Plus, RefreshCw, Rows3, Scan, Search, Warehouse as WhIcon,
 } from 'lucide-react';
 import { warehouseApi } from '../../services/operations';
 import { inventoryApi } from '../../services/manufacturing';
 import type { Material, StorageBin, Warehouse } from '../../types/api';
 import type { WarehouseRack, WarehouseZone } from '../../types/api.extended';
 import {
-  ErpButton, ErpCard, ErpDataTable, ErpInput, ErpSelect, ErpStatusBadge,
+  Badge, Button, Drawer, DropdownMenu, EmptyRow, EmptyState, ErpDataTable, ErpInput, ErpSelect, Field, IconButton,
+  PageHeader, SearchInput, Section, Skeleton, StatusBadge, TablePager, TableSkeleton, toast, useConfirm,
 } from '../../components/erp';
-import { AlertBanner } from '../../components/AlertBanner';
-import { SuccessBanner } from '../users/SuccessBanner';
-import { ConfirmDialog } from '../users/ConfirmDialog';
 import { useAuth } from '../../app/providers/AuthProvider';
 import {
-  binLabel, materialLabel, materialRowId, skuLabel, statusLabel, transferableQty,
-  unallocatedBalance, warehouseTypeLabel,
+  binLabel, materialLabel, materialRowId, skuLabel, statusLabel, transferableQty, unallocatedBalance, warehouseTypeLabel,
 } from './warehouseUtils';
+import { QueryErrorRow } from '../production/QueryErrorRow';
 
-const btnSm = '!px-2 !py-1 text-[10px]';
-const fieldLabel = 'mb-0.5 block text-[10px] font-medium text-erp-text-muted';
 const PAGE_SIZE = 20;
 const STOCK_PAGE_SIZE = 12;
 
-type AddKind = 'warehouse' | 'zone' | 'rack' | 'shelf' | 'bin' | null;
+type AddKind = 'warehouse' | 'zone' | 'rack' | 'shelf' | 'bin';
+type Errors = Record<string, string>;
 
 type TreeSel =
   | { kind: 'all' }
@@ -47,45 +43,444 @@ type StockRow = {
   materialId?: string;
 };
 
+type Zone = WarehouseZone & { bins?: StorageBin[]; racks?: WarehouseRack[] };
+
 function sortCode(a: string, b: string) {
   const na = a.match(/\d+/);
   const nb = b.match(/\d+/);
-  if (na && nb && a.replace(na[0], '') === b.replace(nb[0], '')) {
-    return Number(na[0]) - Number(nb[0]);
-  }
+  if (na && nb && a.replace(na[0], '') === b.replace(nb[0], '')) return Number(na[0]) - Number(nb[0]);
   return a.localeCompare(b);
 }
 
-function ModalShell({ children, onClose }: { children: ReactNode; onClose: () => void }) {
-  return createPortal(
-    <div
-      className="erp-modal-overlay fixed inset-0 z-[10000] flex items-center justify-center overflow-y-auto bg-black/45 p-4"
-      onClick={onClose}
-      role="presentation"
+const ADD_META: Record<AddKind, { title: string; description: string; save: string }> = {
+  warehouse: { title: 'New warehouse', description: 'A site that holds raw material, WIP or finished goods.', save: 'Create warehouse' },
+  zone: { title: 'New zone', description: 'An area inside the warehouse, e.g. a floor or a room.', save: 'Create zone' },
+  rack: { title: 'New rack', description: 'A rack inside a zone.', save: 'Create rack' },
+  shelf: { title: 'New shelf', description: 'A shelf on a rack.', save: 'Create shelf' },
+  bin: { title: 'New bin', description: 'The smallest location stock is stored and picked from.', save: 'Create bin' },
+};
+
+/* ─────────────────────────── Add drawer (warehouse / zone / rack / shelf / bin) ─────────────────────────── */
+
+function AddLocationDrawer({ kind, onClose, whId, zones, treeSel, onCreatedWarehouse }: {
+  kind: AddKind | null;
+  onClose: () => void;
+  whId: string;
+  zones: Zone[];
+  treeSel: TreeSel;
+  onCreatedWarehouse: (w: Warehouse) => void;
+}) {
+  const qc = useQueryClient();
+  const [whForm, setWhForm] = useState({ warehouseCode: '', name: '', type: 'RAW_MATERIAL', isDefault: false });
+  const [zoneForm, setZoneForm] = useState({ zoneCode: '', name: '' });
+  const [rackForm, setRackForm] = useState({ zoneId: '', rackCode: '' });
+  const [shelfForm, setShelfForm] = useState({ zoneId: '', rackId: '', shelfCode: '' });
+  const [binForm, setBinForm] = useState({ zoneId: '', rackId: '', shelfId: '', binCode: '', capacity: '' });
+  const [errors, setErrors] = useState<Errors>({});
+
+  // Pre-fill parents from the tree selection.
+  useEffect(() => {
+    if (!kind) return;
+    setErrors({});
+    const z = treeSel.kind === 'zone' || treeSel.kind === 'rack' || treeSel.kind === 'shelf' ? treeSel.zoneId : '';
+    const r = treeSel.kind === 'rack' || treeSel.kind === 'shelf' ? treeSel.rackId : '';
+    const s = treeSel.kind === 'shelf' ? treeSel.shelfId : '';
+    if (kind === 'warehouse') setWhForm({ warehouseCode: '', name: '', type: 'RAW_MATERIAL', isDefault: false });
+    if (kind === 'zone') setZoneForm({ zoneCode: '', name: '' });
+    if (kind === 'rack') setRackForm({ zoneId: z || (zones.length === 1 ? zones[0]._id : ''), rackCode: '' });
+    if (kind === 'shelf') setShelfForm({ zoneId: z, rackId: r, shelfCode: '' });
+    if (kind === 'bin') setBinForm({ zoneId: z || (zones.length === 1 ? zones[0]._id : ''), rackId: r, shelfId: s, binCode: '', capacity: '' });
+  }, [kind]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const racks = useMemo(() => {
+    const list: Array<WarehouseRack & { zoneId: string }> = [];
+    for (const zone of zones) for (const rack of zone.racks ?? []) list.push({ ...rack, zoneId: zone._id });
+    return list;
+  }, [zones]);
+  const racksFor = (zoneId: string) => racks.filter((r) => r.zoneId === zoneId).sort((a, b) => sortCode(a.rackCode, b.rackCode));
+  const shelvesFor = (zoneId: string, rackId: string) => (racksFor(zoneId).find((r) => r._id === rackId)?.shelves ?? [])
+    .slice().sort((a, b) => sortCode(a.shelfCode, b.shelfCode));
+
+  const save = useMutation({
+    mutationFn: async (): Promise<unknown> => {
+      switch (kind) {
+        case 'warehouse': return warehouseApi.create({ ...whForm, warehouseCode: whForm.warehouseCode.trim(), name: whForm.name.trim() });
+        case 'zone': return warehouseApi.createZone(whId, { zoneCode: zoneForm.zoneCode.trim(), name: zoneForm.name.trim() });
+        case 'rack': return warehouseApi.createRack(rackForm.zoneId, { rackCode: rackForm.rackCode.trim() });
+        case 'shelf': return warehouseApi.createShelf(shelfForm.rackId, { shelfCode: shelfForm.shelfCode.trim() });
+        case 'bin': return warehouseApi.createBin(whId, {
+          zoneId: binForm.zoneId,
+          rackId: binForm.rackId || undefined,
+          shelfId: binForm.shelfId || undefined,
+          binCode: binForm.binCode.trim(),
+          capacity: binForm.capacity ? Number(binForm.capacity) : undefined,
+        });
+        default: throw new Error('Unknown');
+      }
+    },
+    onSuccess: (data) => {
+      toast.success(`${kind ? kind.charAt(0).toUpperCase() + kind.slice(1) : 'Location'} created`);
+      ['warehouse-stats', 'warehouses', 'warehouses-all', 'warehouses-sites', 'warehouse-layout', 'zones', 'bins', 'bins-ops']
+        .forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
+      if (kind === 'warehouse' && data && typeof data === 'object' && '_id' in data) onCreatedWarehouse(data as Warehouse);
+      onClose();
+    },
+  });
+
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    const next: Errors = {};
+    if (kind === 'warehouse') {
+      if (!whForm.warehouseCode.trim()) next.code = 'Enter a short code, e.g. WH-RM.';
+      if (!whForm.name.trim()) next.name = 'Enter the warehouse name.';
+    }
+    if (kind === 'zone') {
+      if (!zoneForm.zoneCode.trim()) next.code = 'Enter a zone code, e.g. Z1.';
+      if (!zoneForm.name.trim()) next.name = 'Enter the zone name.';
+    }
+    if (kind === 'rack') {
+      if (!rackForm.zoneId) next.zone = 'Choose the zone this rack is in.';
+      if (!rackForm.rackCode.trim()) next.code = 'Enter a rack code, e.g. R-11.';
+    }
+    if (kind === 'shelf') {
+      if (!shelfForm.zoneId) next.zone = 'Choose a zone.';
+      if (!shelfForm.rackId) next.rack = 'Choose the rack this shelf is on.';
+      if (!shelfForm.shelfCode.trim()) next.code = 'Enter a shelf code, e.g. S-8.';
+    }
+    if (kind === 'bin') {
+      if (!binForm.zoneId) next.zone = 'Choose the zone for this bin.';
+      if (!binForm.binCode.trim()) next.code = 'Enter a bin code.';
+      if (binForm.capacity && !(Number(binForm.capacity) > 0)) next.capacity = 'Capacity must be more than 0.';
+    }
+    setErrors(next);
+    if (!Object.keys(next).length) save.mutate();
+  };
+
+  const meta = kind ? ADD_META[kind] : null;
+  const noZones = zones.length === 0 && (kind === 'rack' || kind === 'shelf' || kind === 'bin');
+
+  return (
+    <Drawer
+      open={!!kind}
+      onClose={onClose}
+      size="sm"
+      closeOnOverlayClick={false}
+      title={meta?.title}
+      description={meta?.description}
+      footer={(
+        <>
+          <Button variant="secondary" onClick={onClose}>Cancel</Button>
+          <Button type="submit" form="add-location-form" loading={save.isPending} disabled={noZones}>{meta?.save}</Button>
+        </>
+      )}
     >
-      <div
-        className="my-auto w-full max-w-2xl"
-        onClick={(e) => e.stopPropagation()}
-        role="dialog"
-        aria-modal="true"
-      >
-        {children}
-      </div>
-    </div>,
-    document.body,
+      {noZones ? (
+        <EmptyState compact icon={MapPin} title="Create a zone first" description="Racks, shelves and bins all sit inside a zone." />
+      ) : (
+        <form id="add-location-form" onSubmit={submit} className="space-y-4" noValidate>
+          {kind === 'warehouse' && (
+            <>
+              <Field label="Code" required error={errors.code}>
+                <ErpInput className="font-mono" value={whForm.warehouseCode} onChange={(e) => setWhForm({ ...whForm, warehouseCode: e.target.value })} placeholder="WH-RM" />
+              </Field>
+              <Field label="Name" required error={errors.name}>
+                <ErpInput value={whForm.name} onChange={(e) => setWhForm({ ...whForm, name: e.target.value })} />
+              </Field>
+              <Field label="Type">
+                <ErpSelect value={whForm.type} onChange={(e) => setWhForm({ ...whForm, type: e.target.value })}>
+                  <option value="RAW_MATERIAL">Raw material</option>
+                  <option value="WIP">WIP</option>
+                  <option value="FINISHED_GOODS">Finished goods</option>
+                </ErpSelect>
+              </Field>
+              <label className="flex min-h-11 items-center gap-3 text-sm">
+                <input type="checkbox" className="h-5 w-5" checked={whForm.isDefault} onChange={(e) => setWhForm({ ...whForm, isDefault: e.target.checked })} />
+                Default warehouse for this type
+              </label>
+            </>
+          )}
+          {kind === 'zone' && (
+            <>
+              <Field label="Zone code" required error={errors.code}>
+                <ErpInput className="font-mono" value={zoneForm.zoneCode} onChange={(e) => setZoneForm({ ...zoneForm, zoneCode: e.target.value })} placeholder="Z1" />
+              </Field>
+              <Field label="Name" required error={errors.name}>
+                <ErpInput value={zoneForm.name} onChange={(e) => setZoneForm({ ...zoneForm, name: e.target.value })} placeholder="Ground floor" />
+              </Field>
+            </>
+          )}
+          {kind === 'rack' && (
+            <>
+              <Field label="Zone" required error={errors.zone}>
+                <ErpSelect value={rackForm.zoneId} onChange={(e) => setRackForm({ ...rackForm, zoneId: e.target.value })}>
+                  <option value="">Select zone…</option>
+                  {zones.map((z) => <option key={z._id} value={z._id}>{z.zoneCode}{z.name ? ` — ${z.name}` : ''}</option>)}
+                </ErpSelect>
+              </Field>
+              <Field label="Rack code" required error={errors.code}>
+                <ErpInput className="font-mono" value={rackForm.rackCode} onChange={(e) => setRackForm({ ...rackForm, rackCode: e.target.value })} placeholder="R-11" />
+              </Field>
+            </>
+          )}
+          {kind === 'shelf' && (
+            <>
+              <Field label="Zone" required error={errors.zone}>
+                <ErpSelect value={shelfForm.zoneId} onChange={(e) => setShelfForm({ ...shelfForm, zoneId: e.target.value, rackId: '' })}>
+                  <option value="">Select zone…</option>
+                  {zones.map((z) => <option key={z._id} value={z._id}>{z.zoneCode}</option>)}
+                </ErpSelect>
+              </Field>
+              <Field label="Rack" required error={errors.rack} hint={shelfForm.zoneId && !racksFor(shelfForm.zoneId).length ? 'This zone has no racks yet.' : undefined}>
+                <ErpSelect value={shelfForm.rackId} disabled={!shelfForm.zoneId} onChange={(e) => setShelfForm({ ...shelfForm, rackId: e.target.value })}>
+                  <option value="">Select rack…</option>
+                  {racksFor(shelfForm.zoneId).map((r) => <option key={r._id} value={r._id}>{r.rackCode}</option>)}
+                </ErpSelect>
+              </Field>
+              <Field label="Shelf code" required error={errors.code}>
+                <ErpInput className="font-mono" value={shelfForm.shelfCode} onChange={(e) => setShelfForm({ ...shelfForm, shelfCode: e.target.value })} placeholder="S-8" />
+              </Field>
+            </>
+          )}
+          {kind === 'bin' && (
+            <>
+              <Field label="Zone" required error={errors.zone}>
+                <ErpSelect value={binForm.zoneId} onChange={(e) => setBinForm({ ...binForm, zoneId: e.target.value, rackId: '', shelfId: '' })}>
+                  <option value="">Select zone…</option>
+                  {zones.map((z) => <option key={z._id} value={z._id}>{z.zoneCode}</option>)}
+                </ErpSelect>
+              </Field>
+              <div className="grid grid-cols-2 gap-4">
+                <Field label="Rack">
+                  <ErpSelect value={binForm.rackId} disabled={!binForm.zoneId} onChange={(e) => setBinForm({ ...binForm, rackId: e.target.value, shelfId: '' })}>
+                    <option value="">None</option>
+                    {racksFor(binForm.zoneId).map((r) => <option key={r._id} value={r._id}>{r.rackCode}</option>)}
+                  </ErpSelect>
+                </Field>
+                <Field label="Shelf">
+                  <ErpSelect value={binForm.shelfId} disabled={!binForm.rackId} onChange={(e) => setBinForm({ ...binForm, shelfId: e.target.value })}>
+                    <option value="">None</option>
+                    {shelvesFor(binForm.zoneId, binForm.rackId).map((s) => <option key={s._id} value={s._id}>{s.shelfCode}</option>)}
+                  </ErpSelect>
+                </Field>
+              </div>
+              <Field label="Bin code" required error={errors.code}>
+                <ErpInput className="font-mono" value={binForm.binCode} onChange={(e) => setBinForm({ ...binForm, binCode: e.target.value })} placeholder="Z1-R11-S8-01" />
+              </Field>
+              <Field label="Capacity" hint="Optional maximum units." error={errors.capacity}>
+                <ErpInput type="number" inputMode="numeric" min={1} value={binForm.capacity} onChange={(e) => setBinForm({ ...binForm, capacity: e.target.value })} />
+              </Field>
+            </>
+          )}
+        </form>
+      )}
+    </Drawer>
   );
 }
 
+/* ─────────────────────────── Bin stock drawer ─────────────────────────── */
+
+function BinStockDrawer({ binId, whId, warehouse, fallbackBin, onClose, canUpdate }: {
+  binId: string | null;
+  whId: string;
+  warehouse?: Warehouse;
+  fallbackBin?: StorageBin;
+  onClose: () => void;
+  canUpdate: boolean;
+}) {
+  const qc = useQueryClient();
+  const navigate = useNavigate();
+  const confirm = useConfirm();
+  const isRm = warehouse?.type === 'RAW_MATERIAL';
+  const [search, setSearch] = useState('');
+  const [page, setPage] = useState(1);
+  const [materialId, setMaterialId] = useState('');
+  const [qty, setQty] = useState('10');
+  useEffect(() => { setSearch(''); setPage(1); setMaterialId(''); setQty('10'); }, [binId]);
+
+  const contentsQ = useQuery({
+    queryKey: ['bin-contents', whId, binId],
+    queryFn: () => warehouseApi.binContents(whId, binId!),
+    enabled: !!whId && !!binId,
+  });
+  const contents = contentsQ.data;
+  const { data: materials = [] } = useQuery({
+    queryKey: ['materials-wh'],
+    queryFn: () => inventoryApi.listMaterialsPage({ limit: 200 }).then((r) => r.items),
+    enabled: isRm && !!binId,
+  });
+  const { data: matBalances = [] } = useQuery({
+    queryKey: ['inventory-balances-mat', materialId],
+    queryFn: async () => {
+      const mat = materials.find((m) => m._id === materialId);
+      const { items } = await inventoryApi.listBalancesPage({ search: mat?.materialCode, limit: 50 });
+      return items.filter((b) => (typeof b.materialId === 'object' ? b.materialId._id : b.materialId) === materialId);
+    },
+    enabled: !!materialId && isRm && !!binId,
+  });
+  const dock = transferableQty(unallocatedBalance(matBalances));
+  const qtyNum = Math.max(1, Number(qty) || 1);
+  const putQty = qty.trim() ? qtyNum : dock;
+
+  const mut = useMutation({
+    mutationFn: (a: { type: 'putAway' | 'pick'; materialId: string; quantity: number }) => (a.type === 'putAway'
+      ? warehouseApi.putAway({ materialId: a.materialId, binId: binId!, quantity: a.quantity })
+      : warehouseApi.pick({ materialId: a.materialId, binId: binId!, quantity: a.quantity })),
+    onSuccess: (_d, a) => {
+      toast.success(a.type === 'putAway' ? 'Put away complete' : 'Pick complete');
+      ['bin-contents', 'inventory-balances-mat', 'inventory-balances', 'inventory-stats', 'warehouse-stats', 'stock-locator']
+        .forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
+    },
+  });
+
+  const rows = useMemo((): StockRow[] => {
+    if (!contents) return [];
+    const out: StockRow[] = [];
+    for (const r of contents.rawMaterials ?? []) {
+      const mat = r.materialId;
+      const mid = materialRowId(mat as string | Material);
+      const code = typeof mat === 'object' && mat ? String(mat.materialCode || '') : materialLabel(mat as string | Material);
+      const name = typeof mat === 'object' && mat ? String(mat.name || '') : '';
+      out.push({
+        key: `rm-${mid || code}`, kind: 'RM', code: code || '—', label: name || code || '—', onHand: r.onHand ?? 0,
+        available: (r as { available?: number }).available ?? (r.onHand ?? 0), unit: r.unit, materialId: mid || undefined,
+      });
+    }
+    for (const r of contents.finishedGoods ?? []) {
+      const sku = r.skuId;
+      const code = typeof sku === 'object' && sku ? String((sku as { skuCode?: string }).skuCode || '') : skuLabel(sku);
+      const name = typeof sku === 'object' && sku ? String((sku as { name?: string }).name || '') : '';
+      out.push({ key: `fg-${code}-${r.onHand}`, kind: 'FG', code: code || '—', label: name || code || '—', onHand: r.onHand ?? 0, available: r.onHand ?? 0, unit: r.unit, dispatchStatus: r.dispatchStatus });
+    }
+    return out;
+  }, [contents]);
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter((r) => r.code.toLowerCase().includes(q) || r.label.toLowerCase().includes(q) || (r.dispatchStatus || '').toLowerCase().includes(q));
+  }, [rows, search]);
+  const totalPages = Math.max(1, Math.ceil(filtered.length / STOCK_PAGE_SIZE));
+  const curPage = Math.min(page, totalPages);
+  const paged = filtered.slice((curPage - 1) * STOCK_PAGE_SIZE, curPage * STOCK_PAGE_SIZE);
+  const bin = contents?.bin || fallbackBin;
+
+  return (
+    <Drawer
+      open={!!binId}
+      onClose={onClose}
+      size="lg"
+      title={`Bin ${binLabel(bin)}`}
+      description={`${warehouse?.warehouseCode ?? ''}${bin?.barcode ? ` · ${bin.barcode}` : ''}`}
+      headerExtra={fallbackBin?.status ? <div className="mt-2"><StatusBadge status={fallbackBin.status} /></div> : undefined}
+      footer={(
+        <>
+          {isRm && <Button variant="ghost" className="mr-auto" onClick={() => navigate('/warehouse/operations/picking')}>Open picking</Button>}
+          {warehouse?.type === 'FINISHED_GOODS' && (contents?.finishedGoods?.length ?? 0) > 0 && (
+            <Button variant="ghost" className="mr-auto" onClick={() => navigate('/warehouse/operations/dispatch')}>Open dispatch</Button>
+          )}
+          <Button variant="secondary" onClick={onClose}>Close</Button>
+        </>
+      )}
+    >
+      <div className="space-y-4">
+        {isRm && canUpdate && (
+          <Section title="Put away into this bin" description="Moves free stock from the unallocated dock.">
+            <div className="flex flex-wrap items-end gap-3">
+              <Field label="Material" className="min-w-[200px] flex-1">
+                <ErpSelect value={materialId} onChange={(e) => setMaterialId(e.target.value)}>
+                  <option value="">Select material…</option>
+                  {materials.map((m: Material) => <option key={m._id} value={m._id}>{m.materialCode} — {m.name}</option>)}
+                </ErpSelect>
+              </Field>
+              <Field label="Quantity" hint={materialId ? `${dock} free on dock` : undefined} error={materialId && putQty > dock && dock > 0 ? `Only ${dock} on the dock.` : undefined} className="w-36">
+                <ErpInput type="number" inputMode="decimal" min={1} value={qty} onChange={(e) => setQty(e.target.value)} />
+              </Field>
+              <Button
+                disabled={!materialId || dock <= 0 || putQty <= 0 || putQty > dock || mut.isPending}
+                loading={mut.isPending && mut.variables?.type === 'putAway'}
+                onClick={async () => {
+                  if (await confirm({ title: `Put away ${putQty} into ${binLabel(bin)}?`, message: `Dock stock goes down by ${putQty}.`, confirmLabel: 'Put away' })) {
+                    mut.mutate({ type: 'putAway', materialId, quantity: putQty });
+                  }
+                }}
+              >
+                Put away
+              </Button>
+            </div>
+          </Section>
+        )}
+
+        <Section flush title={`Contents (${rows.length})`}>
+          {rows.length > 6 && (
+            <div className="border-b border-[var(--erp-border)] px-4 py-3">
+              <SearchInput inputSize="sm" value={search} onChange={(v) => { setSearch(v); setPage(1); }} placeholder="Search code or name…" />
+            </div>
+          )}
+          <ErpDataTable className="min-w-[560px]">
+            <thead>
+              <tr><th>Item</th><th className="erp-num">On hand</th><th className="erp-num">Available</th><th>Status</th><th className="erp-cell-actions"><span className="sr-only">Actions</span></th></tr>
+            </thead>
+            <tbody>
+              {contentsQ.isLoading ? <TableSkeleton asRows rows={3} columns={5} /> : contentsQ.isError ? <QueryErrorRow colSpan={5} error={contentsQ.error} onRetry={() => contentsQ.refetch()} /> : paged.length === 0 ? (
+                <EmptyRow colSpan={5} title={rows.length === 0 ? 'This bin is empty' : 'No stock matches your search'} icon={Package} />
+              ) : paged.map((row) => {
+                const pickQty = Math.min(qtyNum, row.available);
+                return (
+                  <tr key={row.key}>
+                    <td>
+                      <div className="flex items-center gap-2">
+                        <Badge tone="neutral" dot={false}>{row.kind === 'RM' ? 'RM' : 'FG'}</Badge>
+                        <span className="font-mono">{row.code}</span>
+                      </div>
+                      {row.label !== row.code && <p className="mt-0.5 text-xs text-erp-text-muted">{row.label}</p>}
+                    </td>
+                    <td className="erp-num">{row.onHand.toLocaleString()}{row.unit ? <span className="text-erp-text-muted"> {row.unit}</span> : ''}</td>
+                    <td className="erp-num">{row.available.toLocaleString()}</td>
+                    <td>{row.dispatchStatus ? <StatusBadge status={row.dispatchStatus} label={statusLabel(row.dispatchStatus)} /> : <span className="text-erp-text-muted">—</span>}</td>
+                    <td className="erp-cell-actions">
+                      <div className="flex justify-end">
+                        {row.kind === 'RM' && isRm && canUpdate && row.materialId && (
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            disabled={row.available <= 0 || mut.isPending}
+                            onClick={async () => {
+                              if (await confirm({ title: `Pick ${pickQty} ${row.code}?`, message: `Stock in ${binLabel(bin)} goes down by ${pickQty}.`, confirmLabel: 'Pick' })) {
+                                mut.mutate({ type: 'pick', materialId: row.materialId!, quantity: pickQty });
+                              }
+                            }}
+                          >
+                            Pick {pickQty}
+                          </Button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </ErpDataTable>
+          {filtered.length > STOCK_PAGE_SIZE && (
+            <TablePager page={curPage} totalPages={totalPages} total={filtered.length} pageSize={STOCK_PAGE_SIZE} itemLabel="items" onPrev={() => setPage((p) => Math.max(1, p - 1))} onNext={() => setPage((p) => Math.min(totalPages, p + 1))} />
+          )}
+        </Section>
+        {isRm && canUpdate && <p className="text-xs text-erp-text-muted">Pick uses the quantity above (capped at what is available).</p>}
+      </div>
+    </Drawer>
+  );
+}
+
+/* ─────────────────────────── Section ─────────────────────────── */
+
 export function SitesLayoutSection() {
   const qc = useQueryClient();
+  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const { permissions } = useAuth();
   const canCreate = permissions.includes('*') || permissions.includes('warehouse.create');
   const canUpdate = permissions.includes('*') || permissions.includes('warehouse.update');
   const canConfigure = permissions.includes('*') || permissions.includes('warehouse.configure');
 
-  const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
   const [selectedWh, setSelectedWh] = useState(searchParams.get('warehouseId') || '');
   const [selectedBinId, setSelectedBinId] = useState<string | null>(searchParams.get('binId'));
   const [treeSel, setTreeSel] = useState<TreeSel>({ kind: 'all' });
@@ -94,832 +489,248 @@ export function SitesLayoutSection() {
   const [binSearch, setBinSearch] = useState('');
   const [binPage, setBinPage] = useState(1);
   const [barcodeInput, setBarcodeInput] = useState('');
-  const [addKind, setAddKind] = useState<AddKind>(null);
-  const [confirmAction, setConfirmAction] = useState<{ title: string; message: string; fn: () => void } | null>(null);
+  const [addKind, setAddKind] = useState<AddKind | null>(null);
 
-  const [whForm, setWhForm] = useState({ warehouseCode: '', name: '', type: 'RAW_MATERIAL', isDefault: false });
-  const [zoneForm, setZoneForm] = useState({ zoneCode: '', name: '' });
-  const [rackForm, setRackForm] = useState({ zoneId: '', rackCode: '' });
-  const [shelfForm, setShelfForm] = useState({ zoneId: '', rackId: '', shelfCode: '' });
-  const [binForm, setBinForm] = useState({ zoneId: '', rackId: '', shelfId: '', binCode: '', capacity: '' });
-  const [stockQuickMaterialId, setStockQuickMaterialId] = useState('');
-  const [stockQuickQty, setStockQuickQty] = useState('10');
-  const [stockSearch, setStockSearch] = useState('');
-  const [stockPage, setStockPage] = useState(1);
-  const [stockModalOpen, setStockModalOpen] = useState(false);
-
-  const showSuccess = (msg: string) => {
-    setSuccess(msg);
-    setError('');
-    setTimeout(() => setSuccess(''), 4000);
-  };
-
-  const invalidate = () => {
-    qc.invalidateQueries({ queryKey: ['warehouse-stats'] });
-    qc.invalidateQueries({ queryKey: ['warehouses'] });
-    qc.invalidateQueries({ queryKey: ['warehouses-all'] });
-    qc.invalidateQueries({ queryKey: ['warehouses-sites'] });
-    qc.invalidateQueries({ queryKey: ['warehouse-layout'] });
-    qc.invalidateQueries({ queryKey: ['zones'] });
-    qc.invalidateQueries({ queryKey: ['bins'] });
-    qc.invalidateQueries({ queryKey: ['bin-contents'] });
-    qc.invalidateQueries({ queryKey: ['inventory-balances-mat'] });
-  };
-
-  const { data: warehouses = [], isFetching, refetch } = useQuery({
-    queryKey: ['warehouses-sites'],
-    queryFn: () => warehouseApi.list({ limit: 100 }),
-  });
-
+  const warehousesQ = useQuery({ queryKey: ['warehouses-sites'], queryFn: () => warehouseApi.list({ limit: 100 }) });
+  const warehouses = warehousesQ.data ?? [];
   const whId = selectedWh || warehouses[0]?._id || '';
   const selectedWarehouse = warehouses.find((w) => w._id === whId);
-  const isRmWarehouse = selectedWarehouse?.type === 'RAW_MATERIAL';
 
   useEffect(() => {
     if (!selectedWh && warehouses[0]?._id) setSelectedWh(warehouses[0]._id);
   }, [warehouses, selectedWh]);
 
   useEffect(() => {
+    // Keep the selection in the URL — but only while the browser is still on this page.
+    // The data loads async; if the user already clicked away, a late `replace` here would
+    // hijack their navigation and drag them back to the warehouses page.
+    if (!window.location.pathname.startsWith('/warehouse/warehouses')) return;
     const params = new URLSearchParams();
     if (whId) params.set('warehouseId', whId);
     if (selectedBinId) params.set('binId', selectedBinId);
+    if (params.toString() === new URLSearchParams(window.location.search).toString()) return;
     setSearchParams(params, { replace: true });
   }, [whId, selectedBinId, setSearchParams]);
 
-  useEffect(() => {
-    const binFromUrl = searchParams.get('binId');
-    if (binFromUrl && !stockModalOpen) {
-      setSelectedBinId(binFromUrl);
-      setStockModalOpen(true);
-    }
-    // only on first mount / deep-link
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  const layoutQ = useQuery({ queryKey: ['warehouse-layout', whId], queryFn: () => warehouseApi.layout(whId), enabled: !!whId });
+  const layout = layoutQ.data;
+  const zones = (layout?.zones ?? []) as Zone[];
 
-  const { data: layout, isLoading: layoutLoading } = useQuery({
-    queryKey: ['warehouse-layout', whId],
-    queryFn: () => warehouseApi.layout(whId),
-    enabled: !!whId,
-  });
-
-  const { data: binContents, isFetching: binContentsLoading } = useQuery({
-    queryKey: ['bin-contents', whId, selectedBinId],
-    queryFn: () => warehouseApi.binContents(whId, selectedBinId!),
-    enabled: !!whId && !!selectedBinId && stockModalOpen,
-  });
-
-  const { data: materials = [] } = useQuery({
-    queryKey: ['materials-wh'],
-    queryFn: () => inventoryApi.listMaterialsPage({ limit: 200 }).then((r) => r.items),
-    enabled: isRmWarehouse && !!selectedBinId && stockModalOpen,
-  });
-
-  const stockMatId = stockQuickMaterialId;
-  const { data: stockMatBalances = [] } = useQuery({
-    queryKey: ['inventory-balances-mat', stockMatId],
-    queryFn: async () => {
-      const mat = materials.find((m) => m._id === stockMatId);
-      const { items } = await inventoryApi.listBalancesPage({
-        search: mat?.materialCode,
-        limit: 50,
-      });
-      return items.filter((b) => {
-        const mid = typeof b.materialId === 'object' ? b.materialId._id : b.materialId;
-        return mid === stockMatId;
-      });
-    },
-    enabled: !!stockMatId && isRmWarehouse && !!selectedBinId && stockModalOpen,
-  });
-  const stockUnalloc = transferableQty(unallocatedBalance(stockMatBalances));
-  const stockQuickQtyNum = Math.max(1, Number(stockQuickQty) || 1);
-  const stockPutQty = stockQuickQty.trim() ? stockQuickQtyNum : stockUnalloc;
-
-  const stockRows = useMemo((): StockRow[] => {
-    if (!binContents) return [];
-    const rows: StockRow[] = [];
-    for (const r of binContents.rawMaterials ?? []) {
-      const mat = r.materialId;
-      const mid = materialRowId(mat as string | Material);
-      const code = typeof mat === 'object' && mat
-        ? String(mat.materialCode || '')
-        : materialLabel(mat as string | Material);
-      const name = typeof mat === 'object' && mat
-        ? String(mat.name || '')
-        : '';
-      rows.push({
-        key: `rm-${mid || code}`,
-        kind: 'RM',
-        code: code || '—',
-        label: name || code || '—',
-        onHand: r.onHand ?? 0,
-        available: (r as { available?: number }).available ?? (r.onHand ?? 0),
-        unit: r.unit,
-        materialId: mid || undefined,
-      });
-    }
-    for (const r of binContents.finishedGoods ?? []) {
-      const sku = r.skuId;
-      const code = typeof sku === 'object' && sku
-        ? String((sku as { skuCode?: string }).skuCode || '')
-        : skuLabel(sku);
-      const name = typeof sku === 'object' && sku
-        ? String((sku as { name?: string }).name || '')
-        : '';
-      rows.push({
-        key: `fg-${code}-${r.onHand}`,
-        kind: 'FG',
-        code: code || '—',
-        label: name || code || '—',
-        onHand: r.onHand ?? 0,
-        available: r.onHand ?? 0,
-        unit: r.unit,
-        dispatchStatus: r.dispatchStatus,
-      });
-    }
-    return rows;
-  }, [binContents]);
-
-  const filteredStockRows = useMemo(() => {
-    const q = stockSearch.trim().toLowerCase();
-    if (!q) return stockRows;
-    return stockRows.filter((r) => (
-      r.code.toLowerCase().includes(q)
-      || r.label.toLowerCase().includes(q)
-      || r.kind.toLowerCase().includes(q)
-      || (r.dispatchStatus || '').toLowerCase().includes(q)
-    ));
-  }, [stockRows, stockSearch]);
-
-  const stockTotalPages = Math.max(1, Math.ceil(filteredStockRows.length / STOCK_PAGE_SIZE));
-  const pagedStockRows = useMemo(() => {
-    const page = Math.min(stockPage, stockTotalPages);
-    const start = (page - 1) * STOCK_PAGE_SIZE;
-    return filteredStockRows.slice(start, start + STOCK_PAGE_SIZE);
-  }, [filteredStockRows, stockPage, stockTotalPages]);
-
-  useEffect(() => {
-    setStockPage(1);
-  }, [stockSearch, selectedBinId]);
-
-  const openBinStock = (binId: string) => {
-    setSelectedBinId(binId);
-    setStockSearch('');
-    setStockPage(1);
-    setStockModalOpen(true);
-  };
-
-  const closeBinStock = () => {
-    setStockModalOpen(false);
-    setStockQuickMaterialId('');
-  };
-
-  const zones = layout?.zones ?? [];
-  const layoutRacks = useMemo(() => {
-    const racks: Array<WarehouseRack & { zoneId: string }> = [];
-    for (const zone of zones) {
-      for (const rack of zone.racks ?? []) {
-        racks.push({ ...rack, zoneId: zone._id });
+  const lookup = useMutation({
+    mutationFn: () => warehouseApi.lookupBin(barcodeInput.trim()),
+    onSuccess: (data) => {
+      if (data && typeof data === 'object' && 'bin' in data) {
+        const bin = (data as { bin: StorageBin }).bin;
+        setSelectedWh(bin.warehouseId);
+        setTreeSel({ kind: 'all' });
+        setSelectedBinId(bin._id);
+        setBarcodeInput('');
+        toast.success(`Found bin ${binLabel(bin)}`);
       }
-    }
-    return racks;
-  }, [zones]);
+    },
+  });
 
-  const racksForBin = useMemo(
-    () => layoutRacks.filter((r) => r.zoneId === binForm.zoneId).sort((a, b) => sortCode(a.rackCode, b.rackCode)),
-    [layoutRacks, binForm.zoneId],
-  );
-  const shelvesForBin = useMemo(
-    () => (racksForBin.find((r) => r._id === binForm.rackId)?.shelves ?? [])
-      .slice()
-      .sort((a, b) => sortCode(a.shelfCode, b.shelfCode)),
-    [racksForBin, binForm.rackId],
-  );
-  const racksForShelf = useMemo(
-    () => layoutRacks.filter((r) => r.zoneId === shelfForm.zoneId).sort((a, b) => sortCode(a.rackCode, b.rackCode)),
-    [layoutRacks, shelfForm.zoneId],
-  );
+  const assignZone = useMutation({
+    mutationFn: ({ binId, zoneId }: { binId: string; zoneId: string }) => warehouseApi.updateBin(whId, binId, { zoneId }),
+    meta: { successMessage: 'Bin assigned to zone' },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['warehouse-layout'] }); qc.invalidateQueries({ queryKey: ['bins'] }); },
+  });
 
   const allBins = useMemo(() => {
     const list: StorageBin[] = [];
-    for (const zone of zones) {
-      for (const b of zone.bins ?? []) list.push(b);
-    }
+    for (const zone of zones) for (const b of zone.bins ?? []) list.push(b);
     for (const b of layout?.unassignedBins ?? []) list.push(b);
     return list;
   }, [layout, zones]);
 
   const filteredBins = useMemo(() => {
     let list = allBins;
-    if (treeSel.kind === 'unassigned') {
-      list = layout?.unassignedBins ?? [];
-    } else if (treeSel.kind === 'zone') {
-      const zone = zones.find((z) => z._id === treeSel.zoneId);
-      list = zone?.bins ?? [];
-    } else if (treeSel.kind === 'rack') {
-      const zone = zones.find((z) => z._id === treeSel.zoneId);
-      list = (zone?.bins ?? []).filter((b) => b.rackId === treeSel.rackId);
-    } else if (treeSel.kind === 'shelf') {
-      const zone = zones.find((z) => z._id === treeSel.zoneId);
-      list = (zone?.bins ?? []).filter((b) => b.shelfId === treeSel.shelfId);
-    }
+    if (treeSel.kind === 'unassigned') list = layout?.unassignedBins ?? [];
+    else if (treeSel.kind === 'zone') list = zones.find((z) => z._id === treeSel.zoneId)?.bins ?? [];
+    else if (treeSel.kind === 'rack') list = (zones.find((z) => z._id === treeSel.zoneId)?.bins ?? []).filter((b) => b.rackId === treeSel.rackId);
+    else if (treeSel.kind === 'shelf') list = (zones.find((z) => z._id === treeSel.zoneId)?.bins ?? []).filter((b) => b.shelfId === treeSel.shelfId);
     const q = binSearch.trim().toLowerCase();
     if (q) {
-      list = list.filter((b) =>
-        b.binCode?.toLowerCase().includes(q)
-        || b.barcode?.toLowerCase().includes(q)
-        || b.zoneCode?.toLowerCase().includes(q)
-        || binLabel(b).toLowerCase().includes(q));
+      list = list.filter((b) => b.binCode?.toLowerCase().includes(q) || b.barcode?.toLowerCase().includes(q)
+        || b.zoneCode?.toLowerCase().includes(q) || binLabel(b).toLowerCase().includes(q));
     }
     return list.slice().sort((a, b) => sortCode(a.binCode, b.binCode));
   }, [allBins, treeSel, zones, layout, binSearch]);
 
-  const pageBins = filteredBins.slice((binPage - 1) * PAGE_SIZE, binPage * PAGE_SIZE);
   const totalPages = Math.max(1, Math.ceil(filteredBins.length / PAGE_SIZE));
-
+  const pageBins = filteredBins.slice((binPage - 1) * PAGE_SIZE, binPage * PAGE_SIZE);
   useEffect(() => { setBinPage(1); }, [treeSel, binSearch, whId]);
 
   const breadcrumb = useMemo(() => {
     const parts: string[] = [];
-    if (selectedWarehouse) parts.push(selectedWarehouse.warehouseCode);
     if (treeSel.kind === 'all') parts.push('All bins');
-    else if (treeSel.kind === 'unassigned') parts.push('Unassigned');
-    else if (treeSel.kind === 'zone' || treeSel.kind === 'rack' || treeSel.kind === 'shelf') {
+    else if (treeSel.kind === 'unassigned') parts.push('Unassigned bins');
+    else {
       const zone = zones.find((z) => z._id === treeSel.zoneId);
       if (zone) parts.push(zone.zoneCode || '—');
       if (treeSel.kind === 'rack' || treeSel.kind === 'shelf') {
         const rack = (zone?.racks ?? []).find((r) => r._id === treeSel.rackId);
         if (rack) parts.push(rack.rackCode);
-      }
-      if (treeSel.kind === 'shelf') {
-        const zone = zones.find((z) => z._id === treeSel.zoneId);
-        const rack = (zone?.racks ?? []).find((r) => r._id === treeSel.rackId);
-        const shelf = (rack?.shelves ?? []).find((s) => s._id === treeSel.shelfId);
-        if (shelf) parts.push(shelf.shelfCode);
+        if (treeSel.kind === 'shelf') {
+          const shelf = (rack?.shelves ?? []).find((s) => s._id === treeSel.shelfId);
+          if (shelf) parts.push(shelf.shelfCode);
+        }
       }
     }
-    return parts;
-  }, [selectedWarehouse, treeSel, zones]);
+    return parts.join(' / ');
+  }, [treeSel, zones]);
 
-  const mut = useMutation({
-    mutationFn: async (action: { type: string; payload?: Record<string, unknown> }) => {
-      const { type, payload = {} } = action;
-      switch (type) {
-        case 'createWh': return warehouseApi.create(payload);
-        case 'createZone': return warehouseApi.createZone(whId, payload);
-        case 'createRack': return warehouseApi.createRack(payload.zoneId as string, {
-          rackCode: payload.rackCode as string,
-        });
-        case 'createShelf': return warehouseApi.createShelf(payload.rackId as string, {
-          shelfCode: payload.shelfCode as string,
-        });
-        case 'createBin': return warehouseApi.createBin(whId, payload);
-        case 'assignBinZone': return warehouseApi.updateBin(whId, payload.binId as string, {
-          zoneId: payload.zoneId as string,
-        });
-        case 'lookupBin': return warehouseApi.lookupBin(barcodeInput.trim());
-        case 'putAway': return warehouseApi.putAway({
-          materialId: payload.materialId as string,
-          binId: payload.binId as string,
-          quantity: payload.quantity as number,
-        });
-        case 'pick': return warehouseApi.pick({
-          materialId: payload.materialId as string,
-          binId: payload.binId as string,
-          quantity: payload.quantity as number,
-        });
-        default: throw new Error('Unknown action');
-      }
-    },
-    onSuccess: (data, vars) => {
-      setError('');
-      invalidate();
-      if (vars.type === 'lookupBin' && data && typeof data === 'object' && 'bin' in data) {
-        const contents = data as { bin: StorageBin };
-        setSelectedWh(contents.bin.warehouseId);
-        setSelectedBinId(contents.bin._id);
-        setTreeSel({ kind: 'all' });
-        showSuccess(`Found bin ${binLabel(contents.bin)}`);
-        return;
-      }
-      if (vars.type === 'createWh') {
-        setWhForm({ warehouseCode: '', name: '', type: 'RAW_MATERIAL', isDefault: false });
-        setAddKind(null);
-        showSuccess('Warehouse created');
-        return;
-      }
-      if (vars.type === 'createZone') {
-        setZoneForm({ zoneCode: '', name: '' });
-        setAddKind(null);
-        showSuccess('Zone created');
-        return;
-      }
-      if (vars.type === 'createRack') {
-        setRackForm((f) => ({ ...f, rackCode: '' }));
-        setAddKind(null);
-        showSuccess('Rack created');
-        return;
-      }
-      if (vars.type === 'createShelf') {
-        setShelfForm((f) => ({ ...f, shelfCode: '' }));
-        setAddKind(null);
-        showSuccess('Shelf created');
-        return;
-      }
-      if (vars.type === 'createBin') {
-        setBinForm((f) => ({ ...f, binCode: '', capacity: '' }));
-        setAddKind(null);
-        showSuccess('Bin created');
-        return;
-      }
-      if (vars.type === 'assignBinZone') showSuccess('Bin assigned to zone');
-      if (vars.type === 'putAway') showSuccess('Put away complete');
-      if (vars.type === 'pick') showSuccess('Pick complete');
-    },
-    onError: (e: Error) => setError(e.message),
-  });
-
-  const toggleZone = (id: string) => {
-    setExpandedZones((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-  const toggleRack = (id: string) => {
-    setExpandedRacks((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-
+  const toggle = (set: Set<string>, id: string) => { const n = new Set(set); if (n.has(id)) n.delete(id); else n.add(id); return n; };
   const selectTree = (sel: TreeSel) => {
     setTreeSel(sel);
-    setSelectedBinId(null);
-    if (sel.kind === 'zone') {
-      setExpandedZones((p) => new Set(p).add(sel.zoneId));
-    }
-    if (sel.kind === 'rack' || sel.kind === 'shelf') {
-      setExpandedZones((p) => new Set(p).add(sel.zoneId));
-      setExpandedRacks((p) => new Set(p).add(sel.rackId));
-    }
+    if (sel.kind === 'zone' || sel.kind === 'rack' || sel.kind === 'shelf') setExpandedZones((p) => new Set(p).add(sel.zoneId));
+    if (sel.kind === 'rack' || sel.kind === 'shelf') setExpandedRacks((p) => new Set(p).add(sel.rackId));
   };
 
-  const openAdd = (kind: AddKind) => {
-    setAddKind(kind);
-    if (kind === 'rack' && treeSel.kind !== 'all' && treeSel.kind !== 'unassigned') {
-      setRackForm((f) => ({ ...f, zoneId: treeSel.zoneId || f.zoneId }));
-    }
-    if (kind === 'shelf') {
-      if (treeSel.kind === 'rack' || treeSel.kind === 'shelf') {
-        setShelfForm((f) => ({
-          ...f,
-          zoneId: treeSel.zoneId,
-          rackId: treeSel.rackId,
-        }));
-      } else if (treeSel.kind === 'zone') {
-        setShelfForm((f) => ({ ...f, zoneId: treeSel.zoneId, rackId: '' }));
-      }
-    }
-    if (kind === 'bin') {
-      if (treeSel.kind === 'shelf') {
-        setBinForm((f) => ({
-          ...f,
-          zoneId: treeSel.zoneId,
-          rackId: treeSel.rackId,
-          shelfId: treeSel.shelfId,
-        }));
-      } else if (treeSel.kind === 'rack') {
-        setBinForm((f) => ({
-          ...f,
-          zoneId: treeSel.zoneId,
-          rackId: treeSel.rackId,
-          shelfId: '',
-        }));
-      } else if (treeSel.kind === 'zone') {
-        setBinForm((f) => ({ ...f, zoneId: treeSel.zoneId, rackId: '', shelfId: '' }));
-      }
-    }
-  };
+  const treeBtn = (selected: boolean) => `flex min-h-9 w-full items-center gap-1.5 rounded-md px-2 text-left hover:bg-[var(--erp-surface-muted)] ${selected ? 'bg-[var(--erp-accent-subtle)] font-medium text-erp-text-primary' : ''}`;
 
-  const zoneBinCount = (zone: WarehouseZone & { bins?: StorageBin[]; racks?: WarehouseRack[] }) =>
-    zone.bins?.length ?? 0;
+  const addItems = [
+    { label: 'Warehouse', icon: WhIcon, hidden: !canCreate, onSelect: () => setAddKind('warehouse' as const) },
+    { type: 'separator' as const, hidden: !canConfigure || !whId },
+    { label: 'Zone', icon: MapPin, hidden: !canConfigure || !whId, onSelect: () => setAddKind('zone' as const) },
+    { label: 'Rack', icon: Rows3, hidden: !canConfigure || !whId, onSelect: () => setAddKind('rack' as const) },
+    { label: 'Shelf', icon: Layers, hidden: !canConfigure || !whId, onSelect: () => setAddKind('shelf' as const) },
+  ];
 
   return (
     <>
-      <AlertBanner message={error} onDismiss={() => setError('')} />
-      {success && <SuccessBanner message={success} onDismiss={() => setSuccess('')} />}
-      <ConfirmDialog
-        open={!!confirmAction}
-        title={confirmAction?.title ?? 'Confirm'}
-        message={confirmAction?.message ?? 'Continue?'}
-        loading={mut.isPending}
-        onConfirm={() => { confirmAction?.fn(); setConfirmAction(null); }}
-        onCancel={() => setConfirmAction(null)}
+      <PageHeader
+        title="Sites & layout"
+        description="Warehouses and their zones, racks, shelves and bins."
+        secondaryActions={(
+          <>
+            <IconButton aria-label="Refresh" loading={warehousesQ.isFetching || layoutQ.isFetching} onClick={() => { warehousesQ.refetch(); layoutQ.refetch(); }}>
+              <RefreshCw size={16} />
+            </IconButton>
+            <Button variant="secondary" icon={<Search size={16} />} onClick={() => navigate('/warehouse/stock-locator')}>Find stock</Button>
+            {(canCreate || canConfigure) && (
+              <DropdownMenu
+                label="Add location"
+                items={addItems}
+                trigger={<Button variant="secondary" icon={<Plus size={16} />} iconRight={<ChevronDown size={14} />}>Add</Button>}
+              />
+            )}
+          </>
+        )}
+        primaryAction={canCreate ? (
+          whId
+            ? <Button icon={<Plus size={16} />} onClick={() => setAddKind('bin')}>New bin</Button>
+            : <Button icon={<Plus size={16} />} onClick={() => setAddKind('warehouse')}>New warehouse</Button>
+        ) : undefined}
       />
 
-      {/* Warehouse picker + toolbar */}
-      <ErpCard className="mb-3 !p-3">
-        <div className="flex flex-wrap items-end gap-2">
-          <div className="min-w-[200px]">
-            <label className={fieldLabel}>Warehouse</label>
-            <ErpSelect
-              className="!py-1.5 text-[11px]"
-              value={whId}
-              onChange={(e) => {
-                setSelectedWh(e.target.value);
-                setTreeSel({ kind: 'all' });
-                setSelectedBinId(null);
-                setExpandedZones(new Set());
-                setExpandedRacks(new Set());
-              }}
-            >
-              {warehouses.length === 0 && <option value="">No warehouses</option>}
-              {warehouses.map((w: Warehouse) => (
-                <option key={w._id} value={w._id}>
-                  {w.warehouseCode} · {warehouseTypeLabel(w.type)}{w.isDefault ? ' (default)' : ''}
-                </option>
-              ))}
-            </ErpSelect>
-          </div>
-          <div className="relative min-w-[160px] flex-1">
-            <label className={fieldLabel}>Search bins</label>
-            <div className="relative">
-              <Search size={12} className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-erp-text-muted" />
-              <ErpInput
-                className="!py-1.5 !pl-7 text-[11px]"
-                placeholder="Code or barcode…"
-                value={binSearch}
-                onChange={(e) => setBinSearch(e.target.value)}
-              />
-            </div>
-          </div>
-          <div className="min-w-[140px]">
-            <label className={fieldLabel}>Scan barcode</label>
-            <div className="flex gap-1">
-              <ErpInput
-                className="!py-1.5 text-[11px]"
-                placeholder="BIN-…"
-                value={barcodeInput}
-                onChange={(e) => setBarcodeInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && barcodeInput.trim()) mut.mutate({ type: 'lookupBin' });
-                }}
-              />
-              <ErpButton
-                variant="secondary"
-                className={btnSm}
-                disabled={!barcodeInput.trim() || mut.isPending}
-                onClick={() => mut.mutate({ type: 'lookupBin' })}
-              >
-                <Scan className="h-3 w-3" />
-              </ErpButton>
-            </div>
-          </div>
-          <ErpButton variant="secondary" className={`${btnSm} self-end`} onClick={() => { refetch(); invalidate(); }} disabled={isFetching}>
-            Refresh
-          </ErpButton>
-          <Link to="/warehouse/stock-locator" className="self-end">
-            <ErpButton variant="secondary" className={btnSm}>Find stock →</ErpButton>
-          </Link>
-          {(canCreate || canConfigure) && (
-            <div className="flex flex-wrap gap-1 self-end">
-              {canCreate && (
-                <ErpButton className={btnSm} variant={addKind === 'warehouse' ? 'primary' : 'secondary'} onClick={() => openAdd(addKind === 'warehouse' ? null : 'warehouse')}>
-                  <Plus className="mr-0.5 inline h-3 w-3" />Warehouse
-                </ErpButton>
-              )}
-              {canConfigure && !!whId && (
-                <>
-                  <ErpButton className={btnSm} variant={addKind === 'zone' ? 'primary' : 'secondary'} onClick={() => openAdd(addKind === 'zone' ? null : 'zone')}>
-                    <Plus className="mr-0.5 inline h-3 w-3" />Zone
-                  </ErpButton>
-                  <ErpButton className={btnSm} variant={addKind === 'rack' ? 'primary' : 'secondary'} onClick={() => openAdd(addKind === 'rack' ? null : 'rack')}>
-                    <Plus className="mr-0.5 inline h-3 w-3" />Rack
-                  </ErpButton>
-                  <ErpButton className={btnSm} variant={addKind === 'shelf' ? 'primary' : 'secondary'} onClick={() => openAdd(addKind === 'shelf' ? null : 'shelf')}>
-                    <Plus className="mr-0.5 inline h-3 w-3" />Shelf
-                  </ErpButton>
-                </>
-              )}
-              {canCreate && !!whId && (
-                <ErpButton className={btnSm} variant={addKind === 'bin' ? 'primary' : 'secondary'} onClick={() => openAdd(addKind === 'bin' ? null : 'bin')}>
-                  <Plus className="mr-0.5 inline h-3 w-3" />Bin
-                </ErpButton>
-              )}
-            </div>
-          )}
+      {warehousesQ.isLoading ? (
+        <Section><Skeleton width="40%" /></Section>
+      ) : !whId ? (
+        <div className="erp-card">
+          <EmptyState
+            icon={WhIcon}
+            title="No warehouses yet"
+            description="Create a raw-material and a finished-goods warehouse, then add zones and bins."
+            action={canCreate ? <Button icon={<Plus size={16} />} onClick={() => setAddKind('warehouse')}>New warehouse</Button> : undefined}
+          />
         </div>
-      </ErpCard>
-
-      {/* Collapsible add form */}
-      {addKind && (
-        <ErpCard className="mb-3 !p-3">
-          <div className="mb-2 flex items-center justify-between">
-            <h3 className="text-[11px] font-semibold">
-              Add {addKind}
-            </h3>
-            <ErpButton variant="secondary" className={btnSm} onClick={() => setAddKind(null)}>
-              <X className="h-3 w-3" />
-            </ErpButton>
-          </div>
-
-          {addKind === 'warehouse' && (
-            <div className="flex flex-wrap items-end gap-2">
-              <div>
-                <label className={fieldLabel}>Code</label>
-                <ErpInput className="w-28 !py-1.5 text-[11px]" value={whForm.warehouseCode} onChange={(e) => setWhForm({ ...whForm, warehouseCode: e.target.value })} />
-              </div>
-              <div>
-                <label className={fieldLabel}>Name</label>
-                <ErpInput className="w-40 !py-1.5 text-[11px]" value={whForm.name} onChange={(e) => setWhForm({ ...whForm, name: e.target.value })} />
-              </div>
-              <div>
-                <label className={fieldLabel}>Type</label>
-                <ErpSelect className="w-36 !py-1.5 text-[11px]" value={whForm.type} onChange={(e) => setWhForm({ ...whForm, type: e.target.value })}>
-                  <option value="RAW_MATERIAL">Raw material</option>
-                  <option value="WIP">WIP</option>
-                  <option value="FINISHED_GOODS">Finished goods</option>
-                </ErpSelect>
-              </div>
-              <label className="flex items-center gap-1 text-[10px]">
-                <input type="checkbox" checked={whForm.isDefault} onChange={(e) => setWhForm({ ...whForm, isDefault: e.target.checked })} />
-                Default
-              </label>
-              <ErpButton
-                className={btnSm}
-                disabled={!whForm.warehouseCode.trim() || !whForm.name.trim() || mut.isPending}
-                onClick={() => mut.mutate({ type: 'createWh', payload: whForm })}
-              >
-                Save
-              </ErpButton>
-            </div>
-          )}
-
-          {addKind === 'zone' && (
-            <div className="flex flex-wrap items-end gap-2">
-              <div>
-                <label className={fieldLabel}>Zone code</label>
-                <ErpInput className="w-24 !py-1.5 text-[11px] font-mono" value={zoneForm.zoneCode} onChange={(e) => setZoneForm({ ...zoneForm, zoneCode: e.target.value })} placeholder="Z1" />
-              </div>
-              <div>
-                <label className={fieldLabel}>Name</label>
-                <ErpInput className="w-36 !py-1.5 text-[11px]" value={zoneForm.name} onChange={(e) => setZoneForm({ ...zoneForm, name: e.target.value })} placeholder="Zone 1" />
-              </div>
-              <ErpButton
-                className={btnSm}
-                disabled={!zoneForm.zoneCode.trim() || !zoneForm.name.trim() || mut.isPending}
-                onClick={() => mut.mutate({ type: 'createZone', payload: zoneForm })}
-              >
-                Save
-              </ErpButton>
-            </div>
-          )}
-
-          {addKind === 'rack' && (
-            <div className="flex flex-wrap items-end gap-2">
-              <div>
-                <label className={fieldLabel}>Zone</label>
-                <ErpSelect className="w-32 !py-1.5 text-[11px]" value={rackForm.zoneId} onChange={(e) => setRackForm({ ...rackForm, zoneId: e.target.value })}>
-                  <option value="">Select…</option>
-                  {zones.map((z) => <option key={z._id} value={z._id}>{z.zoneCode}</option>)}
-                </ErpSelect>
-              </div>
-              <div>
-                <label className={fieldLabel}>Rack code</label>
-                <ErpInput className="w-24 !py-1.5 text-[11px] font-mono" value={rackForm.rackCode} onChange={(e) => setRackForm({ ...rackForm, rackCode: e.target.value })} placeholder="R-11" />
-              </div>
-              <ErpButton
-                className={btnSm}
-                disabled={!rackForm.zoneId || !rackForm.rackCode.trim() || mut.isPending}
-                onClick={() => mut.mutate({ type: 'createRack', payload: rackForm })}
-              >
-                Save
-              </ErpButton>
-              {zones.length === 0 && <p className="text-[10px] text-amber-700">Create a zone first</p>}
-            </div>
-          )}
-
-          {addKind === 'shelf' && (
-            <div className="flex flex-wrap items-end gap-2">
-              <div>
-                <label className={fieldLabel}>Zone</label>
-                <ErpSelect
-                  className="w-28 !py-1.5 text-[11px]"
-                  value={shelfForm.zoneId}
-                  onChange={(e) => setShelfForm({ zoneId: e.target.value, rackId: '', shelfCode: shelfForm.shelfCode })}
-                >
-                  <option value="">Select…</option>
-                  {zones.map((z) => <option key={z._id} value={z._id}>{z.zoneCode}</option>)}
-                </ErpSelect>
-              </div>
-              <div>
-                <label className={fieldLabel}>Rack</label>
-                <ErpSelect
-                  className="w-28 !py-1.5 text-[11px]"
-                  value={shelfForm.rackId}
-                  disabled={!shelfForm.zoneId}
-                  onChange={(e) => setShelfForm({ ...shelfForm, rackId: e.target.value })}
-                >
-                  <option value="">Select…</option>
-                  {racksForShelf.map((r) => <option key={r._id} value={r._id}>{r.rackCode}</option>)}
-                </ErpSelect>
-              </div>
-              <div>
-                <label className={fieldLabel}>Shelf code</label>
-                <ErpInput className="w-24 !py-1.5 text-[11px] font-mono" value={shelfForm.shelfCode} onChange={(e) => setShelfForm({ ...shelfForm, shelfCode: e.target.value })} placeholder="S-8" />
-              </div>
-              <ErpButton
-                className={btnSm}
-                disabled={!shelfForm.rackId || !shelfForm.shelfCode.trim() || mut.isPending}
-                onClick={() => mut.mutate({ type: 'createShelf', payload: shelfForm })}
-              >
-                Save
-              </ErpButton>
-            </div>
-          )}
-
-          {addKind === 'bin' && (
-            <div className="flex flex-wrap items-end gap-2">
-              <div>
-                <label className={fieldLabel}>Zone</label>
-                <ErpSelect
-                  className="w-28 !py-1.5 text-[11px]"
-                  value={binForm.zoneId}
-                  onChange={(e) => setBinForm({ ...binForm, zoneId: e.target.value, rackId: '', shelfId: '' })}
-                >
-                  <option value="">Select…</option>
-                  {zones.map((z) => <option key={z._id} value={z._id}>{z.zoneCode}</option>)}
-                </ErpSelect>
-              </div>
-              <div>
-                <label className={fieldLabel}>Rack</label>
-                <ErpSelect
-                  className="w-28 !py-1.5 text-[11px]"
-                  value={binForm.rackId}
-                  disabled={!binForm.zoneId}
-                  onChange={(e) => setBinForm({ ...binForm, rackId: e.target.value, shelfId: '' })}
-                >
-                  <option value="">—</option>
-                  {racksForBin.map((r) => <option key={r._id} value={r._id}>{r.rackCode}</option>)}
-                </ErpSelect>
-              </div>
-              <div>
-                <label className={fieldLabel}>Shelf</label>
-                <ErpSelect
-                  className="w-28 !py-1.5 text-[11px]"
-                  value={binForm.shelfId}
-                  disabled={!binForm.rackId}
-                  onChange={(e) => setBinForm({ ...binForm, shelfId: e.target.value })}
-                >
-                  <option value="">—</option>
-                  {shelvesForBin.map((s) => <option key={s._id} value={s._id}>{s.shelfCode}</option>)}
-                </ErpSelect>
-              </div>
-              <div>
-                <label className={fieldLabel}>Bin code</label>
-                <ErpInput className="w-32 !py-1.5 text-[11px] font-mono" value={binForm.binCode} onChange={(e) => setBinForm({ ...binForm, binCode: e.target.value })} placeholder="Z1-R-11-S-8" />
-              </div>
-              <div>
-                <label className={fieldLabel}>Capacity</label>
-                <ErpInput type="number" className="w-20 !py-1.5 text-[11px]" value={binForm.capacity} onChange={(e) => setBinForm({ ...binForm, capacity: e.target.value })} />
-              </div>
-              <ErpButton
-                className={btnSm}
-                disabled={!binForm.zoneId || !binForm.binCode.trim() || mut.isPending}
-                onClick={() => mut.mutate({
-                  type: 'createBin',
-                  payload: {
-                    zoneId: binForm.zoneId,
-                    rackId: binForm.rackId || undefined,
-                    shelfId: binForm.shelfId || undefined,
-                    binCode: binForm.binCode.trim(),
-                    capacity: binForm.capacity ? Number(binForm.capacity) : undefined,
-                  },
-                })}
-              >
-                Save
-              </ErpButton>
-            </div>
-          )}
-        </ErpCard>
-      )}
-
-      {!whId ? (
-        <ErpCard className="!p-6 text-center text-[11px] text-erp-text-muted">
-          <WhIcon className="mx-auto mb-2 h-8 w-8 opacity-40" />
-          No warehouse yet — click <strong>Warehouse</strong> to create one.
-        </ErpCard>
       ) : (
-        <div className="grid gap-3 lg:grid-cols-[280px_minmax(0,1fr)]">
-          {/* Tree */}
-          <ErpCard className="!p-0 overflow-hidden max-h-[70vh] flex flex-col">
-            <div className="border-b border-[var(--erp-border)] px-3 py-2">
-              <p className="text-[10px] font-medium uppercase tracking-wide text-erp-text-muted">Layout</p>
-              <p className="truncate font-mono text-[11px]">{selectedWarehouse?.warehouseCode}</p>
+        <>
+          <Section className="mb-4">
+            <div className="flex flex-wrap items-end gap-3">
+              <Field label="Warehouse" className="min-w-[220px]">
+                <ErpSelect
+                  value={whId}
+                  onChange={(e) => {
+                    setSelectedWh(e.target.value);
+                    setTreeSel({ kind: 'all' });
+                    setSelectedBinId(null);
+                    setExpandedZones(new Set());
+                    setExpandedRacks(new Set());
+                  }}
+                >
+                  {warehouses.map((w: Warehouse) => (
+                    <option key={w._id} value={w._id}>{w.warehouseCode} · {warehouseTypeLabel(w.type)}{w.isDefault ? ' (default)' : ''}</option>
+                  ))}
+                </ErpSelect>
+              </Field>
+              <Field label="Scan or type a bin barcode" className="min-w-[240px] flex-1 sm:max-w-sm">
+                <form className="flex gap-2" onSubmit={(e) => { e.preventDefault(); if (barcodeInput.trim()) lookup.mutate(); }}>
+                  <ErpInput value={barcodeInput} onChange={(e) => setBarcodeInput(e.target.value)} placeholder="BIN-…" aria-label="Bin barcode" />
+                  <Button type="submit" variant="secondary" icon={<Scan size={16} />} loading={lookup.isPending} disabled={!barcodeInput.trim()}>Find</Button>
+                </form>
+              </Field>
             </div>
-            <div className="overflow-y-auto p-2 text-[11px]">
-              {layoutLoading ? (
-                <p className="p-2 text-erp-text-muted">Loading layout…</p>
+          </Section>
+
+          <div className="grid gap-4 lg:grid-cols-[280px_minmax(0,1fr)]">
+            <Section title="Layout" description={selectedWarehouse?.name} bodyClassName="!p-2 max-h-[65vh] overflow-y-auto">
+              {layoutQ.isLoading ? (
+                <div className="space-y-2 p-2"><Skeleton width="70%" /><Skeleton width="50%" /><Skeleton width="60%" /></div>
               ) : (
-                <ul className="space-y-0.5">
-                  <li>
-                    <button
-                      type="button"
-                      className={`flex w-full items-center gap-1 rounded px-2 py-1 text-left hover:bg-[var(--erp-surface-muted)] ${treeSel.kind === 'all' ? 'bg-[var(--erp-accent-muted)] font-medium' : ''}`}
-                      onClick={() => selectTree({ kind: 'all' })}
-                    >
-                      All bins
-                      <span className="ml-auto text-[10px] text-erp-text-muted">{allBins.length}</span>
+                <ul className="space-y-0.5 text-[13px]" role="tree" aria-label="Warehouse layout">
+                  <li role="treeitem" aria-selected={treeSel.kind === 'all'}>
+                    <button type="button" className={treeBtn(treeSel.kind === 'all')} onClick={() => selectTree({ kind: 'all' })}>
+                      <Boxes size={14} className="text-erp-text-muted" /> All bins
+                      <span className="ml-auto erp-tabular text-xs text-erp-text-muted">{allBins.length}</span>
                     </button>
                   </li>
                   {(layout?.unassignedBins?.length ?? 0) > 0 && (
-                    <li>
-                      <button
-                        type="button"
-                        className={`flex w-full items-center gap-1 rounded px-2 py-1 text-left text-amber-800 hover:bg-amber-500/10 ${treeSel.kind === 'unassigned' ? 'bg-amber-500/15 font-medium' : ''}`}
-                        onClick={() => selectTree({ kind: 'unassigned' })}
-                      >
-                        Unassigned
-                        <span className="ml-auto text-[10px]">{layout?.unassignedBins?.length}</span>
+                    <li role="treeitem" aria-selected={treeSel.kind === 'unassigned'}>
+                      <button type="button" className={treeBtn(treeSel.kind === 'unassigned')} onClick={() => selectTree({ kind: 'unassigned' })}>
+                        Unassigned <Badge tone="warning" className="ml-auto">{layout?.unassignedBins?.length}</Badge>
                       </button>
                     </li>
                   )}
                   {zones.slice().sort((a, b) => sortCode(a.zoneCode || '', b.zoneCode || '')).map((zone) => {
                     const open = expandedZones.has(zone._id);
                     const racks = (zone.racks ?? []).slice().sort((a, b) => sortCode(a.rackCode, b.rackCode));
-                    const selected = treeSel.kind === 'zone' && treeSel.zoneId === zone._id;
                     return (
-                      <li key={zone._id}>
+                      <li key={zone._id} role="treeitem" aria-expanded={open} aria-selected={treeSel.kind === 'zone' && treeSel.zoneId === zone._id}>
                         <div className="flex items-center">
-                          <button type="button" className="rounded p-1 hover:bg-[var(--erp-surface-muted)]" onClick={() => toggleZone(zone._id)}>
-                            {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-                          </button>
-                          <button
-                            type="button"
-                            className={`flex flex-1 items-center gap-1 rounded px-1 py-1 text-left hover:bg-[var(--erp-surface-muted)] ${selected ? 'bg-[var(--erp-accent-muted)] font-medium' : ''}`}
-                            onClick={() => selectTree({ kind: 'zone', zoneId: zone._id })}
-                          >
+                          <IconButton aria-label={open ? `Collapse ${zone.zoneCode}` : `Expand ${zone.zoneCode}`} tooltip={false} size="sm" onClick={() => setExpandedZones((s) => toggle(s, zone._id))}>
+                            {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                          </IconButton>
+                          <button type="button" className={treeBtn(treeSel.kind === 'zone' && treeSel.zoneId === zone._id)} onClick={() => selectTree({ kind: 'zone', zoneId: zone._id })}>
                             <span className="font-mono">{zone.zoneCode || '—'}</span>
-                            {zone.name && <span className="truncate text-erp-text-muted">· {zone.name}</span>}
-                            <span className="ml-auto text-[10px] text-erp-text-muted">{zoneBinCount(zone)}</span>
+                            {zone.name && <span className="truncate text-erp-text-muted">{zone.name}</span>}
+                            <span className="ml-auto erp-tabular text-xs text-erp-text-muted">{zone.bins?.length ?? 0}</span>
                           </button>
                         </div>
                         {open && (
-                          <ul className="ml-4 border-l border-[var(--erp-border)] pl-1">
-                            {racks.length === 0 && (
-                              <li className="px-2 py-1 text-[10px] text-erp-text-muted">No racks</li>
-                            )}
+                          <ul className="ml-5 border-l border-[var(--erp-border)] pl-1" role="group">
+                            {racks.length === 0 && <li className="px-2 py-1.5 text-xs text-erp-text-muted">No racks</li>}
                             {racks.map((rack) => {
                               const rackOpen = expandedRacks.has(rack._id);
                               const shelves = (rack.shelves ?? []).slice().sort((a, b) => sortCode(a.shelfCode, b.shelfCode));
-                              const rackSel = treeSel.kind === 'rack' && treeSel.rackId === rack._id;
-                              const rackBinCount = (zone.bins ?? []).filter((b) => b.rackId === rack._id).length;
+                              const rackBins = (zone.bins ?? []).filter((b) => b.rackId === rack._id).length;
                               return (
-                                <li key={rack._id}>
+                                <li key={rack._id} role="treeitem" aria-expanded={rackOpen}>
                                   <div className="flex items-center">
-                                    <button type="button" className="rounded p-1 hover:bg-[var(--erp-surface-muted)]" onClick={() => toggleRack(rack._id)}>
-                                      {rackOpen ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-                                    </button>
-                                    <button
-                                      type="button"
-                                      className={`flex flex-1 items-center gap-1 rounded px-1 py-0.5 text-left font-mono hover:bg-[var(--erp-surface-muted)] ${rackSel ? 'bg-[var(--erp-accent-muted)] font-medium' : ''}`}
-                                      onClick={() => selectTree({ kind: 'rack', zoneId: zone._id, rackId: rack._id })}
-                                    >
-                                      {rack.rackCode}
-                                      <span className="ml-auto text-[10px] font-sans text-erp-text-muted">
-                                        {shelves.length}s · {rackBinCount}b
-                                      </span>
+                                    <IconButton aria-label={rackOpen ? `Collapse ${rack.rackCode}` : `Expand ${rack.rackCode}`} tooltip={false} size="sm" onClick={() => setExpandedRacks((s) => toggle(s, rack._id))}>
+                                      {rackOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                                    </IconButton>
+                                    <button type="button" className={treeBtn(treeSel.kind === 'rack' && treeSel.rackId === rack._id)} onClick={() => selectTree({ kind: 'rack', zoneId: zone._id, rackId: rack._id })}>
+                                      <span className="font-mono">{rack.rackCode}</span>
+                                      <span className="ml-auto text-xs text-erp-text-muted">{shelves.length} shelves · {rackBins} bins</span>
                                     </button>
                                   </div>
                                   {rackOpen && (
-                                    <ul className="ml-4 border-l border-[var(--erp-border)] pl-1">
-                                      {shelves.length === 0 && (
-                                        <li className="px-2 py-0.5 text-[10px] text-erp-text-muted">No shelves</li>
-                                      )}
-                                      {shelves.map((shelf) => {
-                                        const shelfSel = treeSel.kind === 'shelf' && treeSel.shelfId === shelf._id;
-                                        const shelfBinCount = (zone.bins ?? []).filter((b) => b.shelfId === shelf._id).length;
-                                        return (
-                                          <li key={shelf._id}>
-                                            <button
-                                              type="button"
-                                              className={`flex w-full items-center gap-1 rounded px-2 py-0.5 text-left font-mono hover:bg-[var(--erp-surface-muted)] ${shelfSel ? 'bg-[var(--erp-accent-muted)] font-medium' : ''}`}
-                                              onClick={() => selectTree({
-                                                kind: 'shelf',
-                                                zoneId: zone._id,
-                                                rackId: rack._id,
-                                                shelfId: shelf._id,
-                                              })}
-                                            >
-                                              {shelf.shelfCode}
-                                              <span className="ml-auto text-[10px] font-sans text-erp-text-muted">{shelfBinCount}</span>
-                                            </button>
-                                          </li>
-                                        );
-                                      })}
+                                    <ul className="ml-5 border-l border-[var(--erp-border)] pl-1" role="group">
+                                      {shelves.length === 0 && <li className="px-2 py-1.5 text-xs text-erp-text-muted">No shelves</li>}
+                                      {shelves.map((shelf) => (
+                                        <li key={shelf._id} role="treeitem" aria-selected={treeSel.kind === 'shelf' && treeSel.shelfId === shelf._id}>
+                                          <button
+                                            type="button"
+                                            className={treeBtn(treeSel.kind === 'shelf' && treeSel.shelfId === shelf._id)}
+                                            onClick={() => selectTree({ kind: 'shelf', zoneId: zone._id, rackId: rack._id, shelfId: shelf._id })}
+                                          >
+                                            <span className="font-mono">{shelf.shelfCode}</span>
+                                            <span className="ml-auto erp-tabular text-xs text-erp-text-muted">{(zone.bins ?? []).filter((b) => b.shelfId === shelf._id).length}</span>
+                                          </button>
+                                        </li>
+                                      ))}
                                     </ul>
                                   )}
                                 </li>
@@ -931,284 +742,90 @@ export function SitesLayoutSection() {
                     );
                   })}
                   {zones.length === 0 && (
-                    <li className="px-2 py-3 text-erp-text-muted">No zones — add a Zone to start.</li>
+                    <li className="px-2 py-3 text-erp-text-muted">
+                      No zones yet.{canConfigure && <> <button type="button" className="font-medium text-[var(--erp-accent)] hover:underline" onClick={() => setAddKind('zone')}>Add a zone</button></>}
+                    </li>
                   )}
                 </ul>
               )}
-            </div>
-          </ErpCard>
+            </Section>
 
-          {/* Bins + stock */}
-          <div className="space-y-3 min-w-0">
-            <ErpCard className="!p-0 overflow-hidden">
-              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--erp-border)] px-3 py-2">
-                <div>
-                  <p className="text-[10px] text-erp-text-muted">{breadcrumb.join(' / ')}</p>
-                  <p className="text-[11px] font-medium">{filteredBins.length} bin{filteredBins.length === 1 ? '' : 's'}</p>
-                </div>
-              </div>
-              <div className="overflow-x-auto max-h-[42vh]">
-                <ErpDataTable className="w-full text-[11px]">
-                  <thead>
-                    <tr>
-                      <th className="px-3 py-2 text-left">Bin</th>
-                      <th className="px-3 py-2 text-left">Location</th>
-                      <th className="px-3 py-2 text-left">Barcode</th>
-                      <th className="px-3 py-2 text-left">Status</th>
-                      <th className="px-3 py-2 text-right">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {pageBins.map((b) => {
-                      const zone = zones.find((z) => z._id === b.zoneId);
-                      const rack = (zone?.racks ?? []).find((r) => r._id === b.rackId);
-                      const shelf = (rack?.shelves ?? []).find((s) => s._id === b.shelfId);
-                      const loc = [zone?.zoneCode, rack?.rackCode, shelf?.shelfCode].filter(Boolean).join(' / ') || '—';
-                      const active = selectedBinId === b._id;
-                      return (
-                        <tr
-                          key={b._id}
-                          className={`border-t border-[var(--erp-border)] ${active ? 'bg-[var(--erp-accent-muted)]' : ''}`}
-                        >
-                          <td className="px-3 py-2 font-mono">{binLabel(b)}</td>
-                          <td className="px-3 py-2 font-mono text-[10px] text-erp-text-muted">{loc}</td>
-                          <td className="px-3 py-2 text-[10px] text-erp-text-muted">{b.barcode || '—'}</td>
-                          <td className="px-3 py-2"><ErpStatusBadge status={b.status} label={statusLabel(b.status)} /></td>
-                          <td className="px-3 py-2 text-right">
-                            <div className="flex flex-wrap justify-end gap-1">
-                              {!b.zoneId && canCreate && zones[0] && (
-                                <ErpButton
-                                  className={btnSm}
-                                  variant="secondary"
-                                  onClick={() => mut.mutate({
-                                    type: 'assignBinZone',
-                                    payload: { binId: b._id, zoneId: zones[0]._id },
-                                  })}
-                                >
-                                  Assign {zones[0].zoneCode}
-                                </ErpButton>
-                              )}
-                              <ErpButton
-                                className={btnSm}
+            <Section
+              flush
+              title={`${filteredBins.length} bin${filteredBins.length === 1 ? '' : 's'}`}
+              description={breadcrumb}
+              actions={<SearchInput inputSize="sm" value={binSearch} onChange={setBinSearch} placeholder="Filter bins…" wrapperClassName="w-56" />}
+            >
+              <ErpDataTable className="min-w-[560px]">
+                <thead>
+                  <tr><th>Bin</th><th>Location</th><th>Barcode</th><th>Status</th><th className="erp-cell-actions"><span className="sr-only">Actions</span></th></tr>
+                </thead>
+                <tbody>
+                  {layoutQ.isLoading ? <TableSkeleton asRows rows={6} columns={5} /> : layoutQ.isError ? <QueryErrorRow colSpan={5} error={layoutQ.error} onRetry={() => layoutQ.refetch()} /> : pageBins.length === 0 ? (
+                    <EmptyRow
+                      colSpan={5}
+                      icon={Boxes}
+                      title={binSearch ? 'No bins match your filter' : treeSel.kind === 'all' && zones.length === 0 ? 'No layout yet' : 'No bins here yet'}
+                      action={!binSearch && canCreate && zones.length > 0 ? <Button size="sm" icon={<Plus size={14} />} onClick={() => setAddKind('bin')}>New bin</Button> : undefined}
+                    >
+                      {treeSel.kind === 'all' && zones.length === 0 && !binSearch ? 'Add a zone, then racks, shelves and bins.' : undefined}
+                    </EmptyRow>
+                  ) : pageBins.map((b) => {
+                    const zone = zones.find((z) => z._id === b.zoneId);
+                    const rack = (zone?.racks ?? []).find((r) => r._id === b.rackId);
+                    const shelf = (rack?.shelves ?? []).find((s) => s._id === b.shelfId);
+                    const loc = [zone?.zoneCode, rack?.rackCode, shelf?.shelfCode].filter(Boolean).join(' / ') || '—';
+                    return (
+                      <tr key={b._id} className={`erp-row-clickable${selectedBinId === b._id ? ' erp-row-selected' : ''}`} onClick={() => setSelectedBinId(b._id)}>
+                        <td className="erp-cell-primary font-mono">{binLabel(b)}</td>
+                        <td className="font-mono text-erp-text-muted">{loc}</td>
+                        <td className="text-erp-text-muted">{b.barcode || '—'}</td>
+                        <td><StatusBadge status={b.status} /></td>
+                        <td className="erp-cell-actions">
+                          <div className="flex justify-end gap-1">
+                            {!b.zoneId && canCreate && zones[0] ? (
+                              <Button
+                                size="sm"
                                 variant="secondary"
-                                onClick={() => openBinStock(b._id)}
+                                loading={assignZone.isPending && assignZone.variables?.binId === b._id}
+                                onClick={(e) => { e.stopPropagation(); assignZone.mutate({ binId: b._id, zoneId: zones[0]._id }); }}
                               >
-                                Stock
-                              </ErpButton>
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                    {pageBins.length === 0 && (
-                      <tr>
-                        <td colSpan={5} className="px-4 py-8 text-center text-erp-text-muted">
-                          {treeSel.kind === 'all' && zones.length === 0
-                            ? 'No layout yet — add a Zone, then Rack / Shelf / Bin.'
-                            : 'No bins in this selection.'}
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </ErpDataTable>
-              </div>
-              {filteredBins.length > PAGE_SIZE && (
-                <div className="flex items-center justify-between border-t border-[var(--erp-border)] px-3 py-2 text-[10px] text-erp-text-muted sm:pr-24">
-                  <span>{binPage}/{totalPages} · {filteredBins.length}</span>
-                  <div className="flex items-center gap-1 sm:mr-16">
-                    <ErpButton className={btnSm} variant="secondary" disabled={binPage <= 1} onClick={() => setBinPage((p) => p - 1)}>Prev</ErpButton>
-                    <ErpButton className={btnSm} variant="secondary" disabled={binPage >= totalPages} onClick={() => setBinPage((p) => p + 1)}>Next</ErpButton>
-                  </div>
-                </div>
-              )}
-            </ErpCard>
-          </div>
-        </div>
-      )}
-
-      {stockModalOpen && selectedBinId && (
-        <ModalShell onClose={closeBinStock}>
-          <div className="rounded-lg border border-[var(--erp-border)] bg-[var(--erp-surface,var(--erp-header-bg,#fff))] shadow-2xl">
-            <div className="flex items-start justify-between gap-3 border-b border-[var(--erp-border)] px-4 py-3">
-              <div>
-                <h3 className="text-sm font-semibold text-erp-text-primary">
-                  <Package className="mr-1.5 inline h-4 w-4" />
-                  Bin stock — {binLabel(binContents?.bin || allBins.find((b) => b._id === selectedBinId))}
-                </h3>
-                <p className="mt-0.5 text-[10px] text-erp-text-muted">
-                  {filteredStockRows.length} item{filteredStockRows.length === 1 ? '' : 's'}
-                  {stockSearch.trim() ? ` matching “${stockSearch.trim()}”` : ''}
-                </p>
-              </div>
-              <button
-                type="button"
-                className="rounded p-1 text-erp-text-muted hover:bg-[var(--erp-surface-muted)] hover:text-erp-text-primary"
-                onClick={closeBinStock}
-                aria-label="Close"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-
-            <div className="space-y-3 px-4 py-3">
-              <div className="flex flex-wrap items-end gap-2">
-                <div className="min-w-[200px] flex-1">
-                  <label className={fieldLabel}>Search stock</label>
-                  <div className="relative">
-                    <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-erp-text-muted" />
-                    <ErpInput
-                      className="!py-1.5 !pl-7 text-[11px]"
-                      placeholder="Material / SKU code or name…"
-                      value={stockSearch}
-                      onChange={(e) => setStockSearch(e.target.value)}
-                      autoFocus
-                    />
-                  </div>
-                </div>
-                {isRmWarehouse && (
-                  <div className="flex gap-1">
-                    <Link to="/warehouse/operations/put-away"><ErpButton variant="secondary" className={btnSm}>Put-away</ErpButton></Link>
-                    <Link to="/warehouse/operations/picking"><ErpButton variant="secondary" className={btnSm}>Picking</ErpButton></Link>
-                  </div>
-                )}
-                {selectedWarehouse?.type === 'FINISHED_GOODS' && (binContents?.finishedGoods?.length ?? 0) > 0 && (
-                  <Link to="/warehouse/operations/dispatch">
-                    <ErpButton variant="secondary" className={btnSm}>Dispatch →</ErpButton>
-                  </Link>
-                )}
-              </div>
-
-              {isRmWarehouse && canUpdate && (
-                <div className="flex flex-wrap items-end gap-2 rounded border border-[var(--erp-border)] bg-[var(--erp-surface-muted)] p-2">
-                  <div className="min-w-[120px]">
-                    <label className={fieldLabel}>Material</label>
-                    <ErpSelect className="!py-1 text-[11px]" value={stockQuickMaterialId} onChange={(e) => setStockQuickMaterialId(e.target.value)}>
-                      <option value="">Select…</option>
-                      {materials.map((m: Material) => (
-                        <option key={m._id} value={m._id}>{m.materialCode}</option>
-                      ))}
-                    </ErpSelect>
-                  </div>
-                  <div>
-                    <label className={fieldLabel}>Qty</label>
-                    <ErpInput type="number" min={1} className="w-20 !py-1 text-[11px]" value={stockQuickQty} onChange={(e) => setStockQuickQty(e.target.value)} />
-                  </div>
-                  {stockMatId && (
-                    <p className="text-[10px] text-erp-text-muted">Dock: {stockUnalloc}</p>
-                  )}
-                  <ErpButton
-                    variant="secondary"
-                    className={btnSm}
-                    disabled={!stockMatId || stockUnalloc <= 0 || stockPutQty <= 0 || stockPutQty > stockUnalloc || mut.isPending}
-                    onClick={() => setConfirmAction({
-                      title: 'Put away to bin',
-                      message: `Move ${stockPutQty} from dock → ${binLabel(binContents?.bin)}?`,
-                      fn: () => mut.mutate({
-                        type: 'putAway',
-                        payload: { materialId: stockMatId, binId: selectedBinId, quantity: stockPutQty },
-                      }),
-                    })}
-                  >
-                    Put away here
-                  </ErpButton>
-                </div>
-              )}
-
-              <div className="overflow-hidden rounded border border-[var(--erp-border)]">
-                <ErpDataTable className="w-full text-[11px]">
-                  <thead>
-                    <tr>
-                      <th className="px-3 py-2 text-left">Type</th>
-                      <th className="px-3 py-2 text-left">Code</th>
-                      <th className="px-3 py-2 text-left">Name</th>
-                      <th className="px-3 py-2 text-right">On hand</th>
-                      <th className="px-3 py-2 text-right">Avail</th>
-                      <th className="px-3 py-2 text-left">Status</th>
-                      <th className="px-3 py-2 text-right">Action</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {binContentsLoading && (
-                      <tr><td colSpan={7} className="px-3 py-6 text-center text-erp-text-muted">Loading…</td></tr>
-                    )}
-                    {!binContentsLoading && pagedStockRows.map((row) => {
-                      const pickQty = Math.min(stockQuickQtyNum, row.available);
-                      return (
-                        <tr key={row.key} className="border-t border-[var(--erp-border)]">
-                          <td className="px-3 py-2">
-                            <span className="rounded bg-[var(--erp-surface-muted)] px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide text-erp-text-muted">
-                              {row.kind === 'RM' ? 'Raw' : 'FG'}
-                            </span>
-                          </td>
-                          <td className="px-3 py-2 font-mono">{row.code}</td>
-                          <td className="px-3 py-2 text-erp-text-primary">{row.label}</td>
-                          <td className="px-3 py-2 text-right font-mono">
-                            {row.onHand}{row.unit ? ` ${row.unit}` : ''}
-                          </td>
-                          <td className="px-3 py-2 text-right font-mono">{row.available}</td>
-                          <td className="px-3 py-2 text-[10px] text-erp-text-muted">
-                            {row.dispatchStatus ? statusLabel(row.dispatchStatus) : '—'}
-                          </td>
-                          <td className="px-3 py-2 text-right">
-                            {row.kind === 'RM' && isRmWarehouse && canUpdate && row.materialId && (
-                              <ErpButton
-                                className={btnSm}
-                                disabled={row.available <= 0 || mut.isPending}
-                                onClick={() => setConfirmAction({
-                                  title: 'Pick from bin',
-                                  message: `Pick ${pickQty} from ${binLabel(binContents?.bin)}?`,
-                                  fn: () => mut.mutate({
-                                    type: 'pick',
-                                    payload: { materialId: row.materialId, binId: selectedBinId, quantity: pickQty },
-                                  }),
-                                })}
-                              >
-                                Pick {pickQty}
-                              </ErpButton>
+                                Assign to {zones[0].zoneCode}
+                              </Button>
+                            ) : (
+                              <Button size="sm" variant="ghost" icon={<Package size={14} />} onClick={(e) => { e.stopPropagation(); setSelectedBinId(b._id); }}>Stock</Button>
                             )}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                    {!binContentsLoading && pagedStockRows.length === 0 && (
-                      <tr>
-                        <td colSpan={7} className="px-3 py-8 text-center text-erp-text-muted">
-                          {stockRows.length === 0 ? 'This bin is empty.' : 'No stock matches your search.'}
+                          </div>
                         </td>
                       </tr>
-                    )}
-                  </tbody>
-                </ErpDataTable>
-                {filteredStockRows.length > STOCK_PAGE_SIZE && (
-                  <div className="flex items-center justify-between border-t border-[var(--erp-border)] px-3 py-2 text-[10px] text-erp-text-muted">
-                    <span>
-                      Page {Math.min(stockPage, stockTotalPages)} / {stockTotalPages} · {filteredStockRows.length} items
-                    </span>
-                    <div className="flex gap-1">
-                      <ErpButton
-                        className={btnSm}
-                        variant="secondary"
-                        disabled={stockPage <= 1}
-                        onClick={() => setStockPage((p) => Math.max(1, p - 1))}
-                      >
-                        Prev
-                      </ErpButton>
-                      <ErpButton
-                        className={btnSm}
-                        variant="secondary"
-                        disabled={stockPage >= stockTotalPages}
-                        onClick={() => setStockPage((p) => Math.min(stockTotalPages, p + 1))}
-                      >
-                        Next
-                      </ErpButton>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
+                    );
+                  })}
+                </tbody>
+              </ErpDataTable>
+              {filteredBins.length > PAGE_SIZE && (
+                <TablePager page={binPage} totalPages={totalPages} total={filteredBins.length} pageSize={PAGE_SIZE} itemLabel="bins" onPrev={() => setBinPage((p) => p - 1)} onNext={() => setBinPage((p) => p + 1)} />
+              )}
+            </Section>
           </div>
-        </ModalShell>
+        </>
       )}
+
+      <AddLocationDrawer
+        kind={addKind}
+        onClose={() => setAddKind(null)}
+        whId={whId}
+        zones={zones}
+        treeSel={treeSel}
+        onCreatedWarehouse={(w) => { setSelectedWh(w._id); setTreeSel({ kind: 'all' }); }}
+      />
+      <BinStockDrawer
+        binId={selectedBinId}
+        whId={whId}
+        warehouse={selectedWarehouse}
+        fallbackBin={allBins.find((b) => b._id === selectedBinId)}
+        onClose={() => setSelectedBinId(null)}
+        canUpdate={canUpdate}
+      />
     </>
   );
 }

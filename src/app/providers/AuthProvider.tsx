@@ -16,6 +16,8 @@ interface Factory {
   _id: string;
   name: string;
   code: string;
+  /** Present for super admins (who see every organization's factories). */
+  organizationId?: string;
 }
 
 interface AuthSessionPayload {
@@ -41,6 +43,8 @@ interface AuthContextType {
   resendOtp: (userId: string) => Promise<void>;
   verifyOtp: (userId: string, otp: string) => Promise<void>;
   logout: () => Promise<void>;
+  /** Re-read user, factories and permissions (e.g. after a factory was created). */
+  refreshSession: () => Promise<void>;
   loading: boolean;
 }
 
@@ -81,7 +85,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const setFactoryId = (id: string) => {
     localStorage.setItem('factoryId', id);
     setFactoryIdState(id);
-    queryClient.clear();
+    // clear() alone leaves mounted components showing the previous factory's data (their
+    // observers keep the last result and never refetch). Reset instead: every query drops its
+    // data, in-flight requests for the old factory are cancelled and active ones refetch with
+    // the new X-Factory-Id.
+    void queryClient.cancelQueries().then(() => queryClient.resetQueries());
     loadSession(id).catch(() => {});
   };
 
@@ -92,6 +100,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return;
     }
     loadSession(factoryId)
+      .catch(async (err) => {
+        // Stored factory no longer accessible (assignment removed, or tampered storage):
+        // fall back to the user's own factories instead of signing them out.
+        if (factoryId && err?.response?.status === 403) {
+          localStorage.removeItem('factoryId');
+          setFactoryIdState(null);
+          return loadSession(null);
+        }
+        throw err;
+      })
       .then((data) => {
         if (data.factories?.length && !localStorage.getItem('factoryId')) {
           setFactoryId(data.factories[0]._id);
@@ -135,13 +153,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const logout = async () => {
-    await api.post('/auth/logout');
-    localStorage.removeItem('accessToken');
-    localStorage.removeItem('factoryId');
-    setUser(null);
-    setFactories([]);
-    setPermissions([]);
-    setFactoryIdState(null);
+    // Always clear the local session, even if the server call fails (expired token, offline…);
+    // otherwise "Sign out" silently does nothing.
+    try {
+      await api.post('/auth/logout');
+    } catch {
+      /* ignore — the local session is dropped below */
+    } finally {
+      localStorage.removeItem('accessToken');
+      localStorage.removeItem('factoryId');
+      setUser(null);
+      setFactories([]);
+      setPermissions([]);
+      setFactoryIdState(null);
+      queryClient.clear();
+    }
   };
 
   return (
@@ -157,6 +183,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         resendOtp,
         verifyOtp,
         logout,
+        refreshSession: async () => { await loadSession(factoryId); },
         loading,
       }}
     >

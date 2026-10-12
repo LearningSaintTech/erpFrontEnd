@@ -159,10 +159,14 @@ export interface ApprovalWorkflow {
 export interface ApprovalDocumentSummary {
   code?: string;
   title?: string;
+  /** Secondary facts, e.g. "High priority · due 23 Oct" or "≈ ₹18,000". */
+  subtitle?: string;
   status?: string;
   route?: string;
   revisionComments?: string;
   rejectionComments?: string;
+  /** Designs: what the reviewer is approving, shown in the approval drawer. */
+  preview?: { imageUrl?: string; colors?: { name: string; hexCode?: string }[]; sizes?: string[]; targetPrice?: number };
 }
 
 export interface ApprovalStep {
@@ -284,6 +288,7 @@ export interface ReportStats {
     poOpen?: number;
     grnPendingQc?: number;
     openPoValue?: number;
+    unpaidValue?: number;
     periodSpend?: number;
   };
   quality?: {
@@ -306,6 +311,7 @@ export interface FactoryReport {
     fulfillmentPct?: number;
     firstPassYield?: number;
     openPoValue?: number;
+    unpaidValue?: number;
     lowStockAlerts?: number;
     pendingApprovals?: number;
     qcQueue?: number;
@@ -349,7 +355,6 @@ export interface PurchaseReport {
   openPoValue?: number;
   grnPendingQc?: number;
   suppliers?: number;
-  rfqOpen?: number;
   prByStatus?: Record<string, number>;
   poByStatus?: Record<string, number>;
   period?: ReportPeriod;
@@ -748,6 +753,11 @@ export interface InventoryTransaction {
   balanceAfter?: number;
   referenceType?: string;
   referenceId?: string;
+  /** Human reference resolved by the API (e.g. count number, bin code). */
+  referenceNumber?: string;
+  /** IN / OUT for adjustments and transfers. */
+  direction?: 'IN' | 'OUT';
+  note?: string;
   createdAt?: string;
   performedBy?: string | { firstName?: string; lastName?: string; email?: string };
 }
@@ -854,8 +864,8 @@ export interface PurchaseStats {
   grnPending?: number;
   grnPendingQc?: number;
   grnDraft?: number;
-  rfqOpen?: number;
   openPoValue?: number;
+  unpaidValue?: number;
   prOpen?: number;
 }
 
@@ -922,6 +932,9 @@ export interface ProductionCapacity {
   lines?: ProductionLine[];
   machineCount?: number;
   lineCount?: number;
+  /** All non-deleted machines / lines (machineCount / lineCount are active only). */
+  machineTotal?: number;
+  lineTotal?: number;
   inProgressBatches?: number;
   pendingOrders?: number;
   overdueOrders?: number;
@@ -1080,6 +1093,8 @@ export interface QualityStats {
   defectsLogged?: number;
   pendingGrns?: number;
   pendingSampleQc?: number;
+  /** Batches finished on the line with no completed final inspection yet. */
+  batchesAwaitingFinal?: number;
   firstPassYield?: number;
 }
 
@@ -1244,10 +1259,6 @@ declare module './api' {
     actualMaterialCost?: number;
   }
 
-  export interface Rfq {
-    lines?: PurchaseLine[];
-  }
-
   export interface GoodsReceipt {
     poId?: string | import('./api').PurchaseOrder;
     qcInspectionId?: string | { _id?: string; inspectionNumber?: string; status?: string };
@@ -1304,10 +1315,6 @@ declare module './api' {
     qcInspectionId?: string | { _id: string; inspectionNumber?: string; status?: string; result?: string };
     timeline?: SampleTimelineEntry[];
     updatedAt?: string;
-  }
-
-  export interface Quotation {
-    lines?: PurchaseLine[];
   }
 
   export interface Sku {

@@ -1,95 +1,107 @@
-import { Fragment, useMemo, useState } from 'react';
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { ChevronDown, ChevronRight, Download, RefreshCw, Search } from 'lucide-react';
+import { Download, ScrollText } from 'lucide-react';
 import { auditApi, type AuditLogFilters } from '../../services/admin';
 import type { AuditLogEntry } from '../../types/api';
 import {
-  ErpPageHeader, ErpDataTable, ErpButton, ErpInput, ErpSelect, ErpCard,
+  Badge, Button, DescriptionList, Drawer, EmptyRow, ErpDataTable, ErpInput, ErpSelect, FilterBar,
+  PageHeader, SearchInput, Section, TablePager, TableSkeleton,
 } from '../../components/erp';
+import { QueryState } from '../../components/QueryState';
 import {
-  auditPath, exportAuditCsv, formatTimestamp, methodTone, parseAction, relativeTime,
+  AUDIT_ACTION_TYPES, auditPath, describeAction, exportAuditCsv, formatTimestamp, isoDay, methodBadgeTone,
+  moduleName, parseAction, relativeTime,
 } from './auditUtils';
+import { useDebouncedValue } from '../users/useDebouncedValue';
 
 const PAGE_SIZE = 25;
 
-function MethodBadge({ method }: { method: string }) {
+type RangePreset = 'all' | 'today' | 'last7' | 'last30' | 'custom';
+const RANGE_OPTIONS: { id: RangePreset; label: string }[] = [
+  { id: 'all', label: 'All time' },
+  { id: 'today', label: 'Today' },
+  { id: 'last7', label: 'Last 7 days' },
+  { id: 'last30', label: 'Last 30 days' },
+  { id: 'custom', label: 'Custom range' },
+];
+
+function rangeDates(preset: RangePreset, from: string, to: string) {
+  const today = new Date();
+  const daysAgo = (n: number) => isoDay(new Date(today.getTime() - n * 86_400_000));
+  switch (preset) {
+    case 'today': return { from: isoDay(today), to: isoDay(today) };
+    case 'last7': return { from: daysAgo(6), to: isoDay(today) };
+    case 'last30': return { from: daysAgo(29), to: isoDay(today) };
+    case 'custom': return { from: from || undefined, to: to || undefined };
+    default: return { from: undefined, to: undefined };
+  }
+}
+
+function JsonBlock({ value }: { value: unknown }) {
   return (
-    <span className={`font-mono text-[10px] font-semibold leading-none ${methodTone(method)}`}>
-      {method}
-    </span>
+    <pre className="max-h-64 overflow-auto rounded-md border border-[var(--erp-border)] bg-[var(--erp-surface-muted)] p-3 font-mono text-xs leading-relaxed text-erp-text-secondary">
+      {JSON.stringify(value, null, 2)}
+    </pre>
   );
 }
 
-function AuditDetailPanel({ log }: { log: AuditLogEntry }) {
-  const { method, path } = parseAction(log.action);
-  const hasDiff = log.previousData != null || log.updatedData != null;
-
+function AuditDetailDrawer({ log, onClose }: { log: AuditLogEntry | null; onClose: () => void }) {
+  const parsed = parseAction(log?.action);
+  const extraMeta = log?.metadata
+    ? Object.fromEntries(Object.entries(log.metadata).filter(([k]) => !['path', 'ipAddress', 'userAgent', 'method'].includes(k)))
+    : {};
   return (
-    <div className="grid gap-2 border-t border-[var(--erp-border)] bg-[var(--erp-surface-muted)] px-3 py-2 text-[11px] leading-snug md:grid-cols-2">
-      <div className="space-y-1">
-        <h4 className="text-[10px] font-semibold uppercase tracking-wide text-erp-text-muted">Request</h4>
-        <dl className="space-y-0.5">
-          <div className="flex gap-1.5">
-            <dt className="w-16 shrink-0 text-erp-text-muted">Method</dt>
-            <dd><MethodBadge method={method} /></dd>
-          </div>
-          <div className="flex gap-1.5">
-            <dt className="w-16 shrink-0 text-erp-text-muted">Path</dt>
-            <dd className="break-all font-mono text-[10px]">{log.metadata?.path || path || '—'}</dd>
-          </div>
-          <div className="flex gap-1.5">
-            <dt className="w-16 shrink-0 text-erp-text-muted">Module</dt>
-            <dd>{log.module || '—'}</dd>
-          </div>
-          {log.documentType && (
-            <div className="flex gap-1.5">
-              <dt className="w-16 shrink-0 text-erp-text-muted">Document</dt>
-              <dd>{log.documentType}{log.documentId ? ` · ${String(log.documentId).slice(-8)}` : ''}</dd>
-            </div>
+    <Drawer
+      open={!!log}
+      onClose={onClose}
+      size="md"
+      title={log ? describeAction(log.action, log.metadata?.path) : ''}
+      description={log ? `${formatTimestamp(log.timestamp)} · ${relativeTime(log.timestamp)}` : undefined}
+      headerExtra={log ? <Badge tone={methodBadgeTone(parsed.method)} dot={false}>{parsed.method}</Badge> : undefined}
+      footer={<Button variant="secondary" onClick={onClose}>Close</Button>}
+    >
+      {log && (
+        <div className="space-y-6">
+          <DescriptionList
+            columns={2}
+            items={[
+              { label: 'User', value: log.userEmail },
+              { label: 'Module', value: moduleName(log.module) },
+              { label: 'Record type', value: log.documentType ? moduleName(log.documentType) : undefined },
+              { label: 'Record ID', value: log.documentId ? <span className="font-mono text-xs">{log.documentId}</span> : undefined },
+              { label: 'Endpoint', value: <span className="break-all font-mono text-xs">{parsed.method} {auditPath(log)}</span>, full: true },
+              { label: 'IP address', value: log.metadata?.ipAddress ? <span className="font-mono text-xs">{log.metadata.ipAddress}</span> : undefined },
+              { label: 'Device', value: log.metadata?.userAgent ? <span className="line-clamp-3 text-xs">{log.metadata.userAgent}</span> : undefined, full: true },
+            ]}
+          />
+          {(log.previousData != null || log.updatedData != null) && (
+            <section>
+              <h3 className="mb-2 text-sm font-semibold text-erp-text-primary">Data changes</h3>
+              <div className="grid gap-3">
+                {log.previousData != null && (
+                  <div>
+                    <p className="mb-1 text-xs font-medium text-erp-text-muted">Before</p>
+                    <JsonBlock value={log.previousData} />
+                  </div>
+                )}
+                {log.updatedData != null && (
+                  <div>
+                    <p className="mb-1 text-xs font-medium text-erp-text-muted">After</p>
+                    <JsonBlock value={log.updatedData} />
+                  </div>
+                )}
+              </div>
+            </section>
           )}
-        </dl>
-      </div>
-      <div className="space-y-1">
-        <h4 className="text-[10px] font-semibold uppercase tracking-wide text-erp-text-muted">Actor & context</h4>
-        <dl className="space-y-0.5">
-          <div className="flex gap-1.5">
-            <dt className="w-16 shrink-0 text-erp-text-muted">User</dt>
-            <dd className="truncate">{log.userEmail || '—'}</dd>
-          </div>
-          <div className="flex gap-1.5">
-            <dt className="w-16 shrink-0 text-erp-text-muted">IP</dt>
-            <dd className="font-mono text-[10px]">{log.metadata?.ipAddress || '—'}</dd>
-          </div>
-          <div className="flex gap-1.5">
-            <dt className="w-16 shrink-0 text-erp-text-muted">When</dt>
-            <dd title={formatTimestamp(log.timestamp)}>{formatTimestamp(log.timestamp)}</dd>
-          </div>
-          {log.metadata?.userAgent && (
-            <div className="flex gap-1.5">
-              <dt className="w-16 shrink-0 text-erp-text-muted">Agent</dt>
-              <dd className="line-clamp-2 text-[10px] text-erp-text-muted">{log.metadata.userAgent}</dd>
-            </div>
+          {Object.keys(extraMeta).length > 0 && (
+            <section>
+              <h3 className="mb-2 text-sm font-semibold text-erp-text-primary">Other details</h3>
+              <JsonBlock value={extraMeta} />
+            </section>
           )}
-        </dl>
-      </div>
-      {hasDiff && (
-        <div className="md:col-span-2">
-          <h4 className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-erp-text-muted">Data changes</h4>
-          <div className="grid gap-2 lg:grid-cols-2">
-            {log.previousData != null && (
-              <pre className="max-h-32 overflow-auto rounded border border-[var(--erp-border)] bg-[var(--erp-surface)] p-2 font-mono text-[10px] leading-tight">
-                {JSON.stringify(log.previousData, null, 2)}
-              </pre>
-            )}
-            {log.updatedData != null && (
-              <pre className="max-h-32 overflow-auto rounded border border-[var(--erp-border)] bg-[var(--erp-surface)] p-2 font-mono text-[10px] leading-tight">
-                {JSON.stringify(log.updatedData, null, 2)}
-              </pre>
-            )}
-          </div>
         </div>
       )}
-    </div>
+    </Drawer>
   );
 }
 
@@ -97,23 +109,25 @@ export function AuditPage() {
   const [page, setPage] = useState(1);
   const [moduleFilter, setModuleFilter] = useState('');
   const [actionFilter, setActionFilter] = useState('');
-  const [userFilter, setUserFilter] = useState('');
-  const [fromDate, setFromDate] = useState('');
-  const [toDate, setToDate] = useState('');
-  const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [draft, setDraft] = useState({ action: '', user: '', from: '', to: '' });
+  const [userInput, setUserInput] = useState('');
+  const userFilter = useDebouncedValue(userInput.trim());
+  const [range, setRange] = useState<RangePreset>('all');
+  const [customFrom, setCustomFrom] = useState('');
+  const [customTo, setCustomTo] = useState('');
+  const [selectedId, setSelectedId] = useState<string | null>(null);
 
+  const dates = rangeDates(range, customFrom, customTo);
   const filters: AuditLogFilters = {
     page,
     limit: PAGE_SIZE,
     module: moduleFilter || undefined,
     action: actionFilter || undefined,
     userEmail: userFilter || undefined,
-    from: fromDate || undefined,
-    to: toDate || undefined,
+    from: dates.from,
+    to: dates.to,
   };
 
-  const { data, isLoading, isFetching, error, refetch } = useQuery({
+  const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['audit-logs', filters],
     queryFn: () => auditApi.list(filters),
   });
@@ -125,269 +139,125 @@ export function AuditPage() {
 
   const logs = data?.items ?? [];
   const meta = data?.meta;
+  const selected = logs.find((l) => l._id === selectedId) ?? null;
 
-  const summary = useMemo(() => {
-    const methods = logs.reduce<Record<string, number>>((acc, log) => {
-      const m = parseAction(log.action).method;
-      acc[m] = (acc[m] || 0) + 1;
-      return acc;
-    }, {});
-    const topModule = logs.reduce<Record<string, number>>((acc, log) => {
-      const mod = log.module || 'unknown';
-      acc[mod] = (acc[mod] || 0) + 1;
-      return acc;
-    }, {});
-    const topModuleName = Object.entries(topModule).sort((a, b) => b[1] - a[1])[0]?.[0];
-    return { methods, topModuleName };
-  }, [logs]);
-
-  const applyFilters = () => {
-    setActionFilter(draft.action.trim());
-    setUserFilter(draft.user.trim());
-    setFromDate(draft.from);
-    setToDate(draft.to);
-    setPage(1);
-    setExpandedId(null);
-  };
-
+  const hasActiveFilters = !!(moduleFilter || actionFilter || userFilter || range !== 'all');
   const clearFilters = () => {
-    setModuleFilter('');
-    setActionFilter('');
-    setUserFilter('');
-    setFromDate('');
-    setToDate('');
-    setDraft({ action: '', user: '', from: '', to: '' });
-    setPage(1);
-    setExpandedId(null);
+    setModuleFilter(''); setActionFilter(''); setUserInput(''); setRange('all'); setCustomFrom(''); setCustomTo(''); setPage(1);
   };
-
-  const hasActiveFilters = moduleFilter || actionFilter || userFilter || fromDate || toDate;
+  const resetPage = () => setPage(1);
 
   return (
-    <div className="audit-page text-xs leading-snug [&_.erp-page-header]:mb-3 [&_.erp-page-title]:text-base [&_.erp-page-subtitle]:text-[10px] [&_.erp-page-subtitle]:mt-0">
-      <ErpPageHeader
-        title="Audit Logs"
-        subtitle="Mutation trail — who, what, when."
-        actions={(
-          <>
-            <ErpButton
-              variant="secondary"
-              onClick={() => refetch()}
-              disabled={isFetching}
-              className="!px-2 !py-1 text-[11px] inline-flex items-center gap-1"
-            >
-              <RefreshCw size={12} className={isFetching ? 'animate-spin' : ''} />
-              Refresh
-            </ErpButton>
-            <ErpButton
-              variant="secondary"
-              onClick={() => exportAuditCsv(logs)}
-              disabled={logs.length === 0}
-              className="!px-2 !py-1 text-[11px] inline-flex items-center gap-1"
-            >
-              <Download size={12} />
-              Export
-            </ErpButton>
-          </>
+    <div className="space-y-4">
+      <PageHeader
+        title="Audit log"
+        description="Every change made in the system: who did what, and when."
+        secondaryActions={(
+          <Button
+            variant="secondary"
+            size="sm"
+            icon={<Download size={16} />}
+            onClick={() => exportAuditCsv(logs)}
+            disabled={logs.length === 0}
+            title="Exports the entries on this page"
+          >
+            Export CSV
+          </Button>
         )}
       />
 
-      <div className="mb-3 grid gap-2 sm:grid-cols-3">
-        <ErpCard className="!p-2.5">
-          <p className="text-[10px] font-medium uppercase tracking-wide text-erp-text-muted">Total</p>
-          <p className="mt-0.5 text-lg font-semibold leading-tight text-erp-text-primary">{meta?.total ?? '—'}</p>
-        </ErpCard>
-        <ErpCard className="!p-2.5">
-          <p className="text-[10px] font-medium uppercase tracking-wide text-erp-text-muted">This page</p>
-          <p className="mt-0.5 text-lg font-semibold leading-tight text-erp-text-primary">
-            {summary.methods.POST ?? 0}
-            <span className="ml-1 text-[10px] font-normal text-erp-text-muted">POST</span>
-            <span className="mx-1 text-erp-text-muted">·</span>
-            {(summary.methods.PUT ?? 0) + (summary.methods.PATCH ?? 0)}
-            <span className="ml-1 text-[10px] font-normal text-erp-text-muted">upd</span>
-          </p>
-        </ErpCard>
-        <ErpCard className="!p-2.5">
-          <p className="text-[10px] font-medium uppercase tracking-wide text-erp-text-muted">Top module</p>
-          <p className="mt-0.5 truncate text-lg font-semibold leading-tight text-erp-text-primary">
-            {summary.topModuleName || '—'}
-          </p>
-        </ErpCard>
-      </div>
-
-      <ErpCard className="mb-3 !p-2.5">
-        <div className="mb-2 flex items-center gap-1.5 text-[11px] font-medium text-erp-text-secondary">
-          <Search size={12} />
-          Filters
-        </div>
-        <div className="grid gap-2 md:grid-cols-2 lg:grid-cols-5">
-          <label className="block text-[11px]">
-            <span className="mb-0.5 block text-[10px] text-erp-text-muted">Module</span>
-            <ErpSelect
-              value={moduleFilter}
-              onChange={(e) => { setModuleFilter(e.target.value); setPage(1); setExpandedId(null); }}
-              className="!py-1 !text-[11px] w-full"
-            >
-              <option value="">All modules</option>
-              {modules.map((m) => (
-                <option key={m} value={m}>{m}</option>
-              ))}
-            </ErpSelect>
-          </label>
-          <label className="block text-[11px]">
-            <span className="mb-0.5 block text-[10px] text-erp-text-muted">Action</span>
-            <ErpInput
-              value={draft.action}
-              onChange={(e) => setDraft((d) => ({ ...d, action: e.target.value }))}
-              placeholder="approve, POST…"
-              className="!py-1 !text-[11px] w-full"
-              onKeyDown={(e) => e.key === 'Enter' && applyFilters()}
-            />
-          </label>
-          <label className="block text-[11px]">
-            <span className="mb-0.5 block text-[10px] text-erp-text-muted">User</span>
-            <ErpInput
-              value={draft.user}
-              onChange={(e) => setDraft((d) => ({ ...d, user: e.target.value }))}
-              placeholder="email"
-              className="!py-1 !text-[11px] w-full"
-              onKeyDown={(e) => e.key === 'Enter' && applyFilters()}
-            />
-          </label>
-          <label className="block text-[11px]">
-            <span className="mb-0.5 block text-[10px] text-erp-text-muted">From</span>
-            <ErpInput
-              type="date"
-              value={draft.from}
-              onChange={(e) => setDraft((d) => ({ ...d, from: e.target.value }))}
-              className="!py-1 !text-[11px] w-full"
-            />
-          </label>
-          <label className="block text-[11px]">
-            <span className="mb-0.5 block text-[10px] text-erp-text-muted">To</span>
-            <ErpInput
-              type="date"
-              value={draft.to}
-              onChange={(e) => setDraft((d) => ({ ...d, to: e.target.value }))}
-              className="!py-1 !text-[11px] w-full"
-            />
-          </label>
-        </div>
-        <div className="mt-2 flex flex-wrap gap-1.5">
-          <ErpButton onClick={applyFilters} className="!px-2 !py-1 text-[11px]">Apply</ErpButton>
-          {hasActiveFilters && (
-            <ErpButton variant="secondary" onClick={clearFilters} className="!px-2 !py-1 text-[11px]">Clear</ErpButton>
+      <Section flush>
+        <FilterBar
+          search={<SearchInput value={userInput} onChange={(v) => { setUserInput(v); resetPage(); }} placeholder="Filter by user email…" inputSize="sm" />}
+          filters={(
+            <>
+              <ErpSelect inputSize="sm" value={moduleFilter} onChange={(e) => { setModuleFilter(e.target.value); resetPage(); }} aria-label="Module">
+                <option value="">All modules</option>
+                {modules.map((m) => <option key={m} value={m}>{moduleName(m)}</option>)}
+              </ErpSelect>
+              <ErpSelect inputSize="sm" value={actionFilter} onChange={(e) => { setActionFilter(e.target.value); resetPage(); }} aria-label="Action">
+                {AUDIT_ACTION_TYPES.map((a) => <option key={a.id || 'all'} value={a.id}>{a.label}</option>)}
+              </ErpSelect>
+              <ErpSelect inputSize="sm" value={range} onChange={(e) => { setRange(e.target.value as RangePreset); resetPage(); }} aria-label="Date range">
+                {RANGE_OPTIONS.map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}
+              </ErpSelect>
+              {range === 'custom' && (
+                <span className="flex items-center gap-1.5">
+                  <ErpInput inputSize="sm" type="date" value={customFrom} onChange={(e) => { setCustomFrom(e.target.value); resetPage(); }} aria-label="From date" />
+                  <span className="text-xs text-erp-text-muted">to</span>
+                  <ErpInput inputSize="sm" type="date" value={customTo} min={customFrom || undefined} onChange={(e) => { setCustomTo(e.target.value); resetPage(); }} aria-label="To date" />
+                </span>
+              )}
+            </>
           )}
-        </div>
-      </ErpCard>
-
-      {error && (
-        <p className="erp-alert-error mb-2 text-[11px]">{(error as Error).message}</p>
-      )}
-
-      {isLoading ? (
-        <p className="text-[11px] text-erp-text-muted">Loading…</p>
-      ) : (
-        <ErpCard className="overflow-hidden !p-0">
-          <div className="overflow-x-auto">
-            <ErpDataTable className="text-[11px]">
-              <thead>
-                <tr>
-                  <th className="w-6 px-1 py-1.5" aria-label="Expand" />
-                  <th className="px-2 py-1.5 font-medium">When</th>
-                  <th className="px-2 py-1.5 font-medium">User</th>
-                  <th className="px-2 py-1.5 font-medium">Module</th>
-                  <th className="px-2 py-1.5 font-medium">Action</th>
-                  <th className="hidden px-2 py-1.5 font-medium lg:table-cell">Endpoint</th>
-                </tr>
-              </thead>
-              <tbody>
-                {logs.map((log) => {
-                  const { method, label } = parseAction(log.action);
-                  const expanded = expandedId === log._id;
-                  return (
-                    <Fragment key={log._id}>
-                      <tr
-                        className="cursor-pointer border-b border-[var(--erp-border)] hover:bg-[var(--erp-surface-muted)]"
-                        onClick={() => setExpandedId(expanded ? null : log._id)}
-                      >
-                        <td className="px-1 py-1 text-erp-text-muted">
-                          {expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-                        </td>
-                        <td className="whitespace-nowrap px-2 py-1" title={formatTimestamp(log.timestamp)}>
-                          <span className="text-erp-text-primary">{relativeTime(log.timestamp)}</span>
-                          <span className="ml-1 text-[10px] text-erp-text-muted">{formatTimestamp(log.timestamp)}</span>
-                        </td>
-                        <td className="max-w-[8rem] truncate px-2 py-1" title={log.userEmail}>
-                          {log.userEmail || '—'}
-                        </td>
-                        <td className="px-2 py-1">
-                          <span className="rounded bg-[var(--erp-surface-muted)] px-1 py-px font-mono text-[10px]">
-                            {log.module || '—'}
-                          </span>
-                        </td>
-                        <td className="max-w-[10rem] px-2 py-1">
-                          <div className="flex items-center gap-1">
-                            <MethodBadge method={method} />
-                            <span className="truncate text-[10px] text-erp-text-secondary" title={label}>
-                              {label.replace(`${method} `, '')}
-                            </span>
-                          </div>
-                        </td>
-                        <td className="hidden max-w-[12rem] truncate px-2 py-1 font-mono text-[10px] text-erp-text-muted lg:table-cell" title={auditPath(log)}>
-                          {auditPath(log)}
-                        </td>
-                      </tr>
-                      {expanded && (
-                        <tr>
-                          <td colSpan={6} className="p-0">
-                            <AuditDetailPanel log={log} />
-                          </td>
-                        </tr>
-                      )}
-                    </Fragment>
-                  );
-                })}
-                {logs.length === 0 && (
-                  <tr>
-                    <td colSpan={6} className="px-2 py-6 text-center text-[11px] text-erp-text-muted">
-                      {hasActiveFilters
-                        ? 'No audit entries match your filters.'
-                        : 'No audit entries yet. Activity appears when users create or update records.'}
+          onClear={hasActiveFilters ? clearFilters : undefined}
+        />
+        <QueryState isError={isError} error={error} onRetry={refetch}>
+          <ErpDataTable>
+            <thead>
+              <tr>
+                <th>When</th>
+                <th>User</th>
+                <th>Action</th>
+                <th>Module</th>
+                <th className="hidden lg:table-cell">Endpoint</th>
+              </tr>
+            </thead>
+            <tbody>
+              {isLoading ? (
+                <TableSkeleton asRows rows={8} columns={5} />
+              ) : logs.length === 0 ? (
+                <EmptyRow
+                  colSpan={5}
+                  icon={ScrollText}
+                  title={hasActiveFilters ? 'No entries match these filters' : 'No activity recorded yet'}
+                  action={hasActiveFilters ? <Button size="sm" variant="secondary" onClick={clearFilters}>Clear filters</Button> : undefined}
+                >
+                  {hasActiveFilters ? undefined : 'Entries appear as soon as someone creates or changes a record.'}
+                </EmptyRow>
+              ) : logs.map((log) => {
+                const { method } = parseAction(log.action);
+                return (
+                  <tr
+                    key={log._id}
+                    className={`erp-row-clickable${selectedId === log._id ? ' erp-row-selected' : ''}`}
+                    onClick={() => setSelectedId(log._id)}
+                  >
+                    <td className="whitespace-nowrap" title={formatTimestamp(log.timestamp)}>
+                      <span className="block text-erp-text-primary">{relativeTime(log.timestamp)}</span>
+                      <span className="block text-xs text-erp-text-muted">{formatTimestamp(log.timestamp)}</span>
+                    </td>
+                    <td className="max-w-[14rem] truncate" title={log.userEmail}>{log.userEmail || '—'}</td>
+                    <td className="max-w-[20rem]">
+                      <span className="flex items-center gap-2">
+                        <Badge tone={methodBadgeTone(method)} dot={false} className="shrink-0 font-mono">{method}</Badge>
+                        <span className="erp-cell-primary truncate">{describeAction(log.action, log.metadata?.path)}</span>
+                      </span>
+                    </td>
+                    <td className="text-erp-text-secondary">{moduleName(log.module)}</td>
+                    <td className="hidden max-w-[16rem] truncate font-mono text-xs text-erp-text-muted lg:table-cell" title={auditPath(log)}>
+                      {auditPath(log)}
                     </td>
                   </tr>
-                )}
-              </tbody>
-            </ErpDataTable>
-          </div>
-
-          {meta && meta.totalPages > 0 && (
-            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--erp-border)] px-2 py-1.5 text-[11px]">
-              <p className="text-erp-text-muted">
-                {meta.page}/{meta.totalPages} · {meta.total} total
-              </p>
-              <div className="flex gap-1">
-                <ErpButton
-                  variant="secondary"
-                  disabled={page <= 1}
-                  className="!px-2 !py-1 text-[11px]"
-                  onClick={() => { setPage((p) => p - 1); setExpandedId(null); }}
-                >
-                  Prev
-                </ErpButton>
-                <ErpButton
-                  variant="secondary"
-                  disabled={page >= meta.totalPages}
-                  className="!px-2 !py-1 text-[11px]"
-                  onClick={() => { setPage((p) => p + 1); setExpandedId(null); }}
-                >
-                  Next
-                </ErpButton>
-              </div>
-            </div>
+                );
+              })}
+            </tbody>
+          </ErpDataTable>
+          {meta && (
+            <TablePager
+              page={page}
+              totalPages={meta.totalPages}
+              total={meta.total}
+              pageSize={PAGE_SIZE}
+              itemLabel="entries"
+              onPrev={() => setPage((p) => p - 1)}
+              onNext={() => setPage((p) => p + 1)}
+            />
           )}
-        </ErpCard>
-      )}
+        </QueryState>
+      </Section>
+
+      <AuditDetailDrawer log={selected} onClose={() => setSelectedId(null)} />
     </div>
   );
 }

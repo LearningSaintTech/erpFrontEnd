@@ -1,0 +1,92 @@
+{"version":8,"type":"context-options","origin":"library","browserName":"","playwrightVersion":"1.61.1","options":{},"platform":"win32","wallTime":1791726593484,"monotonicTime":1907294.292,"sdkLanguage":"javascript","contextId":"request-context@7ddd76314d72bf63184672568bac4fc2","title":"approvals-access.spec.ts:109 › Multi-level PR approval (2 levels, clicked through the UI) › admin creates a 2-level PURCHASE_REQUISITION workflow (L1 purchase.authorize, L2 approval.approve)"}
+{"type":"before","callId":"call@320","startTime":1912510.852,"class":"APIRequestContext","method":"fetch","params":{"url":"http://localhost:3310/api/v1/auth/login","method":"POST","jsonData":"{\"email\":\"admin@demo.local\",\"password\":\"FactoryAdmin@123\"}","timeout":15000},"stepId":"pw:api@32"}
+{"type":"log","callId":"call@320","time":1912527.226,"message":"→ POST http://localhost:3310/api/v1/auth/login"}
+{"type":"log","callId":"call@320","time":1912537.637,"message":"  user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.7827.55 Safari/537.36"}
+{"type":"log","callId":"call@320","time":1912537.678,"message":"  accept: */*"}
+{"type":"log","callId":"call@320","time":1912537.686,"message":"  accept-encoding: gzip,deflate,br"}
+{"type":"log","callId":"call@320","time":1912537.695,"message":"  content-type: application/json"}
+{"type":"log","callId":"call@320","time":1912537.701,"message":"  content-length: 58"}
+{"type":"log","callId":"call@320","time":1916633.206,"message":"← 200 OK"}
+{"type":"log","callId":"call@320","time":1916633.249,"message":"  content-security-policy: default-src 'self';base-uri 'self';font-src 'self' https: data:;form-action 'self';frame-ancestors 'self';img-src 'self' data:;object-src 'none';script-src 'self';script-src-attr 'none';style-src 'self' https: 'unsafe-inline';upgrade-insecure-requests"}
+{"type":"log","callId":"call@320","time":1916633.266,"message":"  cross-origin-opener-policy: same-origin"}
+{"type":"log","callId":"call@320","time":1916633.273,"message":"  cross-origin-resource-policy: cross-origin"}
+{"type":"log","callId":"call@320","time":1916633.333,"message":"  origin-agent-cluster: ?1"}
+{"type":"log","callId":"call@320","time":1916633.354,"message":"  referrer-policy: no-referrer"}
+{"type":"log","callId":"call@320","time":1916633.364,"message":"  strict-transport-security: max-age=31536000; includeSubDomains"}
+{"type":"log","callId":"call@320","time":1916633.373,"message":"  x-content-type-options: nosniff"}
+{"type":"log","callId":"call@320","time":1916633.43,"message":"  x-dns-prefetch-control: off"}
+{"type":"log","callId":"call@320","time":1916633.444,"message":"  x-download-options: noopen"}
+{"type":"log","callId":"call@320","time":1916633.453,"message":"  x-frame-options: SAMEORIGIN"}
+{"type":"log","callId":"call@320","time":1916633.461,"message":"  x-permitted-cross-domain-policies: none"}
+{"type":"log","callId":"call@320","time":1916633.47,"message":"  x-xss-protection: 0"}
+{"type":"log","callId":"call@320","time":1916633.478,"message":"  vary: Origin"}
+{"type":"log","callId":"call@320","time":1916633.486,"message":"  access-control-allow-credentials: true"}
+{"type":"log","callId":"call@320","time":1916633.494,"message":"  set-cookie: refreshToken=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI2YWNiOGMzNmYwZDk0NjdhZTA2ODUzYTEiLCJ0eXBlIjoicmVmcmVzaCIsImlhdCI6MTc5MTcyNjYwMiwiZXhwIjoxNzkyMzMxNDAyfQ.TL0Hx6t4m5EsDTqPs0JZ4mxQQ_d0UPHB6L7ZewWqtV0; Max-Age=604800; Path=/; Expires=Sun, 18 Oct 2026 13:50:02 GMT; HttpOnly; SameSite=Lax"}
+{"type":"log","callId":"call@320","time":1916633.504,"message":"  content-type: application/json; charset=utf-8"}
+{"type":"log","callId":"call@320","time":1916633.512,"message":"  content-length: 2605"}
+{"type":"log","callId":"call@320","time":1916633.519,"message":"  etag: W/\"a2d-yOUq/j0I4go++Q3UMCNMTlupDVw\""}
+{"type":"log","callId":"call@320","time":1916633.527,"message":"  date: Sun, 11 Oct 2026 13:50:02 GMT"}
+{"type":"log","callId":"call@320","time":1916633.54,"message":"  connection: keep-alive"}
+{"type":"log","callId":"call@320","time":1916633.551,"message":"  keep-alive: timeout=5"}
+{"type":"after","callId":"call@320","endTime":1916660.927,"result":{"response":{"url":"http://localhost:3310/api/v1/auth/login","status":200,"statusText":"OK","headers":[{"name":"Content-Security-Policy","value":"default-src 'self';base-uri 'self';font-src 'self' https: data:;form-action 'self';frame-ancestors 'self';img-src 'self' data:;object-src 'none';script-src 'self';script-src-attr 'none';style-src 'self' https: 'unsafe-inline';upgrade-insecure-requests"},{"name":"Cross-Origin-Opener-Policy","value":"same-origin"},{"name":"Cross-Origin-Resource-Policy","value":"cross-origin"},{"name":"Origin-Agent-Cluster","value":"?1"},{"name":"Referrer-Policy","value":"no-referrer"},{"name":"Strict-Transport-Security","value":"max-age=31536000; includeSubDomains"},{"name":"X-Content-Type-Options","value":"nosniff"},{"name":"X-DNS-Prefetch-Control","value":"off"},{"name":"X-Download-Options","value":"noopen"},{"name":"X-Frame-Options","value":"SAMEORIGIN"},{"name":"X-Permitted-Cross-Domain-Policies","value":"none"},{"name":"X-XSS-Protection","value":"0"},{"name":"Vary","value":"Origin"},{"name":"Access-Control-Allow-Credentials","value":"true"},{"name":"Set-Cookie","value":"refreshToken=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI2YWNiOGMzNmYwZDk0NjdhZTA2ODUzYTEiLCJ0eXBlIjoicmVmcmVzaCIsImlhdCI6MTc5MTcyNjYwMiwiZXhwIjoxNzkyMzMxNDAyfQ.TL0Hx6t4m5EsDTqPs0JZ4mxQQ_d0UPHB6L7ZewWqtV0; Max-Age=604800; Path=/; Expires=Sun, 18 Oct 2026 13:50:02 GMT; HttpOnly; SameSite=Lax"},{"name":"Content-Type","value":"application/json; charset=utf-8"},{"name":"Content-Length","value":"2605"},{"name":"ETag","value":"W/\"a2d-yOUq/j0I4go++Q3UMCNMTlupDVw\""},{"name":"Date","value":"Sun, 11 Oct 2026 13:50:02 GMT"},{"name":"Connection","value":"keep-alive"},{"name":"Keep-Alive","value":"timeout=5"}],"serverAddr":{"ipAddress":"::1","port":3310},"fetchUid":"7606cb704af7b84896d7dd4c961c5b7d"}}}
+{"type":"before","callId":"call@353","startTime":1939207.972,"class":"APIRequestContext","method":"fetch","params":{"url":"http://localhost:3310/api/v1/auth/login","method":"POST","jsonData":"{\"email\":\"admin@demo.local\",\"password\":\"FactoryAdmin@123\"}","timeout":15000},"stepId":"pw:api@49"}
+{"type":"log","callId":"call@353","time":1939295.836,"message":"→ POST http://localhost:3310/api/v1/auth/login"}
+{"type":"log","callId":"call@353","time":1939295.888,"message":"  user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.7827.55 Safari/537.36"}
+{"type":"log","callId":"call@353","time":1939295.9,"message":"  accept: */*"}
+{"type":"log","callId":"call@353","time":1939295.908,"message":"  accept-encoding: gzip,deflate,br"}
+{"type":"log","callId":"call@353","time":1939295.916,"message":"  content-type: application/json"}
+{"type":"log","callId":"call@353","time":1939295.923,"message":"  content-length: 58"}
+{"type":"log","callId":"call@353","time":1939295.93,"message":"  cookie: refreshToken=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI2YWNiOGMzNmYwZDk0NjdhZTA2ODUzYTEiLCJ0eXBlIjoicmVmcmVzaCIsImlhdCI6MTc5MTcyNjYwMiwiZXhwIjoxNzkyMzMxNDAyfQ.TL0Hx6t4m5EsDTqPs0JZ4mxQQ_d0UPHB6L7ZewWqtV0"}
+{"type":"log","callId":"call@353","time":1940681.667,"message":"← 200 OK"}
+{"type":"log","callId":"call@353","time":1940681.694,"message":"  content-security-policy: default-src 'self';base-uri 'self';font-src 'self' https: data:;form-action 'self';frame-ancestors 'self';img-src 'self' data:;object-src 'none';script-src 'self';script-src-attr 'none';style-src 'self' https: 'unsafe-inline';upgrade-insecure-requests"}
+{"type":"log","callId":"call@353","time":1940681.705,"message":"  cross-origin-opener-policy: same-origin"}
+{"type":"log","callId":"call@353","time":1940681.711,"message":"  cross-origin-resource-policy: cross-origin"}
+{"type":"log","callId":"call@353","time":1940681.723,"message":"  origin-agent-cluster: ?1"}
+{"type":"log","callId":"call@353","time":1940681.73,"message":"  referrer-policy: no-referrer"}
+{"type":"log","callId":"call@353","time":1940681.746,"message":"  strict-transport-security: max-age=31536000; includeSubDomains"}
+{"type":"log","callId":"call@353","time":1940681.753,"message":"  x-content-type-options: nosniff"}
+{"type":"log","callId":"call@353","time":1940681.759,"message":"  x-dns-prefetch-control: off"}
+{"type":"log","callId":"call@353","time":1940681.769,"message":"  x-download-options: noopen"}
+{"type":"log","callId":"call@353","time":1940681.774,"message":"  x-frame-options: SAMEORIGIN"}
+{"type":"log","callId":"call@353","time":1940681.787,"message":"  x-permitted-cross-domain-policies: none"}
+{"type":"log","callId":"call@353","time":1940681.795,"message":"  x-xss-protection: 0"}
+{"type":"log","callId":"call@353","time":1940681.81,"message":"  vary: Origin"}
+{"type":"log","callId":"call@353","time":1940681.818,"message":"  access-control-allow-credentials: true"}
+{"type":"log","callId":"call@353","time":1940681.834,"message":"  set-cookie: refreshToken=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI2YWNiOGMzNmYwZDk0NjdhZTA2ODUzYTEiLCJ0eXBlIjoicmVmcmVzaCIsImlhdCI6MTc5MTcyNjYyNiwiZXhwIjoxNzkyMzMxNDI2fQ.BgTgnm6Iz3cJgscN6R6PrGo2M86RkKcqkvQ9RZW-Pxc; Max-Age=604800; Path=/; Expires=Sun, 18 Oct 2026 13:50:26 GMT; HttpOnly; SameSite=Lax"}
+{"type":"log","callId":"call@353","time":1940681.843,"message":"  content-type: application/json; charset=utf-8"}
+{"type":"log","callId":"call@353","time":1940681.85,"message":"  content-length: 2605"}
+{"type":"log","callId":"call@353","time":1940681.859,"message":"  etag: W/\"a2d-/ChtHuLLd9ATfkVYC6XmrPZbnjc\""}
+{"type":"log","callId":"call@353","time":1940681.866,"message":"  date: Sun, 11 Oct 2026 13:50:26 GMT"}
+{"type":"log","callId":"call@353","time":1940681.875,"message":"  connection: keep-alive"}
+{"type":"log","callId":"call@353","time":1940681.882,"message":"  keep-alive: timeout=5"}
+{"type":"after","callId":"call@353","endTime":1940700.346,"result":{"response":{"url":"http://localhost:3310/api/v1/auth/login","status":200,"statusText":"OK","headers":[{"name":"Content-Security-Policy","value":"default-src 'self';base-uri 'self';font-src 'self' https: data:;form-action 'self';frame-ancestors 'self';img-src 'self' data:;object-src 'none';script-src 'self';script-src-attr 'none';style-src 'self' https: 'unsafe-inline';upgrade-insecure-requests"},{"name":"Cross-Origin-Opener-Policy","value":"same-origin"},{"name":"Cross-Origin-Resource-Policy","value":"cross-origin"},{"name":"Origin-Agent-Cluster","value":"?1"},{"name":"Referrer-Policy","value":"no-referrer"},{"name":"Strict-Transport-Security","value":"max-age=31536000; includeSubDomains"},{"name":"X-Content-Type-Options","value":"nosniff"},{"name":"X-DNS-Prefetch-Control","value":"off"},{"name":"X-Download-Options","value":"noopen"},{"name":"X-Frame-Options","value":"SAMEORIGIN"},{"name":"X-Permitted-Cross-Domain-Policies","value":"none"},{"name":"X-XSS-Protection","value":"0"},{"name":"Vary","value":"Origin"},{"name":"Access-Control-Allow-Credentials","value":"true"},{"name":"Set-Cookie","value":"refreshToken=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI2YWNiOGMzNmYwZDk0NjdhZTA2ODUzYTEiLCJ0eXBlIjoicmVmcmVzaCIsImlhdCI6MTc5MTcyNjYyNiwiZXhwIjoxNzkyMzMxNDI2fQ.BgTgnm6Iz3cJgscN6R6PrGo2M86RkKcqkvQ9RZW-Pxc; Max-Age=604800; Path=/; Expires=Sun, 18 Oct 2026 13:50:26 GMT; HttpOnly; SameSite=Lax"},{"name":"Content-Type","value":"application/json; charset=utf-8"},{"name":"Content-Length","value":"2605"},{"name":"ETag","value":"W/\"a2d-/ChtHuLLd9ATfkVYC6XmrPZbnjc\""},{"name":"Date","value":"Sun, 11 Oct 2026 13:50:26 GMT"},{"name":"Connection","value":"keep-alive"},{"name":"Keep-Alive","value":"timeout=5"}],"serverAddr":{"ipAddress":"::1","port":3310},"fetchUid":"cedbe80b1ba5171d214d29ec79f733d4"}}}
+{"type":"before","callId":"call@356","startTime":1940762.588,"class":"APIRequestContext","method":"fetch","params":{"url":"http://localhost:3310/api/v1/approval-workflows","method":"GET","headers":[{"name":"Authorization","value":"Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI2YWNiOGMzNmYwZDk0NjdhZTA2ODUzYTEiLCJvcmciOiI2YWNiOGMzM2YwZDk0NjdhZTA2ODUzNWEiLCJpc1N1cGVyQWRtaW4iOmZhbHNlLCJpYXQiOjE3OTE3MjY2MjYsImV4cCI6MTc5MTcyNzUyNn0.O91MihWNm8EOARKW-jLEptEWZzOmmPAN_aSsFlDdyv4"},{"name":"X-Factory-Id","value":"6acb8c33f0d9467ae068535e"}],"timeout":15000},"stepId":"pw:api@51"}
+{"type":"log","callId":"call@356","time":1940763.773,"message":"→ GET http://localhost:3310/api/v1/approval-workflows"}
+{"type":"log","callId":"call@356","time":1940763.801,"message":"  user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.7827.55 Safari/537.36"}
+{"type":"log","callId":"call@356","time":1940768.01,"message":"  accept: */*"}
+{"type":"log","callId":"call@356","time":1940768.046,"message":"  accept-encoding: gzip,deflate,br"}
+{"type":"log","callId":"call@356","time":1940768.056,"message":"  Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI2YWNiOGMzNmYwZDk0NjdhZTA2ODUzYTEiLCJvcmciOiI2YWNiOGMzM2YwZDk0NjdhZTA2ODUzNWEiLCJpc1N1cGVyQWRtaW4iOmZhbHNlLCJpYXQiOjE3OTE3MjY2MjYsImV4cCI6MTc5MTcyNzUyNn0.O91MihWNm8EOARKW-jLEptEWZzOmmPAN_aSsFlDdyv4"}
+{"type":"log","callId":"call@356","time":1940768.064,"message":"  X-Factory-Id: 6acb8c33f0d9467ae068535e"}
+{"type":"log","callId":"call@356","time":1940768.071,"message":"  cookie: refreshToken=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI2YWNiOGMzNmYwZDk0NjdhZTA2ODUzYTEiLCJ0eXBlIjoicmVmcmVzaCIsImlhdCI6MTc5MTcyNjYyNiwiZXhwIjoxNzkyMzMxNDI2fQ.BgTgnm6Iz3cJgscN6R6PrGo2M86RkKcqkvQ9RZW-Pxc"}
+{"type":"log","callId":"call@356","time":1940948.669,"message":"← 200 OK"}
+{"type":"log","callId":"call@356","time":1940948.69,"message":"  content-security-policy: default-src 'self';base-uri 'self';font-src 'self' https: data:;form-action 'self';frame-ancestors 'self';img-src 'self' data:;object-src 'none';script-src 'self';script-src-attr 'none';style-src 'self' https: 'unsafe-inline';upgrade-insecure-requests"}
+{"type":"log","callId":"call@356","time":1940948.7,"message":"  cross-origin-opener-policy: same-origin"}
+{"type":"log","callId":"call@356","time":1940948.707,"message":"  cross-origin-resource-policy: cross-origin"}
+{"type":"log","callId":"call@356","time":1940948.712,"message":"  origin-agent-cluster: ?1"}
+{"type":"log","callId":"call@356","time":1940948.718,"message":"  referrer-policy: no-referrer"}
+{"type":"log","callId":"call@356","time":1940948.725,"message":"  strict-transport-security: max-age=31536000; includeSubDomains"}
+{"type":"log","callId":"call@356","time":1940948.73,"message":"  x-content-type-options: nosniff"}
+{"type":"log","callId":"call@356","time":1940948.739,"message":"  x-dns-prefetch-control: off"}
+{"type":"log","callId":"call@356","time":1940948.746,"message":"  x-download-options: noopen"}
+{"type":"log","callId":"call@356","time":1940948.753,"message":"  x-frame-options: SAMEORIGIN"}
+{"type":"log","callId":"call@356","time":1940948.761,"message":"  x-permitted-cross-domain-policies: none"}
+{"type":"log","callId":"call@356","time":1940948.767,"message":"  x-xss-protection: 0"}
+{"type":"log","callId":"call@356","time":1940948.773,"message":"  vary: Origin"}
+{"type":"log","callId":"call@356","time":1940948.78,"message":"  access-control-allow-credentials: true"}
+{"type":"log","callId":"call@356","time":1940948.786,"message":"  content-type: application/json; charset=utf-8"}
+{"type":"log","callId":"call@356","time":1940948.793,"message":"  content-length: 2493"}
+{"type":"log","callId":"call@356","time":1940948.8,"message":"  etag: W/\"9bd-49sbsaplD7zQBxzUC7DmfBnYvpQ\""}
+{"type":"log","callId":"call@356","time":1940948.808,"message":"  date: Sun, 11 Oct 2026 13:50:27 GMT"}
+{"type":"log","callId":"call@356","time":1940948.815,"message":"  connection: keep-alive"}
+{"type":"log","callId":"call@356","time":1940948.822,"message":"  keep-alive: timeout=5"}
+{"type":"after","callId":"call@356","endTime":1940953.26,"result":{"response":{"url":"http://localhost:3310/api/v1/approval-workflows","status":200,"statusText":"OK","headers":[{"name":"Content-Security-Policy","value":"default-src 'self';base-uri 'self';font-src 'self' https: data:;form-action 'self';frame-ancestors 'self';img-src 'self' data:;object-src 'none';script-src 'self';script-src-attr 'none';style-src 'self' https: 'unsafe-inline';upgrade-insecure-requests"},{"name":"Cross-Origin-Opener-Policy","value":"same-origin"},{"name":"Cross-Origin-Resource-Policy","value":"cross-origin"},{"name":"Origin-Agent-Cluster","value":"?1"},{"name":"Referrer-Policy","value":"no-referrer"},{"name":"Strict-Transport-Security","value":"max-age=31536000; includeSubDomains"},{"name":"X-Content-Type-Options","value":"nosniff"},{"name":"X-DNS-Prefetch-Control","value":"off"},{"name":"X-Download-Options","value":"noopen"},{"name":"X-Frame-Options","value":"SAMEORIGIN"},{"name":"X-Permitted-Cross-Domain-Policies","value":"none"},{"name":"X-XSS-Protection","value":"0"},{"name":"Vary","value":"Origin"},{"name":"Access-Control-Allow-Credentials","value":"true"},{"name":"Content-Type","value":"application/json; charset=utf-8"},{"name":"Content-Length","value":"2493"},{"name":"ETag","value":"W/\"9bd-49sbsaplD7zQBxzUC7DmfBnYvpQ\""},{"name":"Date","value":"Sun, 11 Oct 2026 13:50:27 GMT"},{"name":"Connection","value":"keep-alive"},{"name":"Keep-Alive","value":"timeout=5"}],"serverAddr":{"ipAddress":"::1","port":3310},"fetchUid":"9ae45092192b57e61e7b8725518c1be4"}}}

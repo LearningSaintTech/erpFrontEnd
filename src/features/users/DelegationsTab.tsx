@@ -1,43 +1,34 @@
-import { useState } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { ArrowRight, Calendar, Factory, Shield } from 'lucide-react';
+import { ArrowRightLeft, Ban, Factory, Plus } from 'lucide-react';
 import { usersApi } from '../../services/admin';
 import { useAuth } from '../../app/providers/AuthProvider';
 import type { Delegation, ErpUser } from '../../types/api';
-import { ErpButton, ErpCard, ErpInput, ErpSelect } from '../../components/erp';
+import {
+  Button, Drawer, EmptyRow, EmptyState, ErpDataTable, ErpInput, ErpSelect, Field, RowActionsMenu,
+  Section, StatusBadge, TableSkeleton,
+} from '../../components/erp';
 import { PermissionMatrix } from './PermissionMatrix';
 import { UserAvatar } from './UserAvatar';
-import { userDisplayName } from './userUtils';
-import { ConfirmDialog } from './ConfirmDialog';
-
-function delegationUser(u?: ErpUser | string) {
-  if (!u) return { name: '—', email: '' };
-  if (typeof u === 'string') return { name: u, email: '' };
-  return { name: userDisplayName(u), email: u.email, user: u };
-}
+import { permissionLabel, userDisplayName } from './userUtils';
+import { delegationUser, formatRange, useRevokeDelegation } from './UserDelegationsList';
 
 export function DelegationsTab({
   factoryId,
   users,
   canUpdate,
-  onError,
-  onSuccess,
+  createOpen,
+  onCreateOpenChange,
 }: {
   factoryId: string | null;
   users: ErpUser[];
   canUpdate: boolean;
-  onError: (msg: string) => void;
-  onSuccess?: (msg: string) => void;
+  createOpen: boolean;
+  onCreateOpenChange: (open: boolean) => void;
 }) {
   const { factories } = useAuth();
-  const qc = useQueryClient();
-  const [delegateId, setDelegateId] = useState('');
-  const [permissions, setPermissions] = useState<string[]>([]);
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
-  const [revokeId, setRevokeId] = useState<string | null>(null);
-
   const factory = factories.find((f) => f._id === factoryId);
+  const revoke = useRevokeDelegation();
 
   const { data: delegations = [], isLoading } = useQuery({
     queryKey: ['delegations', factoryId],
@@ -45,10 +36,124 @@ export function DelegationsTab({
     enabled: !!factoryId,
   });
 
+  if (!factoryId) {
+    return (
+      <Section>
+        <EmptyState icon={Factory} title="Select a factory" description="Delegations are per factory. Choose one from the switcher in the header." />
+      </Section>
+    );
+  }
+
+  return (
+    <>
+      <Section
+        flush
+        title={factory ? `Delegations at ${factory.name}` : 'Delegations'}
+        description="Temporary permissions one person lends to another, for example during leave."
+      >
+        <ErpDataTable>
+          <thead>
+            <tr>
+              <th>From</th>
+              <th>To</th>
+              <th>Permissions</th>
+              <th>Period</th>
+              <th>Status</th>
+              {canUpdate && <th className="erp-cell-actions"><span className="sr-only">Actions</span></th>}
+            </tr>
+          </thead>
+          <tbody>
+            {isLoading ? (
+              <TableSkeleton asRows rows={3} columns={canUpdate ? 6 : 5} />
+            ) : delegations.length === 0 ? (
+              <EmptyRow
+                colSpan={canUpdate ? 6 : 5}
+                icon={ArrowRightLeft}
+                title="No active delegations"
+                action={canUpdate ? <Button size="sm" icon={<Plus size={16} />} onClick={() => onCreateOpenChange(true)}>New delegation</Button> : undefined}
+              >
+                Lend some of your permissions to a colleague for a fixed period.
+              </EmptyRow>
+            ) : delegations.map((d: Delegation) => {
+              const from = delegationUser(d.delegatorId);
+              const to = delegationUser(d.delegateId);
+              const perms = d.permissions ?? [];
+              return (
+                <tr key={d._id}>
+                  <td>
+                    <span className="inline-flex items-center gap-2">
+                      {from.user && <UserAvatar user={from.user} />}
+                      <span className="erp-cell-primary">{from.name}</span>
+                    </span>
+                  </td>
+                  <td>
+                    <span className="inline-flex items-center gap-2">
+                      {to.user && <UserAvatar user={to.user} />}
+                      <span>{to.name}</span>
+                    </span>
+                  </td>
+                  <td className="max-w-[18rem]">
+                    <span className="block truncate text-erp-text-secondary" title={perms.map(permissionLabel).join('\n')}>
+                      {perms.slice(0, 2).map(permissionLabel).join(', ')}
+                      {perms.length > 2 && <span className="text-erp-text-muted"> +{perms.length - 2} more</span>}
+                    </span>
+                  </td>
+                  <td className="whitespace-nowrap text-erp-text-muted">{formatRange(d.startDate, d.endDate)}</td>
+                  <td><StatusBadge status={d.status || 'ACTIVE'} /></td>
+                  {canUpdate && (
+                    <td className="erp-cell-actions">
+                      <RowActionsMenu items={[
+                        { label: 'Revoke', icon: Ban, danger: true, hidden: !!d.status && d.status !== 'ACTIVE', onSelect: () => revoke.ask(d) },
+                      ]} />
+                    </td>
+                  )}
+                </tr>
+              );
+            })}
+          </tbody>
+        </ErpDataTable>
+      </Section>
+
+      {canUpdate && (
+        <DelegationFormDrawer open={createOpen} onClose={() => onCreateOpenChange(false)} users={users} factoryId={factoryId} />
+      )}
+    </>
+  );
+}
+
+function toLocalInput(d: Date) {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function DelegationFormDrawer({
+  open, onClose, users, factoryId,
+}: { open: boolean; onClose: () => void; users: ErpUser[]; factoryId: string }) {
+  const qc = useQueryClient();
+  const { user: me } = useAuth();
+  const [delegateId, setDelegateId] = useState('');
+  const [permissions, setPermissions] = useState<string[]>([]);
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+  const [errors, setErrors] = useState<Record<string, string>>({});
+
   const { data: catalog = [] } = useQuery({
     queryKey: ['permission-catalog'],
     queryFn: usersApi.listPermissions,
+    enabled: open,
   });
+
+  useEffect(() => {
+    if (open) {
+      const now = new Date();
+      const week = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+      setDelegateId('');
+      setPermissions([]);
+      setStartDate(toLocalInput(now));
+      setEndDate(toLocalInput(week));
+      setErrors({});
+    }
+  }, [open]);
 
   const create = useMutation({
     mutationFn: () => usersApi.createDelegation({
@@ -57,153 +162,65 @@ export function DelegationsTab({
       startDate: new Date(startDate).toISOString(),
       endDate: new Date(endDate).toISOString(),
     }),
+    meta: { successMessage: 'Delegation created' },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['delegations', factoryId] });
-      setDelegateId('');
-      setPermissions([]);
-      setStartDate('');
-      setEndDate('');
-      onSuccess?.('Delegation created');
+      qc.invalidateQueries({ queryKey: ['user-delegations'] });
+      onClose();
     },
-    onError: (e: Error) => onError(e.message),
   });
 
-  const revoke = useMutation({
-    mutationFn: (id: string) => usersApi.revokeDelegation(id),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['delegations', factoryId] });
-      setRevokeId(null);
-      onSuccess?.('Delegation revoked');
-    },
-    onError: (e: Error) => onError(e.message),
-  });
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    const next: Record<string, string> = {};
+    if (!delegateId) next.delegateId = 'Choose who receives the permissions.';
+    if (!startDate) next.startDate = 'Choose a start time.';
+    if (!endDate) next.endDate = 'Choose an end time.';
+    if (startDate && endDate && new Date(endDate) <= new Date(startDate)) next.endDate = 'End must be after the start.';
+    if (permissions.length === 0) next.permissions = 'Select at least one permission to lend.';
+    setErrors(next);
+    if (Object.keys(next).length === 0) create.mutate();
+  };
 
-  if (!factoryId) {
-    return (
-      <ErpCard className="!p-6 text-center">
-        <Factory size={28} className="mx-auto mb-2 text-erp-text-muted opacity-50" />
-        <p className="text-[11px] font-medium text-erp-text-secondary">No factory selected</p>
-        <p className="mt-1 text-[10px] text-erp-text-muted">
-          Choose a factory from the header switcher to view and manage delegations.
-        </p>
-      </ErpCard>
-    );
-  }
+  const candidates = users.filter((u) => u.status === 'ACTIVE' && u._id !== me?._id);
 
   return (
-    <div className="space-y-3">
-      {factory && (
-        <div className="flex items-center gap-2 text-[10px] text-erp-text-muted">
-          <Factory size={12} />
-          <span>Factory: <strong className="text-erp-text-secondary">{factory.code} — {factory.name}</strong></span>
+    <Drawer
+      open={open}
+      onClose={onClose}
+      size="lg"
+      closeOnOverlayClick={false}
+      title="New delegation"
+      description="Lend some of your own permissions to a colleague at this factory for a fixed period."
+      footer={(
+        <>
+          <Button variant="secondary" onClick={onClose}>Cancel</Button>
+          <Button type="submit" form="delegation-form" loading={create.isPending}>Create delegation</Button>
+        </>
+      )}
+    >
+      <form id="delegation-form" onSubmit={submit} className="space-y-5" noValidate>
+        <div className="grid gap-4 sm:grid-cols-3">
+          <Field label="Delegate to" required error={errors.delegateId}>
+            <ErpSelect value={delegateId} onChange={(e) => setDelegateId(e.target.value)}>
+              <option value="">Select a person…</option>
+              {candidates.map((u) => <option key={u._id} value={u._id}>{userDisplayName(u)}</option>)}
+            </ErpSelect>
+          </Field>
+          <Field label="Starts" required error={errors.startDate}>
+            <ErpInput type="datetime-local" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+          </Field>
+          <Field label="Ends" required error={errors.endDate}>
+            <ErpInput type="datetime-local" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+          </Field>
         </div>
-      )}
-
-      {canUpdate && (
-        <ErpCard className="!p-3">
-          <h3 className="mb-1 flex items-center gap-1.5 text-[11px] font-medium">
-            <Shield size={14} className="text-[var(--erp-accent)]" />
-            Delegate permissions
-          </h3>
-          <p className="mb-3 text-[10px] text-erp-text-muted">
-            Temporarily lend a subset of your permissions to another active user at this factory.
-          </p>
-          <div className="mb-3 grid gap-2 sm:grid-cols-3">
-            <label className="text-[10px] sm:col-span-1">
-              <span className="mb-0.5 block text-erp-text-muted">Delegate to</span>
-              <ErpSelect
-                value={delegateId}
-                onChange={(e) => setDelegateId(e.target.value)}
-                className="!py-1 !text-[11px] w-full"
-              >
-                <option value="">Select user…</option>
-                {users.filter((u) => u.status === 'ACTIVE').map((u) => (
-                  <option key={u._id} value={u._id}>{userDisplayName(u)} — {u.email}</option>
-                ))}
-              </ErpSelect>
-            </label>
-            <label className="text-[10px]">
-              <span className="mb-0.5 block text-erp-text-muted">Start</span>
-              <ErpInput type="datetime-local" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="!py-1 !text-[11px] w-full" />
-            </label>
-            <label className="text-[10px]">
-              <span className="mb-0.5 block text-erp-text-muted">End</span>
-              <ErpInput type="datetime-local" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="!py-1 !text-[11px] w-full" />
-            </label>
-          </div>
-          <PermissionMatrix catalog={catalog} selected={permissions} onChange={setPermissions} compact />
-          <div className="mt-3">
-            <ErpButton
-              className="!px-3 !py-1.5 text-[11px]"
-              disabled={!delegateId || !permissions.length || !startDate || !endDate || create.isPending}
-              onClick={() => create.mutate()}
-            >
-              Create delegation
-            </ErpButton>
-          </div>
-        </ErpCard>
-      )}
-
-      <ErpCard className="overflow-hidden !p-0">
-        {isLoading ? (
-          <p className="p-4 text-[11px] text-erp-text-muted">Loading delegations…</p>
-        ) : delegations.length === 0 ? (
-          <p className="p-6 text-center text-[11px] text-erp-text-muted">No active delegations for this factory.</p>
-        ) : (
-          <ul className="divide-y divide-[var(--erp-border)]">
-            {delegations.map((d: Delegation) => {
-              const from = delegationUser(d.delegatorId);
-              const to = delegationUser(d.delegateId);
-              return (
-                <li key={d._id} className="px-3 py-3 text-[11px]">
-                  <div className="mb-2 flex flex-wrap items-center gap-2">
-                    {from.user && <UserAvatar user={from.user} />}
-                    <span className="font-medium">{from.name}</span>
-                    <ArrowRight size={12} className="text-erp-text-muted" />
-                    {to.user && <UserAvatar user={to.user} />}
-                    <span className="font-medium">{to.name}</span>
-                    {canUpdate && (
-                      <ErpButton
-                        variant="secondary"
-                        className="!ml-auto !px-2 !py-0.5 text-[10px]"
-                        disabled={revoke.isPending}
-                        onClick={() => setRevokeId(d._id)}
-                      >
-                        Revoke
-                      </ErpButton>
-                    )}
-                  </div>
-                  <div className="mb-1.5 flex items-center gap-1 text-[10px] text-erp-text-muted">
-                    <Calendar size={10} />
-                    {d.startDate ? new Date(d.startDate).toLocaleString() : '—'} — {d.endDate ? new Date(d.endDate).toLocaleString() : '—'}
-                  </div>
-                  <div className="flex flex-wrap gap-1">
-                    {(d.permissions ?? []).slice(0, 12).map((p) => (
-                      <span key={p} className="rounded bg-[var(--erp-accent)]/10 px-1.5 py-px font-mono text-[9px] text-[var(--erp-accent)]">
-                        {p}
-                      </span>
-                    ))}
-                    {(d.permissions?.length ?? 0) > 12 && (
-                      <span className="text-[10px] text-erp-text-muted">+{(d.permissions?.length ?? 0) - 12} more</span>
-                    )}
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </ErpCard>
-
-      <ConfirmDialog
-        open={!!revokeId}
-        title="Revoke delegation"
-        message="The delegate will immediately lose these temporary permissions."
-        confirmLabel="Revoke"
-        danger
-        loading={revoke.isPending}
-        onConfirm={() => revokeId && revoke.mutate(revokeId)}
-        onCancel={() => setRevokeId(null)}
-      />
-    </div>
+        <div>
+          <h3 className="mb-1 text-sm font-semibold text-erp-text-primary">Permissions to lend</h3>
+          <p className="mb-3 text-[13px] text-erp-text-muted">You can only lend permissions you hold yourself.</p>
+          {errors.permissions && <p className="mb-2 text-[13px] text-[var(--erp-danger-text)]" role="alert">{errors.permissions}</p>}
+          <PermissionMatrix catalog={catalog} selected={permissions} onChange={setPermissions} />
+        </div>
+      </form>
+    </Drawer>
   );
 }

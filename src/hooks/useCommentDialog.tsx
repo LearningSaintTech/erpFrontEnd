@@ -1,5 +1,5 @@
 import { useCallback, useState, type ReactNode } from 'react';
-import { ErpButton } from '../components/erp';
+import { ErpButton, Field, Modal, Textarea } from '../components/erp';
 
 interface DialogState {
   open: boolean;
@@ -8,6 +8,14 @@ interface DialogState {
   resolve?: (value: string | undefined) => void;
 }
 
+/**
+ * Legacy optional-comment dialog. Kept for compatibility — new code should use
+ * `usePrompt()` from components/erp (supports required + min length).
+ *
+ *   const { ask, CommentDialog } = useCommentDialog();
+ *   const comments = await ask('Approve design');  // undefined when cancelled or empty
+ *   … render {CommentDialog()} somewhere in the tree.
+ */
 export function useCommentDialog() {
   const [state, setState] = useState<DialogState>({
     open: false,
@@ -32,23 +40,29 @@ export function useCommentDialog() {
   const CommentDialog = useCallback((): ReactNode => {
     if (!state.open) return null;
     return (
-      <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4">
-        <div className="erp-card w-full max-w-md p-5 shadow-xl">
-          <h3 className="mb-3 text-sm font-semibold">{state.title}</h3>
-          <textarea
-            autoFocus
+      <Modal
+        open
+        size="sm"
+        title={state.title}
+        onClose={() => close(undefined)}
+        closeOnOverlayClick={false}
+        footer={(
+          <>
+            <ErpButton variant="secondary" onClick={() => close(undefined)}>Cancel</ErpButton>
+            <ErpButton onClick={() => close(state.comments.trim() || undefined)}>Confirm</ErpButton>
+          </>
+        )}
+      >
+        <Field label="Comments" hint="Optional">
+          <Textarea
+            data-autofocus=""
             rows={4}
             value={state.comments}
             onChange={(e) => setState((s) => ({ ...s, comments: e.target.value }))}
-            placeholder="Comments (optional)"
-            className="mb-4 w-full rounded border px-3 py-2 text-sm"
+            placeholder="Add a note for the record"
           />
-          <div className="flex justify-end gap-2">
-            <ErpButton variant="secondary" onClick={() => close(undefined)}>Cancel</ErpButton>
-            <ErpButton onClick={() => close(state.comments.trim() || undefined)}>Confirm</ErpButton>
-          </div>
-        </div>
-      </div>
+        </Field>
+      </Modal>
     );
   }, [state, close]);
 

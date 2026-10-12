@@ -6,110 +6,100 @@ type NavGroup = { id: string; label: string; description: string; tabs: readonly
 
 type Props = {
   groups: readonly NavGroup[];
-  activeGroup: TabGroupId;
   activeTab: TabId;
   progress: Partial<Record<TabId, DesignTabProgress>>;
-  onGroupChange: (groupId: TabGroupId) => void;
-  onTabChange: (tabId: TabId) => void;
+  /** Show done / needed markers (only while the designer is editing). */
+  showProgress: boolean;
+  onSelect: (groupId: TabGroupId, tabId: TabId) => void;
 };
 
-export function DesignFormNav({
-  groups,
-  activeGroup,
-  activeTab,
-  progress,
-  onGroupChange,
-  onTabChange,
-}: Props) {
-  const current = groups.find((g) => g.id === activeGroup) ?? groups[0];
-  const showSubnav = (current?.tabs.length ?? 0) > 1;
-  const activeTabMeta = current?.tabs.find((t) => t.id === activeTab);
+function Marker({ state }: { state: DesignTabProgress }) {
+  if (state === 'done') {
+    return (
+      <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-[var(--erp-success-solid)] text-white" aria-label="Complete">
+        <Check size={10} strokeWidth={3} />
+      </span>
+    );
+  }
+  if (state === 'needed') {
+    return (
+      <span className="flex h-4 w-4 shrink-0 items-center justify-center" aria-label="Still needed">
+        <span className="h-2 w-2 rounded-full bg-[var(--erp-warning-solid)]" />
+      </span>
+    );
+  }
+  return <span className="h-4 w-4 shrink-0" aria-hidden />;
+}
+
+/**
+ * Section navigation for the design tech pack: a vertical list on desktop
+ * (grouped, with completion markers) and a scrollable pill row on phones.
+ */
+export function DesignFormNav({ groups, activeTab, progress, showProgress, onSelect }: Props) {
+  const flat = groups.flatMap((g) => g.tabs.map((t) => ({ group: g, tab: t })));
 
   return (
-    <div className="mb-3 overflow-hidden rounded-xl border border-[var(--erp-border)] bg-[var(--erp-surface)]">
-      <div className="flex flex-wrap gap-1 border-b border-[var(--erp-border)] p-2 sm:p-2.5">
-        {groups.map((group, i) => {
-          const isActive = group.id === activeGroup;
-          const groupDone = group.tabs.every((t) => progress[t.id as TabId] !== 'needed');
+    <>
+      {/* Phones / tablets: horizontal pills */}
+      <nav aria-label="Tech pack sections" className="erp-hide-scrollbar -mx-1 mb-3 flex gap-1.5 overflow-x-auto px-1 pb-1 lg:hidden">
+        {flat.map(({ group, tab }) => {
+          const active = tab.id === activeTab;
+          const state = progress[tab.id as TabId] ?? 'optional';
           return (
             <button
-              key={group.id}
+              key={tab.id}
               type="button"
-              onClick={() => onGroupChange(group.id as TabGroupId)}
-              className={`flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2.5 py-2 text-left transition sm:px-3 ${
-                isActive
-                  ? 'bg-[var(--erp-accent-muted)] text-[var(--erp-accent)]'
-                  : 'text-erp-text-muted hover:bg-[var(--erp-surface-muted)] hover:text-erp-text-primary'
+              aria-current={active ? 'page' : undefined}
+              onClick={() => onSelect(group.id as TabGroupId, tab.id as TabId)}
+              className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-[13px] font-medium transition ${
+                active
+                  ? 'border-[var(--erp-accent)] bg-[var(--erp-accent-muted)] text-[var(--erp-accent-text)]'
+                  : 'border-[var(--erp-border)] bg-[var(--erp-surface)] text-erp-text-secondary'
               }`}
             >
-              <span
-                className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold ${
-                  isActive
-                    ? 'bg-[var(--erp-accent)] text-white'
-                    : groupDone
-                      ? 'bg-emerald-500/15 text-emerald-700'
-                      : 'bg-[var(--erp-surface-muted)] text-erp-text-muted'
-                }`}
-              >
-                {groupDone && !isActive ? <Check size={12} strokeWidth={2.5} /> : i + 1}
-              </span>
-              <span className="min-w-0">
-                <span className="block truncate text-[11px] font-semibold leading-tight">{group.label}</span>
-                <span className="mt-0.5 hidden truncate text-[10px] opacity-80 sm:block">{group.description}</span>
-              </span>
+              {showProgress && state !== 'optional' && <Marker state={state} />}
+              {tab.label}
             </button>
           );
         })}
-      </div>
+      </nav>
 
-      {showSubnav && (
-        <div className="flex flex-wrap items-stretch gap-1 bg-[var(--erp-surface-muted)]/50 px-2 py-2 sm:px-3">
-          {current.tabs.map((tab) => {
-            const isActive = tab.id === activeTab;
-            const state = progress[tab.id as TabId] ?? 'optional';
-            return (
-              <button
-                key={tab.id}
-                type="button"
-                onClick={() => onTabChange(tab.id as TabId)}
-                className={`rounded-lg px-3 py-1.5 text-left transition ${
-                  isActive
-                    ? 'bg-[var(--erp-surface)] text-erp-text-primary shadow-sm ring-1 ring-[var(--erp-accent)]'
-                    : 'text-erp-text-muted hover:bg-[var(--erp-surface)]/80 hover:text-erp-text-primary'
-                }`}
-              >
-                <span className="flex items-center gap-1.5 text-[11px] font-medium">
-                  {tab.label}
-                  {state === 'done' && (
-                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" title="Complete" />
-                  )}
-                  {state === 'needed' && (
-                    <span className="h-1.5 w-1.5 rounded-full bg-amber-500" title="Still needed" />
-                  )}
-                </span>
-                {'hint' in tab && tab.hint && (
-                  <span className={`mt-0.5 block text-[10px] ${isActive ? 'text-erp-text-muted' : 'opacity-70'}`}>
-                    {tab.hint}
-                  </span>
-                )}
-              </button>
-            );
-          })}
+      {/* Desktop: vertical list */}
+      <nav aria-label="Tech pack sections" className="hidden lg:block">
+        <div className="sticky top-4 space-y-4">
+          {groups.map((group) => (
+            <div key={group.id}>
+              <p className="mb-1 px-2 text-xs font-medium text-erp-text-muted">{group.label}</p>
+              <ul className="space-y-0.5">
+                {group.tabs.map((tab) => {
+                  const active = tab.id === activeTab;
+                  const state = progress[tab.id as TabId] ?? 'optional';
+                  return (
+                    <li key={tab.id}>
+                      <button
+                        type="button"
+                        aria-current={active ? 'page' : undefined}
+                        onClick={() => onSelect(group.id as TabGroupId, tab.id as TabId)}
+                        className={`flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left transition ${
+                          active
+                            ? 'bg-[var(--erp-accent-muted)] text-[var(--erp-accent-text)]'
+                            : 'text-erp-text-secondary hover:bg-[var(--erp-surface-muted)] hover:text-erp-text-primary'
+                        }`}
+                      >
+                        <span className="mt-0.5">{showProgress ? <Marker state={state} /> : <span className="block h-4 w-1" />}</span>
+                        <span className="min-w-0">
+                          <span className="block text-sm font-medium leading-5">{tab.label}</span>
+                          {tab.hint && <span className="block truncate text-xs text-erp-text-muted">{tab.hint}</span>}
+                        </span>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          ))}
         </div>
-      )}
-
-      {activeTabMeta && (
-        <div className="border-t border-[var(--erp-border)] px-3 py-2">
-          <p className="text-[11px] font-semibold text-erp-text-primary">
-            {current.label}
-            <span className="mx-1.5 text-erp-text-muted">/</span>
-            {activeTabMeta.label}
-          </p>
-          {'hint' in activeTabMeta && activeTabMeta.hint && (
-            <p className="text-[10px] text-erp-text-muted">{activeTabMeta.hint}</p>
-          )}
-        </div>
-      )}
-    </div>
+      </nav>
+    </>
   );
 }

@@ -14,9 +14,9 @@ export const SAMPLE_TYPE_LABELS: Record<string, string> = {
 export const SAMPLE_STATUS_LABELS: Record<string, string> = {
   CREATED: 'Tech pack received',
   REVISION_REQUESTED: 'Revision requested',
-  MATERIAL_REQUEST_PENDING: 'Trims approval pending',
-  MATERIAL_REQUEST_APPROVED: 'Trims approved',
-  MATERIAL_RESERVED: 'Fabric reserved',
+  MATERIAL_REQUEST_PENDING: 'Materials pending approval',
+  MATERIAL_REQUEST_APPROVED: 'Materials approved',
+  MATERIAL_RESERVED: 'Materials reserved',
   CUTTING: 'Cutting',
   IN_PROGRESS: 'Sample stitching',
   QC_PENDING: 'Quality inspection',
@@ -66,6 +66,8 @@ export function designIdOf(sample: Sample | { designId: Sample['designId'] }) {
 export function materialLabel(materialId: NonNullable<Sample['materialRequirements']>[number]['materialId']) {
   if (!materialId || typeof materialId === 'string') return materialId || '—';
   const m = materialId as Material;
+  // Code and name: "FAB-LIN-001 — Linen Blend Natural" (codes alone mean little on the floor).
+  if (m.materialCode && m.name) return `${m.materialCode} — ${m.name}`;
   return m.materialCode || m.name || '—';
 }
 
@@ -94,7 +96,8 @@ export function buildMaterialOptions(
   return [...map.values()].sort((a, b) => a.materialCode.localeCompare(b.materialCode));
 }
 
-export const SAMPLE_MATERIAL_UNITS = ['METERS', 'PIECES', 'YARDS', 'KG', 'ROLLS', 'CONE'];
+/** Same values as backend MATERIAL_UNITS (inventory.defaults.js) — a sample line uses its material's unit. */
+export const SAMPLE_MATERIAL_UNITS = ['METERS', 'YARDS', 'PIECES', 'CONES', 'KG'];
 
 export function statusLabel(status: string) {
   return SAMPLE_STATUS_LABELS[status] || status.replace(/_/g, ' ');
@@ -122,8 +125,9 @@ export function workflowProgress(status: string) {
   return { phase, index: idx, percent };
 }
 
+/** REVISION_REQUESTED must be reopened first (that releases the previous iteration's stock). */
 export function canEditMaterials(status: string) {
-  return ['CREATED', 'REVISION_REQUESTED'].includes(status);
+  return status === 'CREATED';
 }
 
 export function formatCost(value?: number) {

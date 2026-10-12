@@ -96,7 +96,7 @@ export function ImagePreviewLightbox({
             <ChevronRight size={18} />
           </button>
         )}
-        <p className="mt-2 max-w-[90vw] truncate text-center text-[12px] text-white/90">
+        <p className="mt-2 max-w-[90vw] truncate text-center text-[13px] text-white/90">
           {current.alt || 'Preview'}
           {hasMany ? `  ·  ${index + 1} / ${items.length}` : ''}
         </p>

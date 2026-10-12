@@ -1,12 +1,26 @@
-import type { SelectHTMLAttributes } from 'react';
+import { forwardRef, type SelectHTMLAttributes } from 'react';
 
-export function ErpSelect({ className = '', children, ...props }: SelectHTMLAttributes<HTMLSelectElement>) {
+export interface ErpSelectProps extends SelectHTMLAttributes<HTMLSelectElement> {
+  invalid?: boolean;
+  /** 32px compact control. */
+  inputSize?: 'sm' | 'md';
+}
+
+export const ErpSelect = forwardRef<HTMLSelectElement, ErpSelectProps>(function ErpSelect(
+  { className = '', children, invalid, inputSize = 'md', ...props },
+  ref,
+) {
   return (
     <select
-      className={`erp-select min-w-0 cursor-pointer appearance-auto ${className}`.trim()}
+      ref={ref}
+      aria-invalid={invalid || props['aria-invalid'] || undefined}
+      className={`erp-select min-w-0${inputSize === 'sm' ? ' erp-input-sm' : ''} ${className}`.trim()}
       {...props}
     >
       {children}
     </select>
   );
-}
+});
+
+/** Alias for new code. */
+export const Select = ErpSelect;

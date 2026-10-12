@@ -1,0 +1,1 @@
+{"success":true,"data":{"total":3,"active":3,"busyMachines":0,"maintenance":0,"totalCapacityPerHour":120,"machinesByStatus":{"ACTIVE":3},"batchesInProgress":1,"utilizationPct":0,"lineCount":1}}
