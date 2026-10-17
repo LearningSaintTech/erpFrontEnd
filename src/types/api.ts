@@ -437,6 +437,9 @@ export interface StorageBin {
   zoneCode: string;
   binCode: string;
   barcode?: string;
+  capacity?: number;
+  /** The bin that stands for the whole shelf (stock "on the shelf"). */
+  isShelfBin?: boolean;
   status: string;
 }
 

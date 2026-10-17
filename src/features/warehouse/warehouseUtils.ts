@@ -30,10 +30,10 @@ export function statusLabel(status: string): string {
   return STATUS_LABELS[status] || status.replace(/_/g, ' ');
 }
 
-export function binLabel(bin?: StorageBin | { _id?: string; zoneCode?: string; binCode?: string; zoneId?: string }): string {
+export function binLabel(bin?: StorageBin | { _id?: string; zoneCode?: string; binCode?: string; zoneId?: string; isShelfBin?: boolean }): string {
   if (!bin) return '—';
   const zone = bin.zoneCode || (bin.zoneId ? 'Z' : 'UNZ');
-  return `${zone}-${bin.binCode || '?'}`;
+  return `${zone}-${bin.binCode || '?'}${bin.isShelfBin ? ' (whole shelf)' : ''}`;
 }
 
 export function pickPath(materialId?: string, skuId?: string): string {

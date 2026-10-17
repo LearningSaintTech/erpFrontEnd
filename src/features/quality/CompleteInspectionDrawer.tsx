@@ -9,6 +9,7 @@ import {
   Badge, Button, Drawer, ErpDataTable, ErpInput, ErpSelect, Field, InfoBanner, humanizeStatus, useConfirm,
 } from '../../components/erp';
 import { dispositionLabel, inspectionRefId, typeLabel } from './qualityUtils';
+import { binLabel } from '../warehouse/warehouseUtils';
 
 export type IncomingLineForm = {
   materialId: string;
@@ -45,10 +46,6 @@ const SAMPLE_HINTS: Record<Disposition, string> = {
   REWORK: '',
   REJECT: 'Design manager decides revision',
 };
-
-function binLabel(b: StorageBin) {
-  return `${b.zoneCode}-${b.binCode}`;
-}
 
 const num = (v: string) => Number(v) || 0;
 

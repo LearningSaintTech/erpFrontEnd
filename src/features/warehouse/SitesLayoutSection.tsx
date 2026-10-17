@@ -56,7 +56,7 @@ const ADD_META: Record<AddKind, { title: string; description: string; save: stri
   warehouse: { title: 'New warehouse', description: 'A site that holds raw material, WIP or finished goods.', save: 'Create warehouse' },
   zone: { title: 'New zone', description: 'An area inside the warehouse, e.g. a floor or a room.', save: 'Create zone' },
   rack: { title: 'New rack', description: 'A rack inside a zone.', save: 'Create rack' },
-  shelf: { title: 'New shelf', description: 'A shelf on a rack.', save: 'Create shelf' },
+  shelf: { title: 'New shelf', description: 'A shelf on a rack. A bin for the whole shelf is added with it, so stock can go on the shelf or in smaller bins.', save: 'Create shelf' },
   bin: { title: 'New bin', description: 'The smallest location stock is stored and picked from.', save: 'Create bin' },
 };
 
@@ -119,7 +119,11 @@ function AddLocationDrawer({ kind, onClose, whId, zones, treeSel, onCreatedWareh
       }
     },
     onSuccess: (data) => {
-      toast.success(`${kind ? kind.charAt(0).toUpperCase() + kind.slice(1) : 'Location'} created`);
+      const shelfBin = kind === 'shelf' && data && typeof data === 'object' && 'shelfBin' in data
+        ? (data as { shelfBin?: { binCode?: string } | null }).shelfBin : null;
+      toast.success(shelfBin?.binCode
+        ? `Shelf created with bin ${shelfBin.binCode} for the whole shelf`
+        : `${kind ? kind.charAt(0).toUpperCase() + kind.slice(1) : 'Location'} created`);
       ['warehouse-stats', 'warehouses', 'warehouses-all', 'warehouses-sites', 'warehouse-layout', 'zones', 'bins', 'bins-ops']
         .forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
       if (kind === 'warehouse' && data && typeof data === 'object' && '_id' in data) onCreatedWarehouse(data as Warehouse);
