@@ -457,8 +457,9 @@ export function AppLayout() {
           />
         </header>
 
-        {/* pb-24 on phones: the floating chat button must not cover the last row/card. */}
-        <main id="erp-main" className="erp-main-area erp-content min-h-0 flex-1 pb-24" tabIndex={-1}>
+        {/* The floating chat button sits 108px up and is 48px tall (ChatFab) — leave room past it so
+            the last row's actions (e.g. Inspect, Put away) can always be scrolled clear of it. */}
+        <main id="erp-main" className="erp-main-area erp-content min-h-0 flex-1 pb-44" tabIndex={-1}>
           <RouteErrorBoundary key={location.pathname}>
             <Outlet />
           </RouteErrorBoundary>

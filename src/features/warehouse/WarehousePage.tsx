@@ -267,24 +267,33 @@ function WarehouseOps({ section }: { section: Exclude<WarehouseSection, 'warehou
     }
     return [...byId.values()];
   }, [skuMaster, fgBalances]);
-  const selectedFgBalance = (fgBalances as FgBalanceRow[]).find((b) => {
+  // A SKU can sit on the dock and in several bins — one balance row per place.
+  const fgRows = useMemo(() => (fgBalances as FgBalanceRow[]).filter((b) => {
     const sid = typeof b.skuId === 'object' ? b.skuId?._id : b.skuId;
     return sid === skuId;
-  });
-  const fgOnHand = selectedFgBalance?.onHand ?? 0;
-  const fgStatus = selectedFgBalance?.dispatchStatus || '';
-  const fgBinId = selectedFgBalance?.storageBinId
-    ? (typeof selectedFgBalance.storageBinId === 'string' ? selectedFgBalance.storageBinId : selectedFgBalance.storageBinId._id)
-    : '';
+  }), [fgBalances, skuId]);
+  const rowBinId = (b?: FgBalanceRow) => (b?.storageBinId ? (typeof b.storageBinId === 'string' ? b.storageBinId : b.storageBinId._id) : '');
+  const fgDockRow = fgRows.find((b) => !rowBinId(b));
+  const fgBinRows = fgRows.filter((b) => rowBinId(b) && (b.onHand ?? 0) > 0);
+  const fgOnHand = fgRows.reduce((s, b) => s + (b.onHand ?? 0), 0);
+  // The SKU's bin when it sits in exactly one — keeps the single-bin shortcuts working.
+  const fgBinId = fgBinRows.length === 1 ? rowBinId(fgBinRows[0]) : '';
+  const fgStatus = fgBinRows.length === 1 ? (fgBinRows[0].dispatchStatus || '') : (fgDockRow?.onHand ? fgDockRow.dispatchStatus || '' : '');
 
-  const unallocRow = isRmOps ? unallocatedBalance(matBalanceRows) : undefined;
-  const unallocTransferable = isRmOps ? transferableQty(unallocRow) : (fgBinId ? 0 : transferableQty(selectedFgBalance));
+  const unallocRow = isRmOps ? unallocatedBalance(matBalanceRows) : fgDockRow;
+  const unallocTransferable = transferableQty(unallocRow);
   const binBalanceMap = useMemo(() => {
     if (isRmOps) return indexBalancesByBin(matBalanceRows);
     const map = new Map<string, InventoryBalance>();
-    if (selectedFgBalance && fgBinId) map.set(fgBinId, selectedFgBalance);
+    for (const b of fgRows) if (rowBinId(b)) map.set(rowBinId(b), b);
     return map;
-  }, [isRmOps, matBalanceRows, selectedFgBalance, fgBinId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isRmOps, matBalanceRows, fgRows]);
+  const fgBinsLabel = fgBinRows.map((b) => {
+    const bin = bins.find((x) => x._id === rowBinId(b)) ?? (typeof b.storageBinId === 'object' && b.storageBinId ? b.storageBinId : undefined);
+    return `${binLabel(bin)} (${b.onHand})`;
+  }).join(', ');
+  const fgPutFree = unallocTransferable || (fgBinId ? transferableQty(binBalanceMap.get(fgBinId)) : 0);
 
   const itemSelected = isFgOps ? !!skuId : !!matId;
 
@@ -298,7 +307,7 @@ function WarehouseOps({ section }: { section: Exclude<WarehouseSection, 'warehou
             return warehouseApi.fgPutAway({
               skuId: activeSku,
               binId: payload.binId as string,
-              quantity: payload.quantity != null ? Number(payload.quantity) : (putAwayQty ? Number(putAwayQty) : Math.max(1, fgOnHand)),
+              quantity: payload.quantity != null ? Number(payload.quantity) : (putAwayQty ? Number(putAwayQty) : Math.max(1, fgPutFree)),
             });
           }
           return warehouseApi.putAway({
@@ -407,10 +416,12 @@ function WarehouseOps({ section }: { section: Exclude<WarehouseSection, 'warehou
   const pickQtyNum = Math.max(1, Number(opQty) || 1);
   const putAwayQtyNum = putAwayQty ? Math.max(1, Number(putAwayQty) || 0) : unallocTransferable;
   const transferQtyNum = transferQty ? Math.max(1, Number(transferQty) || 0) : 0;
-  const transferSourceRow = isFgOps ? selectedFgBalance : (transferFromBinId ? binBalanceRow(matBalanceRows, transferFromBinId) : unallocRow);
+  const transferSourceRow = isFgOps
+    ? binBalanceMap.get(transferFromBinId || fgBinId)
+    : (transferFromBinId ? binBalanceRow(matBalanceRows, transferFromBinId) : unallocRow);
   const transferSourceAvail = transferableQty(transferSourceRow);
   const transferBlocked = !transferBinId || !itemSelected || transferFromBinId === transferBinId
-    || (isFgOps && fgBinId && transferBinId === fgBinId)
+    || (isFgOps && (transferFromBinId || fgBinId) === transferBinId)
     || transferSourceAvail <= 0
     || (transferQtyNum > 0 && transferQtyNum > transferSourceAvail);
   const transferQtyError = transferQtyNum > 0 && transferQtyNum > transferSourceAvail ? `Only ${transferSourceAvail} available at the source.` : '';
@@ -452,7 +463,8 @@ function WarehouseOps({ section }: { section: Exclude<WarehouseSection, 'warehou
       {isFgOps ? (
         <>
           <Metric label="On hand" value={fgOnHand.toLocaleString()} tone={fgOnHand <= 0 ? 'warn' : undefined} />
-          <Metric label="Current bin" value={fgBinId ? binLabel(bins.find((b) => b._id === fgBinId)) : 'Not in a bin'} />
+          <Metric label="On the dock (free)" value={unallocTransferable.toLocaleString()} />
+          <Metric label={fgBinRows.length > 1 ? `In ${fgBinRows.length} bins` : 'Current bin'} value={fgBinsLabel || 'Not in a bin'} />
           <div className="min-w-[120px]">
             <p className="text-xs text-erp-text-muted">Status</p>
             <div className="mt-1">{fgStatus ? <StatusBadge status={fgStatus} label={statusLabel(fgStatus)} /> : <span className="text-erp-text-muted">—</span>}</div>
@@ -499,12 +511,12 @@ function WarehouseOps({ section }: { section: Exclude<WarehouseSection, 'warehou
             ) : bins.map((b: StorageBin) => {
               const binRow = binBalanceMap.get(b._id);
               const binAvail = transferableQty(binRow);
-              const putQty = isFgOps ? (putAwayQty ? putAwayQtyNum : Math.max(1, fgOnHand)) : (putAwayQty ? putAwayQtyNum : unallocTransferable);
+              const putQty = isFgOps ? (putAwayQty ? putAwayQtyNum : Math.max(1, fgPutFree)) : (putAwayQty ? putAwayQtyNum : unallocTransferable);
               const binActive = b.status === 'ACTIVE';
               const canPutAway = isFgOps
-                ? (binActive && fgOnHand > 0 && putQty > 0 && putQty <= fgOnHand)
+                ? (binActive && fgPutFree > 0 && putQty > 0 && putQty <= fgPutFree && !(fgBinId === b._id && !unallocTransferable))
                 : (binActive && unallocTransferable > 0 && putQty > 0 && putQty <= unallocTransferable);
-              const canPick = isFgOps ? (binActive && fgBinId === b._id && binAvail >= pickQtyNum) : (binActive && binAvail >= pickQtyNum);
+              const canPick = binActive && binAvail >= pickQtyNum;
               return (
                 <tr key={b._id}>
                   <td className="erp-cell-primary font-mono">{binLabel(b)}</td>
@@ -557,6 +569,9 @@ function WarehouseOps({ section }: { section: Exclude<WarehouseSection, 'warehou
   };
 
   const stageBinId = dispatchBinId || fgBinId;
+  // Staging draws from the dock (or the SKU's single other bin); "mark ready" acts on the chosen bin's row.
+  const stageRow = stageBinId ? binBalanceMap.get(stageBinId) as FgBalanceRow | undefined : undefined;
+  const stageFree = stageBinId && stageBinId === fgBinId && !unallocTransferable ? 0 : fgPutFree;
   const stageBinLabel = binLabel(fgBins.find((b) => b._id === stageBinId));
 
   return (
@@ -613,10 +628,10 @@ function WarehouseOps({ section }: { section: Exclude<WarehouseSection, 'warehou
                 <Field label={isFgOps ? 'Quantity' : 'Quantity (blank = all)'} className="w-44">
                   <ErpInput
                     type="number" inputMode="decimal" min={1}
-                    max={(isFgOps ? fgOnHand : unallocTransferable) || undefined}
+                    max={(isFgOps ? fgPutFree : unallocTransferable) || undefined}
                     value={putAwayQty}
                     onChange={(e) => setPutAwayQty(e.target.value)}
-                    placeholder={isFgOps ? (fgOnHand > 0 ? String(fgOnHand) : 'Qty') : (unallocTransferable > 0 ? String(unallocTransferable) : 'All')}
+                    placeholder={isFgOps ? (fgPutFree > 0 ? String(fgPutFree) : 'Qty') : (unallocTransferable > 0 ? String(unallocTransferable) : 'All')}
                   />
                 </Field>
               ) : (
@@ -664,7 +679,7 @@ function WarehouseOps({ section }: { section: Exclude<WarehouseSection, 'warehou
           {section === 'picking' && itemSelected && isRmOps && (matAvailability?.available ?? 0) <= 0 && (
             <InfoBanner inset={false} tone="warn">No available stock in bins for this material. Put away from the dock first, or release reservations.</InfoBanner>
           )}
-          {section === 'picking' && itemSelected && isFgOps && (!fgBinId || fgOnHand <= 0) && (
+          {section === 'picking' && itemSelected && isFgOps && fgBinRows.length === 0 && (
             <InfoBanner inset={false} tone="warn">No finished goods in a bin for this SKU. Put them away first.</InfoBanner>
           )}
           {renderBinsTable(section === 'put-away' ? 'put-away' : 'pick')}
@@ -673,7 +688,7 @@ function WarehouseOps({ section }: { section: Exclude<WarehouseSection, 'warehou
 
       {section === 'transfer' && (
         <div className="space-y-4">
-          <Section title="Move stock" description={isFgOps ? 'Finished goods move their full on-hand quantity to the new bin.' : 'Only unreserved stock can be moved.'}>
+          <Section title="Move stock" description={isFgOps ? 'Move part or all of a bin. A SKU can sit in several bins.' : 'Only unreserved stock can be moved.'}>
             <div className="flex flex-wrap items-end gap-4">
               <Field label="Stock type"><TypeToggle value={opsInvType} onChange={setOpsInvType} /></Field>
               {warehousePicker}
@@ -683,9 +698,9 @@ function WarehouseOps({ section }: { section: Exclude<WarehouseSection, 'warehou
               <Field label="From">
                 <ErpSelect value={transferFromBinId || (isFgOps ? fgBinId : '')} onChange={(e) => setTransferFromBinId(e.target.value)} disabled={!itemSelected}>
                   {!isFgOps && <option value="">Unallocated dock ({unallocTransferable} free)</option>}
-                  {isFgOps && !fgBinId && <option value="">Not in a bin</option>}
+                  {isFgOps && !fgBinId && <option value="">{fgBinRows.length ? 'Choose source bin…' : 'Not in a bin'}</option>}
                   {bins.filter((b) => b.status === 'ACTIVE').map((b) => {
-                    const avail = isFgOps ? (fgBinId === b._id ? transferableQty(selectedFgBalance) : 0) : transferableQty(binBalanceMap.get(b._id));
+                    const avail = transferableQty(binBalanceMap.get(b._id));
                     return <option key={b._id} value={b._id} disabled={avail <= 0}>{binLabel(b)} ({avail} free)</option>;
                   })}
                 </ErpSelect>
@@ -786,7 +801,7 @@ function WarehouseOps({ section }: { section: Exclude<WarehouseSection, 'warehou
                 <StepFlow
                   size="sm"
                   className="mb-4"
-                  current={fgStatus === 'READY_FOR_DISPATCH' ? 'ready' : fgBinId ? 'ready' : 'stage'}
+                  current={stageRow?.dispatchStatus === 'READY_FOR_DISPATCH' ? 'ship' : (stageRow?.onHand ?? 0) > 0 ? 'ready' : 'stage'}
                   steps={[{ id: 'stage', label: 'Stage in bin' }, { id: 'ready', label: 'Mark ready' }, { id: 'ship', label: 'Dispatch' }]}
                 />
                 <div className="flex flex-wrap items-end gap-4">
@@ -798,7 +813,7 @@ function WarehouseOps({ section }: { section: Exclude<WarehouseSection, 'warehou
                     </ErpSelect>
                   </Field>
                   <Field label="Quantity" className="w-32">
-                    <ErpInput type="number" inputMode="numeric" min={1} max={fgOnHand || undefined} value={dispatchQty} onChange={(e) => setDispatchQty(e.target.value)} />
+                    <ErpInput type="number" inputMode="numeric" min={1} max={stageFree || undefined} value={dispatchQty} onChange={(e) => setDispatchQty(e.target.value)} />
                   </Field>
                 </div>
                 {stockSummary && <div className="mt-4">{stockSummary}</div>}
@@ -809,7 +824,7 @@ function WarehouseOps({ section }: { section: Exclude<WarehouseSection, 'warehou
                   <div className="mt-4 flex flex-wrap justify-end gap-2">
                     <Button
                       variant="secondary"
-                      disabled={fgOnHand < (Number(dispatchQty) || 1) || mut.isPending}
+                      disabled={stageFree < (Number(dispatchQty) || 1) || mut.isPending}
                       onClick={() => {
                         if (!dispatchBinId && fgBinId) setDispatchBinId(fgBinId);
                         ask(`Stage ${dispatchQty || 1} in ${stageBinLabel}?`, 'The units are assigned to this bin for dispatch.', 'Stage', () => mut.mutate({ type: 'fgPutAway' }));
@@ -819,7 +834,7 @@ function WarehouseOps({ section }: { section: Exclude<WarehouseSection, 'warehou
                     </Button>
                     <Button
                       icon={<ClipboardList size={16} />}
-                      disabled={fgOnHand <= 0 || mut.isPending}
+                      disabled={(stageRow?.onHand ?? 0) <= 0 || mut.isPending}
                       onClick={() => ask(`Mark ready to ship from ${stageBinLabel}?`, 'The stock appears in the Ready to ship list above.', 'Mark ready', () => mut.mutate({ type: 'markReady' }))}
                     >
                       Mark ready to ship

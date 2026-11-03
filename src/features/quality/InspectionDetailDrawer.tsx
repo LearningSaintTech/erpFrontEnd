@@ -6,6 +6,7 @@ import {
   Badge, Button, DescriptionList, Drawer, EmptyState, Section, StatusBadge, humanizeStatus,
 } from '../../components/erp';
 import { dispositionLabel, formatDateTime, inspectionRefId, resultLabel, typeLabel } from './qualityUtils';
+import { binLabel } from '../warehouse/warehouseUtils';
 
 type InspectionFull = QualityInspection & {
   inspectedBy?: string | { firstName?: string; lastName?: string };
@@ -30,7 +31,7 @@ export function InspectionDetailDrawer({ inspection, onClose, canUpdate, onStart
   const open = ['PENDING', 'IN_PROGRESS'].includes(i.status);
   const isSample = i.inspectionType === 'SAMPLING' || i.referenceType === 'SAMPLE';
   const inspector = typeof i.inspectedBy === 'object' && i.inspectedBy ? [i.inspectedBy.firstName, i.inspectedBy.lastName].filter(Boolean).join(' ') : '';
-  const bin = typeof i.storageBinId === 'object' && i.storageBinId ? `${i.storageBinId.zoneCode ?? ''}-${i.storageBinId.binCode ?? ''}` : '';
+  const bin = typeof i.storageBinId === 'object' && i.storageBinId ? binLabel(i.storageBinId) : '';
   const defects = defectsQ.data ?? [];
 
   return (

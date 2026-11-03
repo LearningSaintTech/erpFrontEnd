@@ -33,7 +33,10 @@ export function statusLabel(status: string): string {
 export function binLabel(bin?: StorageBin | { _id?: string; zoneCode?: string; binCode?: string; zoneId?: string; isShelfBin?: boolean }): string {
   if (!bin) return '—';
   const zone = bin.zoneCode || (bin.zoneId ? 'Z' : 'UNZ');
-  return `${zone}-${bin.binCode || '?'}${bin.isShelfBin ? ' (whole shelf)' : ''}`;
+  const code = bin.binCode || '?';
+  // Codes like "A-R01-S1" already start with their zone — don't show "A-A-R01-S1".
+  const located = code.toUpperCase().startsWith(`${zone}-`.toUpperCase()) ? code : `${zone}-${code}`;
+  return `${located}${bin.isShelfBin ? ' (whole shelf)' : ''}`;
 }
 
 export function pickPath(materialId?: string, skuId?: string): string {
